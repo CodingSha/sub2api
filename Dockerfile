@@ -20,16 +20,13 @@ FROM ${NODE_IMAGE} AS frontend-builder
 
 WORKDIR /app/frontend
 
-# Install pnpm (pinned to v9 to match CI and keep builds reproducible)
-RUN corepack enable && corepack prepare pnpm@9 --activate
-
 # Install dependencies first (better caching)
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile --store-dir=/tmp/pnpm-store --package-import-method=copy --config.node-linker=hoisted
+RUN npm install --include=dev --package-lock=false --legacy-peer-deps --cache=/tmp/npm-cache --no-audit --no-fund
 
 # Copy frontend source and build
 COPY frontend/ ./
-RUN pnpm run build
+RUN npm run build
 
 # -----------------------------------------------------------------------------
 # Stage 2: Backend Builder
