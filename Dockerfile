@@ -26,6 +26,7 @@ RUN npm install --include=dev --package-lock=false --legacy-peer-deps --cache=/t
 
 # Copy frontend source and build
 COPY frontend/ ./
+COPY docs/legal /app/docs/legal
 RUN npm run build
 
 # -----------------------------------------------------------------------------
