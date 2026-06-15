@@ -447,6 +447,9 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 	// When the terminal event has an empty output array, reconstruct from
 	// accumulated delta events so the client receives the full content.
 	acc.SupplementResponseOutput(finalResponse)
+	if value := openAIResponsesAuditText(finalResponse.Output); strings.TrimSpace(value) != "" {
+		c.Set("audit_response_body", value)
+	}
 
 	anthropicResp := apicompat.ResponsesToAnthropic(finalResponse, originalModel)
 
@@ -469,11 +472,26 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 
 func isOpenAICompatResponsesTerminalEvent(eventType string) bool {
 	switch strings.TrimSpace(eventType) {
-	case "response.completed", "response.done", "response.incomplete", "response.failed":
+	case "response.completed", "response.done", "response.incomplete", "response.failed", "response.cancelled", "response.canceled":
 		return true
 	default:
 		return false
 	}
+}
+
+func openAIResponsesAuditText(output []apicompat.ResponsesOutput) string {
+	if len(output) == 0 {
+		return ""
+	}
+	var builder strings.Builder
+	for _, item := range output {
+		for _, content := range item.Content {
+			if content.Text != "" {
+				_, _ = builder.WriteString(content.Text)
+			}
+		}
+	}
+	return builder.String()
 }
 
 func (s *OpenAIGatewayService) recordOpenAIMessagesStreamUpstreamError(c *gin.Context, account *Account, upstreamRequestID, kind, message string) {
@@ -702,6 +720,12 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	firstChunk := true
 	clientDisconnected := false
 	clientOutputStarted := false
+	var auditText strings.Builder
+	defer func() {
+		if value := auditText.String(); strings.TrimSpace(value) != "" {
+			c.Set("audit_response_body", value)
+		}
+	}()
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -756,6 +780,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			)
 			return false
 		}
+		appendOpenAIAuditText(&auditText, []byte(payload))
 
 		isTerminalEvent := isOpenAICompatResponsesTerminalEvent(event.Type)
 		if isTerminalEvent {
