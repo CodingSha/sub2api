@@ -258,6 +258,23 @@ func TestExtractOpenAIResponseIDFromJSONBytes(t *testing.T) {
 	require.Empty(t, extractOpenAIResponseIDFromJSONBytes([]byte(`not-json`)))
 }
 
+func TestAppendOpenAIAuditTextDoneOnlyEvents(t *testing.T) {
+	var builder strings.Builder
+	appendOpenAIAuditText(&builder, []byte(`{"type":"response.content_part.done","part":{"type":"output_text","text":"part text"}}`))
+	appendOpenAIAuditText(&builder, []byte(`{"type":"response.output_item.done","item":{"type":"message","content":[{"type":"output_text","text":" item text"}]}}`))
+
+	require.Equal(t, "part text item text", builder.String())
+}
+
+func TestAppendOpenAIAuditTextDoesNotDuplicateDoneSnapshot(t *testing.T) {
+	var builder strings.Builder
+	appendOpenAIAuditText(&builder, []byte(`{"type":"response.output_text.delta","delta":"hello"}`))
+	appendOpenAIAuditText(&builder, []byte(`{"type":"response.content_part.done","part":{"type":"output_text","text":"hello"}}`))
+	appendOpenAIAuditText(&builder, []byte(`{"type":"response.output_item.done","item":{"type":"message","content":[{"type":"output_text","text":"hello world"}]}}`))
+
+	require.Equal(t, "hello world", builder.String())
+}
+
 func TestOpenAIGatewayService_BindHTTPResponseAccount(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()

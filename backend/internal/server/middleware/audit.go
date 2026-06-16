@@ -204,17 +204,16 @@ func readAndRestoreRequestBody(c *gin.Context, limit int) ([]byte, []byte, bool)
 }
 
 func auditResponseBody(c *gin.Context, writer *auditResponseWriter) (string, bool) {
+	if value := strings.TrimSpace(c.GetString("audit_response_body")); value != "" {
+		if len(value) > service.AuditCaptureMaxBytes {
+			return value[:service.AuditCaptureMaxBytes], true
+		}
+		return value, false
+	}
 	if writer != nil {
 		return normalizeAuditResponseBody(writer.buf.Bytes(), c.Writer.Header().Get("Content-Type")), writer.truncated
 	}
-	value := strings.TrimSpace(c.GetString("audit_response_body"))
-	if value == "" {
-		return "", false
-	}
-	if len(value) > service.AuditCaptureMaxBytes {
-		return value[:service.AuditCaptureMaxBytes], true
-	}
-	return value, false
+	return "", false
 }
 
 func extractAuditModel(body []byte) string {
@@ -505,6 +504,9 @@ func normalizeAuditResponseBody(body []byte, contentType string) string {
 		return raw
 	}
 	if !isAuditSSEBody(raw, contentType) {
+		if text := extractAuditJSONResponseText(raw, contentType); strings.TrimSpace(text) != "" {
+			return text
+		}
 		return raw
 	}
 
@@ -513,6 +515,35 @@ func normalizeAuditResponseBody(body []byte, contentType string) string {
 		return raw
 	}
 	return text
+}
+
+func extractAuditJSONResponseText(raw, contentType string) string {
+	if !strings.Contains(strings.ToLower(contentType), "json") {
+		return ""
+	}
+	var payload any
+	if json.Unmarshal([]byte(raw), &payload) != nil {
+		return ""
+	}
+	fragments := auditFinalTextFragments(payload)
+	if len(fragments) == 0 {
+		fragments = auditTextFragments(payload, "")
+	}
+	if len(fragments) == 0 {
+		fragments = auditJSONErrorFragments(payload)
+	}
+	return strings.Join(fragments, "")
+}
+
+func auditJSONErrorFragments(payload any) []string {
+	obj, ok := payload.(map[string]any)
+	if !ok {
+		return nil
+	}
+	if errObj, ok := obj["error"].(map[string]any); ok {
+		return compactAuditFragments([]string{auditStringField(errObj, "message")})
+	}
+	return nil
 }
 
 func isAuditSSEBody(raw, contentType string) bool {
@@ -526,7 +557,7 @@ func isAuditSSEBody(raw, contentType string) bool {
 func extractAuditSSEText(raw string) string {
 	events := splitAuditSSEEvents(raw)
 	var deltas strings.Builder
-	finalTexts := make([]string, 0)
+	var finalText strings.Builder
 	errors := make([]string, 0)
 
 	for _, event := range events {
@@ -547,15 +578,17 @@ func extractAuditSSEText(raw string) string {
 			}
 			continue
 		}
-		finalTexts = append(finalTexts, auditFinalTextFragments(payload)...)
+		for _, fragment := range auditFinalTextFragments(payload) {
+			appendAuditSnapshotText(&finalText, fragment)
+		}
 		errors = append(errors, auditErrorFragments(payload)...)
 	}
 
 	if deltas.Len() > 0 {
 		return deltas.String()
 	}
-	if len(finalTexts) > 0 {
-		return strings.Join(finalTexts, "")
+	if finalText.Len() > 0 {
+		return finalText.String()
 	}
 	if len(errors) > 0 {
 		return strings.Join(errors, "\n")
@@ -663,7 +696,16 @@ func auditFinalTextFragments(payload any) []string {
 		return nil
 	}
 	fragments := make([]string, 0)
+	fragments = append(fragments, auditStringField(obj, "text"))
 	fragments = append(fragments, auditContentFragments(obj["content"])...)
+	if item, ok := obj["item"].(map[string]any); ok {
+		fragments = append(fragments, auditStringField(item, "text"))
+		fragments = append(fragments, auditContentFragments(item["content"])...)
+	}
+	if part, ok := obj["part"].(map[string]any); ok {
+		fragments = append(fragments, auditStringField(part, "text"))
+		fragments = append(fragments, auditStringField(part, "content"))
+	}
 	if response, ok := obj["response"].(map[string]any); ok {
 		fragments = append(fragments, auditOutputFragments(response["output"])...)
 		fragments = append(fragments, auditContentFragments(response["content"])...)
@@ -722,6 +764,31 @@ func auditGeminiParts(value any) []string {
 		}
 	}
 	return fragments
+}
+
+func appendAuditSnapshotText(builder *strings.Builder, text string) {
+	if builder == nil || text == "" {
+		return
+	}
+	current := builder.String()
+	if current == "" {
+		builder.WriteString(text)
+		return
+	}
+	if strings.HasSuffix(current, text) {
+		return
+	}
+	max := len(text)
+	if len(current) < max {
+		max = len(current)
+	}
+	for size := max; size > 0; size-- {
+		if strings.HasSuffix(current, text[:size]) {
+			builder.WriteString(text[size:])
+			return
+		}
+	}
+	builder.WriteString(text)
 }
 
 func auditErrorFragments(payload any) []string {

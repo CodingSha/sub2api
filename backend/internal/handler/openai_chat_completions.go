@@ -325,5 +325,9 @@ func resolveRawCCUpstreamEndpoint(c *gin.Context, account *service.Account) stri
 		!openai_compat.ShouldUseResponsesAPI(account.Extra) {
 		return "/v1/chat/completions"
 	}
-	return GetUpstreamEndpoint(c, account.Platform)
+	platform := ""
+	if account != nil {
+		platform = account.Platform
+	}
+	return GetUpstreamEndpoint(c, platform)
 }

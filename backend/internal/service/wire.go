@@ -488,6 +488,7 @@ func ProvideAPIKeyService(
 	apiKeyRepo APIKeyRepository,
 	userRepo UserRepository,
 	groupRepo GroupRepository,
+	accountRepo AccountRepository,
 	userSubRepo UserSubscriptionRepository,
 	userGroupRateRepo UserGroupRateRepository,
 	cache APIKeyCache,
@@ -495,6 +496,7 @@ func ProvideAPIKeyService(
 	billingCacheService *BillingCacheService,
 ) *APIKeyService {
 	svc := NewAPIKeyService(apiKeyRepo, userRepo, groupRepo, userSubRepo, userGroupRateRepo, cache, cfg)
+	svc.SetAccountRepository(accountRepo)
 	svc.SetRateLimitCacheInvalidator(billingCacheService)
 	return svc
 }

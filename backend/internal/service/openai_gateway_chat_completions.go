@@ -418,6 +418,9 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 	// When the terminal event has an empty output array, reconstruct from
 	// accumulated delta events so the client receives the full content.
 	acc.SupplementResponseOutput(finalResponse)
+	if value := openAIResponsesAuditText(finalResponse.Output); strings.TrimSpace(value) != "" {
+		c.Set("audit_response_body", value)
+	}
 
 	chatResp := apicompat.ResponsesToChatCompletions(finalResponse, originalModel)
 

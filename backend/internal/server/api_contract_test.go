@@ -324,12 +324,29 @@ func TestAPIContracts(t *testing.T) {
 						ModelRouting: map[string][]int64{
 							"claude-3-*": []int64{101, 102},
 						},
-						AccountCount: 2,
-						CreatedAt:    deps.now,
-						UpdatedAt:    deps.now,
+						ModelsListConfig: service.GroupModelsListConfig{
+							Enabled: true,
+							Models:  []string{"claude-sonnet-4-6"},
+						},
+						SupportedModelScopes: []string{"claude"},
+						AccountCount:         2,
+						CreatedAt:             deps.now,
+						UpdatedAt:             deps.now,
 					},
 				})
 				deps.userSubRepo.SetActiveByUserID(1, nil)
+				deps.accountRepo.SetAccountsByGroup(10, []service.Account{
+					{
+						ID:       101,
+						Platform: service.PlatformAnthropic,
+						Status:   service.StatusActive,
+						Credentials: map[string]any{
+							"model_mapping": map[string]any{
+								"claude-sonnet-4-6": "claude-sonnet-4-6",
+							},
+						},
+					},
+				})
 			},
 			method:     http.MethodGet,
 			path:       "/api/v1/groups/available",
@@ -358,6 +375,7 @@ func TestAPIContracts(t *testing.T) {
 						"image_rate_multiplier": 0,
 						"claude_code_only": false,
 						"allow_messages_dispatch": false,
+						"available_models": ["claude-sonnet-4-6"],
 						"fallback_group_id": null,
 						"fallback_group_id_on_invalid_request": null,
 						"require_oauth_only": false,
@@ -1223,6 +1241,7 @@ type contractDeps struct {
 	cfg         *config.Config
 	apiKeyRepo  *stubApiKeyRepo
 	groupRepo   *stubGroupRepo
+	accountRepo *stubAccountRepo
 	userSubRepo *stubUserSubscriptionRepo
 	usageRepo   *stubUsageLogRepo
 	settingRepo *stubSettingRepo
@@ -1256,7 +1275,7 @@ func newContractDeps(t *testing.T) *contractDeps {
 	apiKeyCache := stubApiKeyCache{}
 	groupRepo := &stubGroupRepo{}
 	userSubRepo := &stubUserSubscriptionRepo{}
-	accountRepo := stubAccountRepo{}
+	accountRepo := &stubAccountRepo{}
 	proxyRepo := stubProxyRepo{}
 	redeemRepo := &stubRedeemCodeRepo{}
 
@@ -1269,6 +1288,7 @@ func newContractDeps(t *testing.T) *contractDeps {
 
 	userService := service.NewUserService(userRepo, nil, nil, nil)
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, userRepo, groupRepo, userSubRepo, nil, apiKeyCache, cfg)
+	apiKeyService.SetAccountRepository(accountRepo)
 
 	usageRepo := newStubUsageLogRepo()
 	usageService := service.NewUsageService(usageRepo, userRepo, nil, nil)
@@ -1282,7 +1302,7 @@ func newContractDeps(t *testing.T) *contractDeps {
 	settingRepo := newStubSettingRepo()
 	settingService := service.NewSettingService(settingRepo, cfg)
 
-	adminService := service.NewAdminService(userRepo, groupRepo, &accountRepo, proxyRepo, apiKeyRepo, redeemRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	adminService := service.NewAdminService(userRepo, groupRepo, accountRepo, proxyRepo, apiKeyRepo, redeemRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	authHandler := handler.NewAuthHandler(cfg, nil, userService, settingService, nil, redeemService, nil, nil)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 	usageHandler := handler.NewUsageHandler(usageService, apiKeyService, nil, nil)
@@ -1344,6 +1364,7 @@ func newContractDeps(t *testing.T) *contractDeps {
 		cfg:         cfg,
 		apiKeyRepo:  apiKeyRepo,
 		groupRepo:   groupRepo,
+		accountRepo: accountRepo,
 		userSubRepo: userSubRepo,
 		usageRepo:   usageRepo,
 		settingRepo: settingRepo,
@@ -1625,6 +1646,14 @@ func (stubGroupRepo) UpdateSortOrders(ctx context.Context, updates []service.Gro
 
 type stubAccountRepo struct {
 	bulkUpdateIDs []int64
+	accountsByGroup map[int64][]service.Account
+}
+
+func (s *stubAccountRepo) SetAccountsByGroup(groupID int64, accounts []service.Account) {
+	if s.accountsByGroup == nil {
+		s.accountsByGroup = make(map[int64][]service.Account)
+	}
+	s.accountsByGroup[groupID] = append([]service.Account(nil), accounts...)
 }
 
 func (s *stubAccountRepo) Create(ctx context.Context, account *service.Account) error {
@@ -1668,7 +1697,10 @@ func (s *stubAccountRepo) ListWithFilters(ctx context.Context, params pagination
 }
 
 func (s *stubAccountRepo) ListByGroup(ctx context.Context, groupID int64) ([]service.Account, error) {
-	return nil, errors.New("not implemented")
+	if s.accountsByGroup == nil {
+		return []service.Account{}, nil
+	}
+	return append([]service.Account(nil), s.accountsByGroup[groupID]...), nil
 }
 
 func (s *stubAccountRepo) ListActive(ctx context.Context) ([]service.Account, error) {

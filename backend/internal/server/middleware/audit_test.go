@@ -105,6 +105,34 @@ func TestNormalizeAuditResponseBodyOpenAIResponsesSSE(t *testing.T) {
 	require.Equal(t, "hello", got)
 }
 
+func TestNormalizeAuditResponseBodyOpenAIResponsesDoneOnlySSE(t *testing.T) {
+	raw := strings.Join([]string{
+		`data: {"type":"response.output_text.done","text":"done text"}`,
+		``,
+		`data: {"type":"response.content_part.done","part":{"type":"output_text","text":"done text"}}`,
+		``,
+		`data: {"type":"response.output_item.done","item":{"type":"message","content":[{"type":"output_text","text":"done text"}]}}`,
+		``,
+		`data: {"type":"response.completed","response":{"status":"completed","output":[]}}`,
+		``,
+	}, "\n")
+
+	got := normalizeAuditResponseBody([]byte(raw), "text/event-stream")
+	require.Equal(t, "done text", got)
+}
+
+func TestNormalizeAuditResponseBodyOpenAIChatJSON(t *testing.T) {
+	body := []byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`)
+	got := normalizeAuditResponseBody(body, "application/json")
+	require.Equal(t, "ok", got)
+}
+
+func TestNormalizeAuditResponseBodyOpenAIResponsesJSON(t *testing.T) {
+	body := []byte(`{"output":[{"type":"message","content":[{"type":"output_text","text":"hello json"}]}]}`)
+	got := normalizeAuditResponseBody(body, "application/json; charset=utf-8")
+	require.Equal(t, "hello json", got)
+}
+
 func TestNormalizeAuditResponseBodyLeavesPlainJSON(t *testing.T) {
 	body := []byte(`{"message":"ok"}`)
 	got := normalizeAuditResponseBody(body, http.DetectContentType(body))
@@ -140,6 +168,33 @@ func TestAuditCaptureDetectsLargeStreamingRequestFromFullBody(t *testing.T) {
 		require.Equal(t, "complete response", item.ResponseBody)
 		require.Equal(t, "claude", item.Model)
 		require.Equal(t, "session-large", item.SessionID)
+	case <-time.After(time.Second):
+		t.Fatal("audit log was not created")
+	}
+}
+
+func TestAuditCapturePrefersExplicitAuditResponseBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &auditRepoStub{items: make(chan *service.AuditLog, 1)}
+	router := gin.New()
+	router.Use(AuditCapture(service.NewAuditService(repo)))
+	router.POST("/", func(c *gin.Context) {
+		c.Set("audit_response_body", "assistant text")
+		c.JSON(http.StatusOK, gin.H{
+			"choices": []gin.H{{"message": gin.H{"content": "assistant text"}}},
+		})
+	})
+
+	body := `{"messages":[{"role":"user","content":"hello"}],"stream":false,"model":"gpt-5"}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	select {
+	case item := <-repo.items:
+		require.Equal(t, "assistant text", item.ResponseBody)
 	case <-time.After(time.Second):
 		t.Fatal("audit log was not created")
 	}
