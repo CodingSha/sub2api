@@ -5862,6 +5862,12 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	var firstTokenMs *int
 	clientDisconnected := false
 	sawTerminalEvent := false
+	var auditText strings.Builder
+	defer func() {
+		if value := auditText.String(); strings.TrimSpace(value) != "" {
+			c.Set("audit_response_body", value)
+		}
+	}()
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -5931,6 +5937,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	}
 	lastDataAt := time.Now()
 	inPartialEvent := false
+	terminalLineSeen := false
 
 	for {
 		select {
@@ -5973,12 +5980,14 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 				trimmed := strings.TrimSpace(data)
 				if anthropicStreamEventIsTerminal("", trimmed) {
 					sawTerminalEvent = true
+					terminalLineSeen = true
 				}
 				if firstTokenMs == nil && trimmed != "" && trimmed != "[DONE]" {
 					ms := int(time.Since(startTime).Milliseconds())
 					firstTokenMs = &ms
 				}
 				s.parseSSEUsagePassthrough(data, usage)
+				appendAnthropicAuditData(&auditText, data)
 			} else {
 				trimmed := strings.TrimSpace(line)
 				if strings.HasPrefix(trimmed, "event:") && anthropicStreamEventIsTerminal(strings.TrimSpace(strings.TrimPrefix(trimmed, "event:")), "") {
@@ -6002,6 +6011,19 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 				} else {
 					inPartialEvent = true
 				}
+			}
+			if terminalLineSeen && line != "" {
+				if !clientDisconnected {
+					_, _ = io.WriteString(w, "\n")
+					flusher.Flush()
+				}
+				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
+			}
+			if sawTerminalEvent && line == "" {
+				if !clientDisconnected {
+					flusher.Flush()
+				}
+				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
 			}
 
 		case <-intervalCh:
@@ -8117,12 +8139,18 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	needModelReplace := originalModel != mappedModel
 	clientDisconnected := false // 客户端断开标志，断开后继续读取上游以获取完整usage
 	sawTerminalEvent := false
+	var auditText strings.Builder
+	defer func() {
+		if value := auditText.String(); strings.TrimSpace(value) != "" {
+			c.Set("audit_response_body", value)
+		}
+	}()
 
 	pendingEventLines := make([]string, 0, 4)
 
-	processSSEEvent := func(lines []string) ([]string, string, *sseUsagePatch, error) {
+	processSSEEvent := func(lines []string) ([]string, string, *sseUsagePatch, bool, error) {
 		if len(lines) == 0 {
-			return nil, "", nil, nil
+			return nil, "", nil, false, nil
 		}
 
 		eventName := ""
@@ -8143,7 +8171,11 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		}
 
 		if dataLine == "" {
-			return []string{strings.Join(lines, "\n") + "\n\n"}, "", nil, nil
+			terminalEvent := anthropicStreamEventIsTerminal(eventName, "")
+			if terminalEvent {
+				sawTerminalEvent = true
+			}
+			return []string{strings.Join(lines, "\n") + "\n\n"}, "", nil, terminalEvent, nil
 		}
 
 		if dataLine == "[DONE]" {
@@ -8153,7 +8185,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				block = "event: " + eventName + "\n"
 			}
 			block += "data: " + dataLine + "\n\n"
-			return []string{block}, dataLine, nil, nil
+			return []string{block}, dataLine, nil, true, nil
 		}
 
 		var event map[string]any
@@ -8164,13 +8196,14 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				block = "event: " + eventName + "\n"
 			}
 			block += "data: " + dataLine + "\n\n"
-			return []string{block}, dataLine, nil, nil
+			return []string{block}, dataLine, nil, false, nil
 		}
 
 		eventType, _ := event["type"].(string)
 		if eventName == "" {
 			eventName = eventType
 		}
+		appendAnthropicAuditText(&auditText, eventType, event)
 		eventChanged := false
 
 		// 兼容 Kimi cached_tokens → cache_read_input_tokens
@@ -8214,7 +8247,8 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		}
 
 		usagePatch := s.extractSSEUsagePatch(event)
-		if anthropicStreamEventIsTerminal(eventName, dataLine) {
+		terminalEvent := anthropicStreamEventIsTerminal(eventName, dataLine)
+		if terminalEvent {
 			sawTerminalEvent = true
 		}
 		if !eventChanged {
@@ -8223,7 +8257,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				block = "event: " + eventName + "\n"
 			}
 			block += "data: " + dataLine + "\n\n"
-			return []string{block}, dataLine, usagePatch, nil
+			return []string{block}, dataLine, usagePatch, terminalEvent, nil
 		}
 
 		newData, err := json.Marshal(event)
@@ -8234,7 +8268,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				block = "event: " + eventName + "\n"
 			}
 			block += "data: " + dataLine + "\n\n"
-			return []string{block}, dataLine, usagePatch, nil
+			return []string{block}, dataLine, usagePatch, terminalEvent, nil
 		}
 
 		block := ""
@@ -8242,7 +8276,40 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			block = "event: " + eventName + "\n"
 		}
 		block += "data: " + string(newData) + "\n\n"
-		return []string{block}, string(newData), usagePatch, nil
+		return []string{block}, string(newData), usagePatch, terminalEvent, nil
+	}
+	processPendingEvent := func() (bool, error) {
+		outputBlocks, data, usagePatch, terminalEvent, err := processSSEEvent(pendingEventLines)
+		pendingEventLines = pendingEventLines[:0]
+		if err != nil {
+			if clientDisconnected {
+				return terminalEvent, nil
+			}
+			return terminalEvent, err
+		}
+
+		for _, block := range outputBlocks {
+			if !clientDisconnected {
+				restored := reverseToolNamesIfPresent(c, []byte(block))
+				if _, werr := fmt.Fprint(w, string(restored)); werr != nil {
+					clientDisconnected = true
+					logger.LegacyPrintf("service.gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
+					break
+				}
+				flusher.Flush()
+				lastDataAt = time.Now()
+			}
+			if data != "" {
+				if firstTokenMs == nil && data != "[DONE]" {
+					ms := int(time.Since(startTime).Milliseconds())
+					firstTokenMs = &ms
+				}
+				if usagePatch != nil {
+					mergeSSEUsagePatch(usage, usagePatch)
+				}
+			}
+		}
+		return terminalEvent, nil
 	}
 
 	for {
@@ -8306,40 +8373,33 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 					continue
 				}
 
-				outputBlocks, data, usagePatch, err := processSSEEvent(pendingEventLines)
-				pendingEventLines = pendingEventLines[:0]
+				terminalEvent, err := processPendingEvent()
 				if err != nil {
-					if clientDisconnected {
-						return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, nil
-					}
 					return nil, err
 				}
 
-				for _, block := range outputBlocks {
+				if terminalEvent {
 					if !clientDisconnected {
-						restored := reverseToolNamesIfPresent(c, []byte(block))
-						if _, werr := fmt.Fprint(w, string(restored)); werr != nil {
-							clientDisconnected = true
-							logger.LegacyPrintf("service.gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
-							break
-						}
 						flusher.Flush()
-						lastDataAt = time.Now()
 					}
-					if data != "" {
-						if firstTokenMs == nil && data != "[DONE]" {
-							ms := int(time.Since(startTime).Milliseconds())
-							firstTokenMs = &ms
-						}
-						if usagePatch != nil {
-							mergeSSEUsagePatch(usage, usagePatch)
-						}
-					}
+					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
 				}
 				continue
 			}
 
 			pendingEventLines = append(pendingEventLines, line)
+			if data, ok := extractAnthropicSSEDataLine(line); ok && anthropicStreamEventIsTerminal("", data) {
+				terminalEvent, err := processPendingEvent()
+				if err != nil {
+					return nil, err
+				}
+				if terminalEvent {
+					if !clientDisconnected {
+						flusher.Flush()
+					}
+					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
+				}
+			}
 
 		case <-intervalCh:
 			lastRead := time.Unix(0, atomic.LoadInt64(&lastReadAt))
@@ -8389,6 +8449,73 @@ func (s *GatewayService) parseSSEUsage(data string, usage *ClaudeUsage) {
 
 	if patch := s.extractSSEUsagePatch(event); patch != nil {
 		mergeSSEUsagePatch(usage, patch)
+	}
+}
+
+func appendAnthropicAuditText(builder *strings.Builder, eventType string, event map[string]any) {
+	if builder == nil || event == nil {
+		return
+	}
+	switch eventType {
+	case "content_block_start":
+		block, _ := event["content_block"].(map[string]any)
+		if block == nil {
+			return
+		}
+		if text, _ := block["text"].(string); text != "" {
+			_, _ = builder.WriteString(text)
+		}
+	case "content_block_delta":
+		delta, _ := event["delta"].(map[string]any)
+		if delta == nil {
+			return
+		}
+		if text, _ := delta["text"].(string); text != "" {
+			_, _ = builder.WriteString(text)
+			return
+		}
+		if text, _ := delta["thinking"].(string); text != "" {
+			_, _ = builder.WriteString(text)
+		}
+	case "message_start":
+		message, _ := event["message"].(map[string]any)
+		if message == nil {
+			return
+		}
+		appendAnthropicAuditContent(builder, message["content"])
+	}
+}
+
+func appendAnthropicAuditData(builder *strings.Builder, data string) {
+	if builder == nil {
+		return
+	}
+	data = strings.TrimSpace(data)
+	if data == "" || data == "[DONE]" {
+		return
+	}
+	var event map[string]any
+	if err := json.Unmarshal([]byte(data), &event); err != nil {
+		return
+	}
+	eventType, _ := event["type"].(string)
+	appendAnthropicAuditText(builder, eventType, event)
+}
+
+func appendAnthropicAuditContent(builder *strings.Builder, content any) {
+	switch v := content.(type) {
+	case string:
+		_, _ = builder.WriteString(v)
+	case []any:
+		for _, item := range v {
+			itemObj, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if text, _ := itemObj["text"].(string); text != "" {
+				_, _ = builder.WriteString(text)
+			}
+		}
 	}
 }
 
@@ -10392,35 +10519,15 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 		accounts = filtered
 	}
 
-	// Collect unique models from all accounts
-	modelSet := make(map[string]struct{})
-	hasAnyMapping := false
-
-	for _, acc := range accounts {
-		mapping := acc.GetModelMapping()
-		if len(mapping) > 0 {
-			hasAnyMapping = true
-			for model := range mapping {
-				modelSet[model] = struct{}{}
-			}
-		}
-	}
-
+	models := availableModelsFromAccountMappings(accounts, "")
 	// If no account has model_mapping, return nil (use default)
-	if !hasAnyMapping {
+	if len(models) == 0 {
 		if s.modelsListCache != nil {
 			s.modelsListCache.Set(cacheKey, []string(nil), s.modelsListCacheTTL)
 			modelsListCacheStoreTotal.Add(1)
 		}
 		return nil
 	}
-
-	// Convert to slice
-	models := make([]string, 0, len(modelSet))
-	for model := range modelSet {
-		models = append(models, model)
-	}
-	sort.Strings(models)
 
 	if s.modelsListCache != nil {
 		s.modelsListCache.Set(cacheKey, cloneStringSlice(models), s.modelsListCacheTTL)

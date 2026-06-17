@@ -63,6 +63,10 @@ type Group struct {
 	DefaultMappedModel          string
 	MessagesDispatchModelConfig OpenAIMessagesDispatchModelConfig
 	ModelsListConfig            GroupModelsListConfig
+	// AvailableModels is a user-facing, computed list of request model IDs allowed by
+	// active accounts bound to this group. Accounts without model_mapping are treated
+	// as unrestricted for their platform. This field is not persisted on groups.
+	AvailableModels []string
 
 	// RPMLimit 分组级每分钟请求数上限（0 = 不限制）。
 	// 一旦设置即接管该分组用户的限流（覆盖用户级 rpm_limit），可被 user-group rpm_override 进一步覆盖。

@@ -526,6 +526,7 @@ export interface Group {
   allow_messages_dispatch?: boolean
   default_mapped_model?: string
   messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig
+  available_models?: string[]
   require_oauth_only: boolean
   require_privacy_set: boolean
   created_at: string
@@ -540,9 +541,6 @@ export interface AdminGroup extends Group {
   // MCP XML 协议注入（仅 antigravity 平台使用）
   mcp_xml_inject: boolean
 
-  // 支持的模型系列（仅 antigravity 平台使用）
-  supported_model_scopes?: string[]
-
   // 分组下账号数量（仅管理员可见）
   account_count?: number
   active_account_count?: number
@@ -552,6 +550,9 @@ export interface AdminGroup extends Group {
   default_mapped_model?: string
   messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig
   models_list_config?: ModelsListConfig
+
+  // 支持的模型系列（仅 antigravity 平台使用）
+  supported_model_scopes?: string[]
 
   // 分组排序
   sort_order: number

@@ -199,6 +199,7 @@ type APIKeyService struct {
 	apiKeyRepo            APIKeyRepository
 	userRepo              UserRepository
 	groupRepo             GroupRepository
+	accountRepo           AccountRepository
 	userSubRepo           UserSubscriptionRepository
 	userGroupRateRepo     UserGroupRateRepository
 	cache                 APIKeyCache
@@ -238,6 +239,12 @@ func NewAPIKeyService(
 // Called after construction (e.g. in wire) to avoid circular dependencies.
 func (s *APIKeyService) SetRateLimitCacheInvalidator(inv RateLimitCacheInvalidator) {
 	s.rateLimitCacheInvalid = inv
+}
+
+// SetAccountRepository wires the account repository used to expose user-facing
+// group model availability without adding account details to user responses.
+func (s *APIKeyService) SetAccountRepository(repo AccountRepository) {
+	s.accountRepo = repo
 }
 
 func (s *APIKeyService) compileAPIKeyIPRules(apiKey *APIKey) {
@@ -435,6 +442,9 @@ func (s *APIKeyService) List(ctx context.Context, userID int64, params paginatio
 	keys, pagination, err := s.apiKeyRepo.ListByUserID(ctx, userID, params, filters)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list api keys: %w", err)
+	}
+	if err := s.hydrateAPIKeyGroupAvailableModels(ctx, keys); err != nil {
+		return nil, nil, err
 	}
 	return keys, pagination, nil
 }
@@ -775,8 +785,74 @@ func (s *APIKeyService) GetAvailableGroups(ctx context.Context, userID int64) ([
 			availableGroups = append(availableGroups, group)
 		}
 	}
+	if err := s.hydrateGroupAvailableModels(ctx, availableGroups); err != nil {
+		return nil, err
+	}
 
 	return availableGroups, nil
+}
+
+func (s *APIKeyService) hydrateGroupAvailableModels(ctx context.Context, groups []Group) error {
+	if s.accountRepo == nil || len(groups) == 0 {
+		return nil
+	}
+	modelsByGroupID := make(map[int64][]string, len(groups))
+	for i := range groups {
+		group := &groups[i]
+		if group.ID <= 0 {
+			continue
+		}
+		models, ok := modelsByGroupID[group.ID]
+		if !ok {
+			var err error
+			models, err = s.availableModelsForGroup(ctx, group)
+			if err != nil {
+				return err
+			}
+			modelsByGroupID[group.ID] = models
+		}
+		group.AvailableModels = cloneStringSlice(models)
+	}
+	return nil
+}
+
+func (s *APIKeyService) hydrateAPIKeyGroupAvailableModels(ctx context.Context, keys []APIKey) error {
+	if s.accountRepo == nil || len(keys) == 0 {
+		return nil
+	}
+	modelsByGroupID := make(map[int64][]string)
+	for i := range keys {
+		group := keys[i].Group
+		if group == nil || group.ID <= 0 {
+			continue
+		}
+		models, ok := modelsByGroupID[group.ID]
+		if !ok {
+			var err error
+			models, err = s.availableModelsForGroup(ctx, group)
+			if err != nil {
+				return err
+			}
+			modelsByGroupID[group.ID] = models
+		}
+		group.AvailableModels = cloneStringSlice(models)
+	}
+	return nil
+}
+
+func (s *APIKeyService) availableModelsForGroup(ctx context.Context, group *Group) ([]string, error) {
+	if s.accountRepo == nil || group == nil || group.ID <= 0 {
+		return nil, nil
+	}
+	accounts, err := s.accountRepo.ListByGroup(ctx, group.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list accounts for group %d: %w", group.ID, err)
+	}
+	models := availableModelsFromAccountMappings(accounts, group.Platform)
+	if hasUnrestrictedAccountForPlatform(accounts, group.Platform) {
+		return mergeModelLists(defaultModelsListCandidateIDs(group.Platform), models), nil
+	}
+	return models, nil
 }
 
 // canUserBindGroupInternal 内部方法，检查用户是否可以绑定分组（使用预加载的订阅数据）

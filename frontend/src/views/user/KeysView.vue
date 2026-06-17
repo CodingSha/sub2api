@@ -134,6 +134,33 @@
             </div>
           </template>
 
+          <template #cell-models="{ row }">
+            <div v-if="row.group" class="max-w-[360px] whitespace-normal" :title="modelsForGroup(row.group).join(', ')">
+              <div class="flex flex-wrap gap-1">
+                <button
+                  v-for="model in modelsForGroup(row.group)"
+                  :key="`${row.id}-${model}`"
+                  type="button"
+                  :class="modelChipClass(model)"
+                  :title="isModelCopied(model) ? t('keys.modelCopied') : t('keys.copyModelName')"
+                  @click.stop="copyModelName(model)"
+                >
+                  <span class="truncate">{{ model }}</span>
+                  <Icon
+                    :name="isModelCopied(model) ? 'check' : 'copy'"
+                    size="xs"
+                    :stroke-width="2"
+                    class="shrink-0 opacity-70"
+                  />
+                </button>
+                <span v-if="modelsForGroup(row.group).length === 0" class="text-sm text-gray-400 dark:text-dark-500">
+                  {{ t('keys.noAvailableModels') }}
+                </span>
+              </div>
+            </div>
+            <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
+          </template>
+
           <template #cell-usage="{ row }">
             <div class="text-sm">
               <div class="flex items-center gap-1.5">
@@ -437,6 +464,41 @@
               />
             </template>
           </Select>
+          <div
+            v-if="selectedFormGroup"
+            class="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-dark-700 dark:bg-dark-800/60"
+          >
+            <div class="mb-2 flex items-center justify-between gap-3">
+              <div class="flex min-w-0 items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200">
+                <Icon name="grid" size="sm" class="shrink-0 text-gray-400 dark:text-gray-500" />
+                <span>{{ t('keys.availableModels') }}</span>
+              </div>
+              <span class="shrink-0 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('keys.modelCount', { count: selectedFormGroupModels.length }) }}
+              </span>
+            </div>
+            <div class="flex flex-wrap gap-1.5 pr-1">
+              <button
+                v-for="model in selectedFormGroupModels"
+                :key="`form-${model}`"
+                type="button"
+                :class="modelChipClass(model)"
+                :title="isModelCopied(model) ? t('keys.modelCopied') : t('keys.copyModelName')"
+                @click.stop="copyModelName(model)"
+              >
+                <span class="truncate">{{ model }}</span>
+                <Icon
+                  :name="isModelCopied(model) ? 'check' : 'copy'"
+                  size="xs"
+                  :stroke-width="2"
+                  class="shrink-0 opacity-70"
+                />
+              </button>
+              <span v-if="selectedFormGroupModels.length === 0" class="text-sm text-gray-400 dark:text-dark-500">
+                {{ t('keys.noAvailableModels') }}
+              </span>
+            </div>
+          </div>
         </div>
 
         <!-- Custom Key Section (only for create) -->
@@ -1077,6 +1139,7 @@ import {
   buildCcSwitchImportDeeplink,
   type CcSwitchClientType
 } from '@/utils/ccswitchImport'
+import { getGroupAvailableModels } from '@/utils/groupModels'
 
 // Helper to format date for datetime-local input
 const formatDateTimeLocal = (isoDate: string): string => {
@@ -1103,6 +1166,7 @@ const columns = computed<Column[]>(() => [
   { key: 'name', label: t('common.name'), sortable: true },
   { key: 'key', label: t('keys.apiKey'), sortable: false },
   { key: 'group', label: t('keys.group'), sortable: false },
+  { key: 'models', label: t('keys.availableModels'), sortable: false },
   { key: 'usage', label: t('keys.usage'), sortable: false },
   { key: 'rate_limit', label: t('keys.rateLimitColumn'), sortable: false },
   { key: 'expires_at', label: t('keys.expiresAt'), sortable: true },
@@ -1147,12 +1211,14 @@ const showCcsClientSelect = ref(false)
 const pendingCcsRow = ref<ApiKey | null>(null)
 const selectedKey = ref<ApiKey | null>(null)
 const copiedKeyId = ref<number | null>(null)
+const copiedModelName = ref<string | null>(null)
 const groupSelectorKeyId = ref<number | null>(null)
 const publicSettings = ref<PublicSettings | null>(null)
 const dropdownRef = ref<HTMLElement | null>(null)
 const dropdownPosition = ref<{ top?: number; bottom?: number; left: number } | null>(null)
 const groupButtonRefs = ref<Map<number, HTMLElement>>(new Map())
 let abortController: AbortController | null = null
+let copiedModelResetTimer: ReturnType<typeof setTimeout> | null = null
 
 // Get the currently selected key for group change
 const selectedKeyForGroup = computed(() => {
@@ -1254,6 +1320,42 @@ const groupOptions = computed(() =>
   }))
 )
 
+const groupById = computed(() => new Map(groups.value.map((group) => [group.id, group])))
+
+const selectedFormGroup = computed(() => {
+  if (formData.value.group_id === null) return null
+  const group = groups.value.find((item) => item.id === formData.value.group_id)
+  if (group) return group
+  const fallback = selectedKey.value?.group
+  return fallback?.id === formData.value.group_id ? fallback : null
+})
+
+const selectedFormGroupModels = computed(() => modelsForGroup(selectedFormGroup.value))
+
+const modelsForGroup = (group: Group | null | undefined) => {
+  if (!group) return []
+  const loadedGroup = groupById.value.get(group.id)
+  const loadedModels = getGroupAvailableModels(loadedGroup)
+  return loadedModels.length > 0 ? loadedModels : getGroupAvailableModels(group)
+}
+
+const modelChipClass = (model: string) => {
+  const lower = model.toLowerCase()
+  const base = 'inline-flex max-w-full items-center gap-1 overflow-hidden rounded-md border px-2 py-0.5 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500/40'
+  if (lower.startsWith('claude-')) {
+    return `${base} border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-300`
+  }
+  if (lower.startsWith('gpt-') || lower.includes('codex')) {
+    return `${base} border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-900/20 dark:text-emerald-300`
+  }
+  if (lower.startsWith('gemini-')) {
+    return `${base} border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/50 dark:bg-sky-900/20 dark:text-sky-300`
+  }
+  return `${base} border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900/50 dark:bg-violet-900/20 dark:text-violet-300`
+}
+
+const isModelCopied = (model: string) => copiedModelName.value === model
+
 // Group dropdown search
 const groupSearchQuery = ref('')
 const filteredGroupOptions = computed(() => {
@@ -1273,6 +1375,20 @@ const copyToClipboard = async (text: string, keyId: number) => {
       copiedKeyId.value = null
     }, 800)
   }
+}
+
+const copyModelName = async (model: string) => {
+  const success = await clipboardCopy(model, t('keys.modelCopied'))
+  if (!success) return
+
+  copiedModelName.value = model
+  if (copiedModelResetTimer) {
+    clearTimeout(copiedModelResetTimer)
+  }
+  copiedModelResetTimer = setTimeout(() => {
+    copiedModelName.value = null
+    copiedModelResetTimer = null
+  }, 900)
 }
 
 const isAbortError = (error: unknown) => {
@@ -1786,5 +1902,6 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('click', closeGroupSelector)
   if (resetTimer) clearInterval(resetTimer)
+  if (copiedModelResetTimer) clearTimeout(copiedModelResetTimer)
 })
 </script>

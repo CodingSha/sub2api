@@ -445,6 +445,9 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 	// When the terminal event has an empty output array, reconstruct from
 	// accumulated delta events so the client receives the full content.
 	acc.SupplementResponseOutput(finalResponse)
+	if value := openAIResponsesAuditText(finalResponse.Output); strings.TrimSpace(value) != "" {
+		c.Set("audit_response_body", value)
+	}
 
 	chatResp := apicompat.ResponsesToChatCompletions(finalResponse, originalModel)
 
@@ -513,6 +516,12 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	pendingSSE := make([]string, 0, 4)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var streamFailoverErr *UpstreamFailoverError
+	var auditText strings.Builder
+	defer func() {
+		if value := auditText.String(); strings.TrimSpace(value) != "" {
+			c.Set("audit_response_body", value)
+		}
+	}()
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -614,6 +623,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		}
 
 		chunks := apicompat.ResponsesEventToChatChunks(&event, state)
+		for _, chunk := range chunks {
+			appendChatChunkAuditText(&auditText, chunk)
+		}
 		if !clientDisconnected {
 			for _, chunk := range chunks {
 				refusalDetector.ObserveChatChunk(chunk)
@@ -668,7 +680,13 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			}
 			return resultWithUsage(), streamFailoverErr
 		}
-		if finalChunks := apicompat.FinalizeResponsesChatStream(state); len(finalChunks) > 0 && !clientDisconnected {
+		if finalChunks := apicompat.FinalizeResponsesChatStream(state); len(finalChunks) > 0 {
+			for _, chunk := range finalChunks {
+				appendChatChunkAuditText(&auditText, chunk)
+			}
+			if clientDisconnected {
+				return resultWithUsage(), nil
+			}
 			for _, chunk := range finalChunks {
 				refusalDetector.ObserveChatChunk(chunk)
 				sse, err := apicompat.ChatChunkToSSE(chunk)
@@ -906,6 +924,17 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				continue
 			}
 			c.Writer.Flush()
+		}
+	}
+}
+
+func appendChatChunkAuditText(builder *strings.Builder, chunk apicompat.ChatCompletionsChunk) {
+	if builder == nil {
+		return
+	}
+	for _, choice := range chunk.Choices {
+		if choice.Delta.Content != nil && *choice.Delta.Content != "" {
+			_, _ = builder.WriteString(*choice.Delta.Content)
 		}
 	}
 }

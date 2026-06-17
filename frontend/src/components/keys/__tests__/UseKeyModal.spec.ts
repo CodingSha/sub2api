@@ -123,6 +123,44 @@ describe('UseKeyModal', () => {
     expect(codeBlock.text()).not.toContain('"name": "GPT-5.4 Nano"')
   })
 
+  it('renders Claude Code settings.json with default DeepSeek models', () => {
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-test',
+        baseUrl: 'https://example.com/v1',
+        platform: 'antigravity'
+      },
+      global: {
+        stubs: {
+          BaseDialog: {
+            template: '<div><slot /><slot name="footer" /></div>'
+          },
+          Icon: {
+            template: '<span />'
+          }
+        }
+      }
+    })
+
+    const settingsJson = wrapper.findAll('pre code')
+      .map((code) => code.text())
+      .find((content) => content.includes('"ANTHROPIC_BASE_URL"'))
+
+    expect(settingsJson).toBeDefined()
+    const parsed = JSON.parse(settingsJson!)
+
+    expect(parsed.env).toMatchObject({
+      ANTHROPIC_BASE_URL: 'https://example.com/v1/antigravity',
+      ANTHROPIC_AUTH_TOKEN: 'sk-test',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'deepseek-v4-flash',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'deepseek-v4-pro',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'deepseek-v4-flash',
+      ANTHROPIC_MODEL: 'deepseek-v4-pro',
+      ANTHROPIC_REASONING_MODEL: 'deepseek-v4-pro'
+    })
+  })
+
   it('renders Claude Fable 5 OpenCode config with adaptive thinking', async () => {
     const wrapper = mount(UseKeyModal, {
       props: {
