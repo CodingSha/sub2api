@@ -78,6 +78,11 @@ type auditCaptureReader struct {
 	writer *auditResponseWriter
 }
 
+type auditConversationEvent struct {
+	Kind string `json:"kind"`
+	Text string `json:"text"`
+}
+
 func (r *auditCaptureReader) Read(p []byte) (int, error) {
 	n, err := r.reader.Read(p)
 	if n > 0 {
@@ -173,6 +178,9 @@ func AuditCapture(auditService *service.AuditService) gin.HandlerFunc {
 }
 
 func auditRequestBody(rawBody, capturedBody []byte, capturedTruncated bool) (string, bool) {
+	if body, truncated := extractAuditConversationEventBody(rawBody); body != "" {
+		return body, truncated
+	}
 	if text := extractAuditUserInput(rawBody); text != "" {
 		return truncateAuditContent(text, service.AuditCaptureMaxBytes)
 	}
@@ -180,6 +188,448 @@ func auditRequestBody(rawBody, capturedBody []byte, capturedTruncated bool) (str
 		return "", false
 	}
 	return string(capturedBody), capturedTruncated
+}
+
+func extractAuditConversationEventBody(body []byte) (string, bool) {
+	events := extractAuditConversationEvents(body)
+	if len(events) == 0 || !auditEventsContainTool(events) {
+		return "", false
+	}
+	return marshalAuditConversationEvents(events, service.AuditCaptureMaxBytes)
+}
+
+func extractAuditConversationEvents(body []byte) []auditConversationEvent {
+	var payload map[string]any
+	if len(body) == 0 || json.Unmarshal(body, &payload) != nil {
+		return nil
+	}
+	if events := latestAuditChatEvents(payload["messages"], "content"); auditEventsContainTool(events) {
+		return events
+	}
+	if events := latestAuditResponsesInputEvents(payload["input"]); auditEventsContainTool(events) {
+		return events
+	}
+	if events := latestAuditChatEvents(payload["contents"], "parts"); auditEventsContainTool(events) {
+		return events
+	}
+	return nil
+}
+
+func marshalAuditConversationEvents(events []auditConversationEvent, max int) (string, bool) {
+	truncated := false
+	for {
+		body, err := json.Marshal(map[string]any{"audit_events": events})
+		if err != nil {
+			return "", false
+		}
+		if len(body) <= max {
+			return string(body), truncated
+		}
+		longest := -1
+		longestLen := 0
+		for i, event := range events {
+			if len(event.Text) > longestLen {
+				longest = i
+				longestLen = len(event.Text)
+			}
+		}
+		if longest < 0 || longestLen == 0 {
+			return "", false
+		}
+		truncated = true
+		overage := len(body) - max
+		nextLen := longestLen - overage - len("\n[truncated]")
+		if nextLen >= longestLen {
+			nextLen = longestLen / 2
+		}
+		if nextLen < 0 {
+			nextLen = 0
+		}
+		events[longest].Text = truncateAuditString(events[longest].Text, nextLen) + "\n[truncated]"
+	}
+}
+
+func latestAuditChatEvents(value any, contentKey string) []auditConversationEvent {
+	items, ok := value.([]any)
+	if !ok || len(items) == 0 {
+		return nil
+	}
+	lastIndex := len(items) - 1
+	lastEvents := auditEventsFromChatMessage(items[lastIndex], contentKey)
+	if len(lastEvents) == 0 {
+		return nil
+	}
+	if !auditEventsContainToolResult(lastEvents) {
+		return lastEvents
+	}
+
+	events := make([]auditConversationEvent, 0, len(lastEvents)+2)
+	for i := lastIndex - 1; i >= 0; i-- {
+		previousEvents := auditEventsFromChatMessage(items[i], contentKey)
+		toolCalls := auditToolCallEvents(previousEvents)
+		if len(toolCalls) > 0 {
+			events = append(events, toolCalls...)
+			break
+		}
+	}
+	events = append(events, lastEvents...)
+	return events
+}
+
+func latestAuditResponsesInputEvents(value any) []auditConversationEvent {
+	var items []any
+	switch input := value.(type) {
+	case []any:
+		items = input
+	case nil:
+		return nil
+	default:
+		items = []any{input}
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	lastIndex := len(items) - 1
+	lastEvents := auditEventsFromResponsesInputItem(items[lastIndex])
+	if len(lastEvents) == 0 {
+		return nil
+	}
+	if !auditEventsContainToolResult(lastEvents) {
+		return lastEvents
+	}
+
+	events := make([]auditConversationEvent, 0, len(lastEvents)+2)
+	for i := lastIndex - 1; i >= 0; i-- {
+		previousEvents := auditEventsFromResponsesInputItem(items[i])
+		toolCalls := auditToolCallEvents(previousEvents)
+		if len(toolCalls) > 0 {
+			events = append(events, toolCalls...)
+			break
+		}
+	}
+	events = append(events, lastEvents...)
+	return events
+}
+
+func auditEventsFromChatMessage(value any, contentKey string) []auditConversationEvent {
+	obj, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	role, _ := obj["role"].(string)
+	role = strings.ToLower(strings.TrimSpace(role))
+	if role == "tool" {
+		event := auditToolResultEvent(map[string]any{
+			"type":         "tool_result",
+			"tool_call_id": obj["tool_call_id"],
+			"call_id":      obj["call_id"],
+			"content":      obj[contentKey],
+		})
+		if event.Text == "" {
+			return nil
+		}
+		return []auditConversationEvent{event}
+	}
+
+	events := auditEventsFromContent(obj[contentKey], role)
+	if toolCalls, ok := obj["tool_calls"].([]any); ok {
+		for _, toolCall := range toolCalls {
+			if event := auditToolCallEventFromAny(toolCall); event.Text != "" {
+				events = append(events, event)
+			}
+		}
+	}
+	if functionCall, ok := obj["function_call"].(map[string]any); ok {
+		if event := auditToolCallEvent(functionCall); event.Text != "" {
+			events = append(events, event)
+		}
+	}
+	return events
+}
+
+func auditEventsFromResponsesInputItem(value any) []auditConversationEvent {
+	obj, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	itemType, _ := obj["type"].(string)
+	itemType = strings.ToLower(strings.TrimSpace(itemType))
+	role, _ := obj["role"].(string)
+	role = strings.ToLower(strings.TrimSpace(role))
+	if itemType == "message" || role != "" {
+		return auditEventsFromContent(firstNonNil(obj["content"], obj["text"]), role)
+	}
+	switch auditContentBlockKind(obj, role) {
+	case "tool_call":
+		if event := auditToolCallEvent(obj); event.Text != "" {
+			return []auditConversationEvent{event}
+		}
+	case "tool_result":
+		if event := auditToolResultEvent(obj); event.Text != "" {
+			return []auditConversationEvent{event}
+		}
+	}
+	return nil
+}
+
+func auditEventsFromContent(value any, role string) []auditConversationEvent {
+	switch content := value.(type) {
+	case string:
+		return auditTextContentEvent(content, role)
+	case []any:
+		events := make([]auditConversationEvent, 0, len(content))
+		for _, item := range content {
+			itemObj, ok := item.(map[string]any)
+			if !ok {
+				events = append(events, auditTextContentEvent(auditValueText(item), role)...)
+				continue
+			}
+			switch auditContentBlockKind(itemObj, role) {
+			case "tool_call":
+				if event := auditToolCallEvent(itemObj); event.Text != "" {
+					events = append(events, event)
+				}
+			case "tool_result":
+				if event := auditToolResultEvent(itemObj); event.Text != "" {
+					events = append(events, event)
+				}
+			default:
+				events = append(events, auditTextContentEvent(auditContentBlockText(itemObj), role)...)
+			}
+		}
+		return events
+	case map[string]any:
+		switch auditContentBlockKind(content, role) {
+		case "tool_call":
+			if event := auditToolCallEvent(content); event.Text != "" {
+				return []auditConversationEvent{event}
+			}
+		case "tool_result":
+			if event := auditToolResultEvent(content); event.Text != "" {
+				return []auditConversationEvent{event}
+			}
+		default:
+			return auditTextContentEvent(auditContentBlockText(content), role)
+		}
+	}
+	return nil
+}
+
+func auditContentBlockText(block map[string]any) string {
+	for _, key := range []string{"text", "content"} {
+		if text := auditValueText(block[key]); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func auditTextContentEvent(text, role string) []auditConversationEvent {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	kind := "user"
+	if role == "assistant" || role == "model" {
+		kind = "assistant"
+	}
+	if role == "tool" {
+		kind = "tool_result"
+	}
+	if kind == "user" {
+		text = cleanAuditUserText(text)
+		if !isAuditUserText(text) {
+			return nil
+		}
+	}
+	if text == "" {
+		return nil
+	}
+	return []auditConversationEvent{{Kind: kind, Text: text}}
+}
+
+func auditContentBlockKind(block map[string]any, role string) string {
+	blockType, _ := block["type"].(string)
+	blockType = strings.ToLower(strings.TrimSpace(blockType))
+	switch blockType {
+	case "tool_use", "server_tool_use", "tool_call", "function_call", "custom_tool_call", "mcp_tool_call":
+		return "tool_call"
+	case "tool_result", "tool_use_result", "web_search_tool_result", "function_call_output", "custom_tool_call_output", "mcp_tool_call_output":
+		return "tool_result"
+	}
+	if _, ok := block["functionCall"]; ok {
+		return "tool_call"
+	}
+	if _, ok := block["function_call"]; ok {
+		return "tool_call"
+	}
+	if _, ok := block["functionResponse"]; ok {
+		return "tool_result"
+	}
+	if _, ok := block["function_response"]; ok {
+		return "tool_result"
+	}
+	if role == "tool" {
+		return "tool_result"
+	}
+	return ""
+}
+
+func auditToolCallEventFromAny(value any) auditConversationEvent {
+	obj, ok := value.(map[string]any)
+	if !ok {
+		return auditConversationEvent{}
+	}
+	return auditToolCallEvent(obj)
+}
+
+func auditToolCallEvent(obj map[string]any) auditConversationEvent {
+	if functionCall, ok := obj["functionCall"].(map[string]any); ok {
+		obj = mergeAuditToolObject(obj, functionCall)
+	}
+	if functionCall, ok := obj["function_call"].(map[string]any); ok {
+		obj = mergeAuditToolObject(obj, functionCall)
+	}
+	name := firstAuditStringValue(obj["name"], obj["tool_name"])
+	if name == "" {
+		if functionObj, ok := obj["function"].(map[string]any); ok {
+			name = firstAuditStringValue(functionObj["name"])
+		}
+	}
+	id := firstAuditStringValue(obj["id"], obj["call_id"], obj["tool_call_id"])
+	toolType := firstAuditStringValue(obj["type"])
+	rawInput := firstNonNil(obj["input"], obj["arguments"])
+	if rawInput == nil {
+		if functionObj, ok := obj["function"].(map[string]any); ok {
+			rawInput = firstNonNil(functionObj["arguments"], functionObj["input"])
+		}
+	}
+	if rawInput == nil {
+		rawInput = firstNonNil(obj["args"], obj["parameters"])
+	}
+	text := auditToolText([]string{
+		auditToolLine("Tool", name),
+		auditToolLine("Call ID", id),
+		auditToolLine("Type", toolType),
+	}, auditValueText(rawInput))
+	return auditConversationEvent{Kind: "tool_call", Text: text}
+}
+
+func auditToolResultEvent(obj map[string]any) auditConversationEvent {
+	if functionResponse, ok := obj["functionResponse"].(map[string]any); ok {
+		obj = mergeAuditToolObject(obj, functionResponse)
+	}
+	if functionResponse, ok := obj["function_response"].(map[string]any); ok {
+		obj = mergeAuditToolObject(obj, functionResponse)
+	}
+	id := firstAuditStringValue(obj["tool_use_id"], obj["tool_call_id"], obj["call_id"], obj["id"])
+	toolType := firstAuditStringValue(obj["type"])
+	rawOutput := firstNonNil(obj["content"], obj["output"], obj["result"], obj["response"], obj["text"])
+	lines := []string{
+		auditToolLine("Call ID", id),
+		auditToolLine("Type", toolType),
+	}
+	if obj["is_error"] == true || firstAuditStringValue(obj["status"]) == "error" {
+		lines = append(lines, "Status: error")
+	}
+	text := auditToolText(lines, auditValueText(rawOutput))
+	return auditConversationEvent{Kind: "tool_result", Text: text}
+}
+
+func auditToolText(lines []string, body string) string {
+	out := make([]string, 0, len(lines)+2)
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			out = append(out, line)
+		}
+	}
+	body = strings.TrimSpace(body)
+	if body != "" {
+		if len(out) > 0 {
+			out = append(out, "")
+		}
+		out = append(out, body)
+	}
+	return strings.TrimSpace(strings.Join(out, "\n"))
+}
+
+func auditToolLine(label, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return label + ": " + value
+}
+
+func auditValueText(value any) string {
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(v)
+	case []any:
+		if fragments := auditContentFragments(v); len(fragments) > 0 {
+			return strings.Join(fragments, "\n")
+		}
+	}
+	if data, err := json.Marshal(value); err == nil {
+		return string(data)
+	}
+	return ""
+}
+
+func mergeAuditToolObject(base, override map[string]any) map[string]any {
+	merged := make(map[string]any, len(base)+len(override))
+	for key, value := range base {
+		merged[key] = value
+	}
+	for key, value := range override {
+		if _, exists := merged[key]; !exists {
+			merged[key] = value
+		}
+	}
+	return merged
+}
+
+func firstNonNil(values ...any) any {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+func firstAuditStringValue(values ...any) string {
+	for _, value := range values {
+		if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
+			return strings.TrimSpace(text)
+		}
+	}
+	return ""
+}
+
+func auditEventsContainTool(events []auditConversationEvent) bool {
+	return auditEventsContainToolResult(events) || len(auditToolCallEvents(events)) > 0
+}
+
+func auditEventsContainToolResult(events []auditConversationEvent) bool {
+	for _, event := range events {
+		if event.Kind == "tool_result" {
+			return true
+		}
+	}
+	return false
+}
+
+func auditToolCallEvents(events []auditConversationEvent) []auditConversationEvent {
+	out := make([]auditConversationEvent, 0)
+	for _, event := range events {
+		if event.Kind == "tool_call" {
+			out = append(out, event)
+		}
+	}
+	return out
 }
 
 func truncateAuditContent(value string, max int) (string, bool) {
@@ -659,7 +1109,6 @@ func auditTextFragments(payload any, eventName string) []string {
 				fragments = append(fragments, auditStringField(delta, "content"))
 			}
 			if message, ok := choiceObj["message"].(map[string]any); ok {
-				fragments = append(fragments, auditStringField(message, "content"))
 				fragments = append(fragments, auditContentFragments(message["content"])...)
 			}
 		}

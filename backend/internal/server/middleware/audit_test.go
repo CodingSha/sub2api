@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -220,6 +221,49 @@ func TestExtractAuditUserInputPrefersLatestUserTextOverSessionTag(t *testing.T) 
 
 	got := extractAuditUserInput([]byte(body))
 	require.Equal(t, "啊？", got)
+}
+
+func TestAuditRequestBodyPreservesAnthropicToolEvents(t *testing.T) {
+	body := []byte(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":[{"type":"text","text":"当前有哪些文件"}]},{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls -la"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"total 8\n-rw-r--r--  1 user  staff  1 a.txt"},{"type":"text","text":"继续"}]}]}`)
+
+	auditBody, truncated := auditRequestBody(body, body, false)
+	require.False(t, truncated)
+	requireAuditEvents(t, auditBody,
+		auditConversationEvent{Kind: "tool_call", Text: "Tool: Bash\nCall ID: toolu_1\nType: tool_use\n\n{\"command\":\"ls -la\"}"},
+		auditConversationEvent{Kind: "tool_result", Text: "Call ID: toolu_1\nType: tool_result\n\ntotal 8\n-rw-r--r--  1 user  staff  1 a.txt"},
+		auditConversationEvent{Kind: "user", Text: "继续"},
+	)
+}
+
+func TestAuditRequestBodyPreservesOpenAIChatToolEvents(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.1","messages":[{"role":"user","content":"weather"},{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Shanghai\"}"}}]},{"role":"tool","tool_call_id":"call_1","content":"cloudy"}]}`)
+
+	auditBody, truncated := auditRequestBody(body, body, false)
+	require.False(t, truncated)
+	requireAuditEvents(t, auditBody,
+		auditConversationEvent{Kind: "tool_call", Text: "Tool: get_weather\nCall ID: call_1\nType: function\n\n{\"city\":\"Shanghai\"}"},
+		auditConversationEvent{Kind: "tool_result", Text: "Call ID: call_1\nType: tool_result\n\ncloudy"},
+	)
+}
+
+func TestAuditRequestBodyPreservesOpenAIResponsesToolEvents(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.1","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"run shell"}]},{"type":"function_call","call_id":"call_1","name":"shell","arguments":"{\"cmd\":\"pwd\"}"},{"type":"function_call_output","call_id":"call_1","output":"/tmp/project"}]}`)
+
+	auditBody, truncated := auditRequestBody(body, body, false)
+	require.False(t, truncated)
+	requireAuditEvents(t, auditBody,
+		auditConversationEvent{Kind: "tool_call", Text: "Tool: shell\nCall ID: call_1\nType: function_call\n\n{\"cmd\":\"pwd\"}"},
+		auditConversationEvent{Kind: "tool_result", Text: "Call ID: call_1\nType: function_call_output\n\n/tmp/project"},
+	)
+}
+
+func requireAuditEvents(t *testing.T, body string, want ...auditConversationEvent) {
+	t.Helper()
+	var payload struct {
+		Events []auditConversationEvent `json:"audit_events"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &payload))
+	require.Equal(t, want, payload.Events)
 }
 
 func TestAuditCaptureRestoresWrappedWriterForOuterMiddleware(t *testing.T) {

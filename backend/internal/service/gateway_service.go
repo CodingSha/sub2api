@@ -8167,7 +8167,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		}
 
 		if eventName == "error" {
-			return nil, dataLine, nil, &sseStreamErrorEventError{RawData: dataLine}
+			return nil, dataLine, nil, true, &sseStreamErrorEventError{RawData: dataLine}
 		}
 
 		if dataLine == "" {
