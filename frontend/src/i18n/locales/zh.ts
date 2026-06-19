@@ -774,6 +774,20 @@ export default {
       noGroupTitle: '请先分配分组',
       noGroupDescription:
         '此 API 密钥尚未分配分组，请先在密钥列表中点击分组列进行分配，然后才能查看使用配置。',
+      workbuddy: {
+        title: 'WorkBuddy 自定义模型配置手册',
+        description:
+          '在 WorkBuddy 中添加 OpenAI 兼容自定义模型，可使用页面配置或直接编辑 models.json。',
+        pageTitle: '页面配置方式',
+        stepOpen: '打开 WorkBuddy 的模型配置页面，点击“+ 配置自定义模型”；也可按官方文档编辑 models.json。',
+        stepPaste: '将下方 url、apiKey 和模型名称填入 WorkBuddy；url 必须使用完整的 /v1/chat/completions 地址。',
+        stepSelect: '保存后在 WorkBuddy 的模型列表中选择该自定义模型。',
+        screenshotAlt: 'WorkBuddy 自定义模型页面配置截图 {index}',
+        screenshotStepSettings: '第 1 步：从左下角账户入口进入设置。',
+        screenshotStepAdd: '第 2 步：进入“模型”，点击“添加模型”，选择“自定义 / Custom”。',
+        screenshotStepFill: '第 3 步：填写接口地址、API Key、模型名称，并按模型能力勾选工具调用、图片输入、思考模式等高级配置。',
+        note: '参考 WorkBuddy / CodeBuddy 官方模型文档：自定义模型配置使用 models.json，url 字段填写完整的 OpenAI 兼容 chat completions 接口。'
+      },
       openai: {
         description: '将以下配置文件添加到 Codex CLI 配置目录中。',
         configTomlHint: '请确保以下内容位于 config.toml 文件的开头部分',
@@ -782,6 +796,7 @@ export default {
           '按 Win+R，输入 %userprofile%\\.codex 打开配置目录。如目录不存在，请先手动创建。'
       },
       cliTabs: {
+        workbuddy: 'WorkBuddy',
         claudeCode: 'Claude Code',
         geminiCli: 'Gemini CLI',
         codexCli: 'Codex CLI',

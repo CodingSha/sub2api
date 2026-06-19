@@ -775,6 +775,20 @@ export default {
       note: 'These environment variables will be active in the current terminal session. For permanent configuration, add them to ~/.bashrc, ~/.zshrc, or the appropriate configuration file.',
       noGroupTitle: 'Please assign a group first',
       noGroupDescription: 'This API key has not been assigned to a group. Please click the group column in the key list to assign one before viewing the configuration.',
+      workbuddy: {
+        title: 'WorkBuddy Custom Model Setup',
+        description:
+          'Add an OpenAI-compatible custom model in WorkBuddy by using the settings page or editing models.json directly.',
+        pageTitle: 'Settings page setup',
+        stepOpen: 'Open WorkBuddy model settings and click "+ Configure custom model", or edit models.json as described in the official docs.',
+        stepPaste: 'Fill the url, apiKey, and model name below into WorkBuddy. The url must be the full /v1/chat/completions endpoint.',
+        stepSelect: 'Save it, then select the custom model from WorkBuddy model list.',
+        screenshotAlt: 'WorkBuddy custom model settings screenshot {index}',
+        screenshotStepSettings: 'Step 1: open settings from the account entry in the lower-left corner.',
+        screenshotStepAdd: 'Step 2: open "Models", click "Add model", then choose "Custom".',
+        screenshotStepFill: 'Step 3: fill the endpoint, API Key, and model name, then enable advanced options such as tool calls, image input, and thinking mode according to model capabilities.',
+        note: 'Based on the official WorkBuddy / CodeBuddy model docs: custom models use models.json, and url should be the full OpenAI-compatible chat completions endpoint.',
+      },
       openai: {
         description: 'Add the following configuration files to your Codex CLI config directory.',
         configTomlHint: 'Make sure the following content is at the beginning of the config.toml file',
@@ -782,6 +796,7 @@ export default {
         noteWindows: 'Press Win+R and enter %userprofile%\\.codex to open the config directory. Create it manually if it does not exist.',
       },
       cliTabs: {
+        workbuddy: 'WorkBuddy',
         claudeCode: 'Claude Code',
         geminiCli: 'Gemini CLI',
         codexCli: 'Codex CLI',
