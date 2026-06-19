@@ -728,6 +728,7 @@ export default {
     noAvailableModels: '暂无可用模型',
     copyModelName: '复制模型名',
     modelCopied: '模型名已复制',
+    multimodal: '多模态',
     noGroup: '无分组',
     searchGroup: '搜索分组...',
     noGroupFound: '未找到匹配的分组',
@@ -2353,7 +2354,8 @@ export default {
         title: '自定义 /v1/models 模型列表',
         hint: '仅影响 /v1/models 展示结果，不影响白名单模型调用和账号调度。',
         loading: '正在加载模型列表...',
-        empty: '暂无可展示模型'
+        empty: '暂无可展示模型',
+        multimodal: '多模态'
       },
       claudeCode: {
         title: 'Claude Code 客户端限制',

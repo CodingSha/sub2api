@@ -115,6 +115,8 @@ type Group struct {
 
 	// 用户侧可见的可用模型，来源于分组下活跃账号的 model_mapping；未限制账号按平台默认模型展示。
 	AvailableModels []string `json:"available_models"`
+	// 用户侧可见的模型标记，key 为模型名，value 为标记列表（例如 multimodal）。
+	AvailableModelFlags map[string][]string `json:"available_model_flags,omitempty"`
 
 	// 账号过滤控制（仅 OpenAI/Antigravity 平台有效）
 	RequireOAuthOnly  bool `json:"require_oauth_only"`

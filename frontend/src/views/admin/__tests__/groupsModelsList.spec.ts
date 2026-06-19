@@ -19,8 +19,8 @@ describe("groupsModelsList", () => {
 
     expect(state.enabled).toBe(false);
     expect(state.items).toEqual([
-      { id: "gpt-5.5", selected: true },
-      { id: "gpt-5.4", selected: true },
+      { id: "gpt-5.5", selected: true, multimodal: false },
+      { id: "gpt-5.4", selected: true, multimodal: false },
     ]);
   });
 
@@ -28,15 +28,16 @@ describe("groupsModelsList", () => {
     const state = createModelsListState({
       enabled: true,
       models: ["gpt-5.5", "gpt-5.4"],
+      multimodal_models: ["gpt-5.4"],
     });
 
     setModelsListCandidates(state, ["gpt-5.4", "legacy-gpt", "gpt-5.5"]);
 
     expect(state.enabled).toBe(true);
     expect(state.items).toEqual([
-      { id: "gpt-5.5", selected: true },
-      { id: "gpt-5.4", selected: true },
-      { id: "legacy-gpt", selected: false },
+      { id: "gpt-5.5", selected: true, multimodal: false },
+      { id: "gpt-5.4", selected: true, multimodal: true },
+      { id: "legacy-gpt", selected: false, multimodal: false },
     ]);
   });
 
@@ -49,8 +50,8 @@ describe("groupsModelsList", () => {
     setModelsListCandidates(state, ["gpt-5.5", "gpt-5.4"]);
 
     expect(state.items).toEqual([
-      { id: "gpt-5.5", selected: true },
-      { id: "gpt-5.4", selected: false },
+      { id: "gpt-5.5", selected: true, multimodal: false },
+      { id: "gpt-5.4", selected: false, multimodal: false },
     ]);
   });
 
@@ -58,6 +59,7 @@ describe("groupsModelsList", () => {
     const state = hydrateModelsListState({
       enabled: true,
       models: ["gpt-5.5", "gpt-5.4", "legacy-gpt"],
+      multimodal_models: ["gpt-5.4", "legacy-gpt"],
     }, ["gpt-5.5", "gpt-5.4", "legacy-gpt"]);
 
     toggleModelsListItem(state, "legacy-gpt");
@@ -66,6 +68,7 @@ describe("groupsModelsList", () => {
     expect(buildModelsListConfig(state)).toEqual({
       enabled: true,
       models: ["gpt-5.4", "gpt-5.5"],
+      multimodal_models: ["gpt-5.4", "legacy-gpt"],
     });
   });
 
@@ -73,11 +76,13 @@ describe("groupsModelsList", () => {
     const state = hydrateModelsListState({
       enabled: false,
       models: ["gpt-5.5"],
+      multimodal_models: ["gpt-5.5"],
     }, ["gpt-5.5", "gpt-5.4"]);
 
     expect(buildModelsListConfig(state)).toEqual({
       enabled: false,
       models: ["gpt-5.5"],
+      multimodal_models: ["gpt-5.5"],
     });
   });
 
@@ -85,11 +90,13 @@ describe("groupsModelsList", () => {
     const state = createModelsListState({
       enabled: true,
       models: ["gpt-5.5", "gpt-5.4"],
+      multimodal_models: ["gpt-5.4"],
     });
 
     expect(buildModelsListConfig(state)).toEqual({
       enabled: true,
       models: ["gpt-5.5", "gpt-5.4"],
+      multimodal_models: ["gpt-5.4"],
     });
   });
 
@@ -102,9 +109,9 @@ describe("groupsModelsList", () => {
     selectAllModelsListItems(state);
 
     expect(state.items).toEqual([
-      { id: "gpt-5.5", selected: true },
-      { id: "gpt-5.4", selected: true },
-      { id: "gpt-5.4-mini", selected: true },
+      { id: "gpt-5.5", selected: true, multimodal: false },
+      { id: "gpt-5.4", selected: true, multimodal: false },
+      { id: "gpt-5.4-mini", selected: true, multimodal: false },
     ]);
   });
 
@@ -117,9 +124,24 @@ describe("groupsModelsList", () => {
     invertModelsListSelection(state);
 
     expect(state.items).toEqual([
-      { id: "gpt-5.5", selected: false },
-      { id: "gpt-5.4", selected: true },
-      { id: "gpt-5.4-mini", selected: true },
+      { id: "gpt-5.5", selected: false, multimodal: false },
+      { id: "gpt-5.4", selected: true, multimodal: false },
+      { id: "gpt-5.4-mini", selected: true, multimodal: false },
+    ]);
+  });
+
+  it("keeps multimodal marks when candidates refresh", () => {
+    const state = hydrateModelsListState({
+      enabled: true,
+      models: ["gpt-5.5"],
+      multimodal_models: ["gpt-5.5-image"],
+    }, ["gpt-5.5"]);
+
+    setModelsListCandidates(state, ["gpt-5.5-image", "gpt-5.5"]);
+
+    expect(state.items).toEqual([
+      { id: "gpt-5.5", selected: true, multimodal: false },
+      { id: "gpt-5.5-image", selected: false, multimodal: true },
     ]);
   });
 });

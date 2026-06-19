@@ -527,6 +527,7 @@ export interface Group {
   default_mapped_model?: string
   messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig
   available_models?: string[]
+  available_model_flags?: Record<string, string[]>
   require_oauth_only: boolean
   require_privacy_set: boolean
   created_at: string
@@ -561,6 +562,7 @@ export interface AdminGroup extends Group {
 export interface ModelsListConfig {
   enabled: boolean
   models: string[]
+  multimodal_models?: string[]
 }
 
 export interface ApiKey {

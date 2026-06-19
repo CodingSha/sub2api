@@ -7,26 +7,8 @@ import (
 
 func normalizeGroupModelsListConfig(cfg GroupModelsListConfig) GroupModelsListConfig {
 	out := GroupModelsListConfig{Enabled: cfg.Enabled}
-	if len(cfg.Models) == 0 {
-		return out
-	}
-
-	seen := make(map[string]struct{}, len(cfg.Models))
-	out.Models = make([]string, 0, len(cfg.Models))
-	for _, model := range cfg.Models {
-		model = strings.TrimSpace(model)
-		if model == "" {
-			continue
-		}
-		if _, ok := seen[model]; ok {
-			continue
-		}
-		seen[model] = struct{}{}
-		out.Models = append(out.Models, model)
-	}
-	if len(out.Models) == 0 {
-		out.Models = nil
-	}
+	out.Models = normalizeModelIDList(cfg.Models)
+	out.MultimodalModels = normalizeModelIDList(cfg.MultimodalModels)
 	return out
 }
 
@@ -91,6 +73,59 @@ func mergeModelLists(primary []string, extra []string) []string {
 			seen[model] = struct{}{}
 			out = append(out, model)
 		}
+	}
+	return out
+}
+
+const ModelFlagMultimodal = "multimodal"
+
+func availableModelFlagsFromConfig(models []string, cfg GroupModelsListConfig) map[string][]string {
+	if len(models) == 0 {
+		return nil
+	}
+	multimodalModels := normalizeModelIDList(cfg.MultimodalModels)
+	if len(multimodalModels) == 0 {
+		return nil
+	}
+	multimodalSet := make(map[string]struct{}, len(multimodalModels))
+	for _, model := range multimodalModels {
+		multimodalSet[model] = struct{}{}
+	}
+	out := make(map[string][]string)
+	for _, model := range models {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+		if _, ok := multimodalSet[model]; ok {
+			out[model] = []string{ModelFlagMultimodal}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func normalizeModelIDList(models []string) []string {
+	if len(models) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(models))
+	out := make([]string, 0, len(models))
+	for _, model := range models {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+		if _, ok := seen[model]; ok {
+			continue
+		}
+		seen[model] = struct{}{}
+		out = append(out, model)
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

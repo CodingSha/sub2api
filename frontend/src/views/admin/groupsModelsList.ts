@@ -1,16 +1,19 @@
 export interface ModelsListConfig {
   enabled: boolean
   models: string[]
+  multimodal_models?: string[]
 }
 
 export interface ModelsListItem {
   id: string
   selected: boolean
+  multimodal: boolean
 }
 
 export interface ModelsListState {
   enabled: boolean
   savedModels: string[]
+  savedMultimodalModels: string[]
   items: ModelsListItem[]
 }
 
@@ -19,6 +22,7 @@ export const createModelsListState = (
 ): ModelsListState => ({
   enabled: config?.enabled ?? false,
   savedModels: normalizeModels(config?.models ?? []),
+  savedMultimodalModels: normalizeModels(config?.multimodal_models ?? []),
   items: [],
 })
 
@@ -39,12 +43,17 @@ export const setModelsListCandidates = (
   const currentSelected = new Set(
     state.items.filter(item => item.selected).map(item => item.id),
   )
+  const currentMultimodal = new Set(
+    state.items.filter(item => item.multimodal).map(item => item.id),
+  )
   const currentKnown = new Set(state.items.map(item => item.id))
   const savedSelected = new Set(state.savedModels)
+  const savedMultimodal = new Set(state.savedMultimodalModels)
   const hasExistingItems = state.items.length > 0
   const selectionOrder = normalizeModels([
     ...state.items.map(item => item.id),
     ...state.savedModels,
+    ...state.savedMultimodalModels,
     ...normalizedCandidates,
   ])
 
@@ -58,6 +67,7 @@ export const setModelsListCandidates = (
     return {
       id,
       selected: selected && (currentKnown.has(id) || savedSelected.has(id) || state.savedModels.length === 0),
+      multimodal: hasExistingItems ? currentMultimodal.has(id) : savedMultimodal.has(id),
     }
   })
 }
@@ -99,12 +109,20 @@ export const moveModelsListItem = (
   state.items.splice(toIndex, 0, item)
 }
 
-export const buildModelsListConfig = (state: ModelsListState): ModelsListConfig => ({
-  enabled: state.enabled,
-  models: state.items.length > 0
+export const buildModelsListConfig = (state: ModelsListState): ModelsListConfig => {
+  const models = state.items.length > 0
     ? state.items.filter(item => item.selected).map(item => item.id)
-    : [...state.savedModels],
-})
+    : [...state.savedModels]
+  const multimodalModels = state.items.length > 0
+    ? state.items.filter(item => item.multimodal).map(item => item.id)
+    : [...state.savedMultimodalModels]
+
+  return {
+    enabled: state.enabled,
+    models,
+    ...(multimodalModels.length > 0 ? { multimodal_models: multimodalModels } : {}),
+  }
+}
 
 const normalizeModels = (models: string[]): string[] => {
   const seen = new Set<string>()

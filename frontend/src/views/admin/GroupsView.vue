@@ -675,7 +675,6 @@
             </button>
           </div>
           <div
-            v-if="createModelsListState.enabled"
             class="overflow-hidden rounded-lg border border-gray-200 bg-gray-50/50 dark:border-dark-600 dark:bg-dark-800/40"
           >
             <div
@@ -728,6 +727,14 @@
                 <span class="min-w-0 flex-1 break-all text-sm text-gray-700 dark:text-gray-300">
                   {{ item.id }}
                 </span>
+                <label class="flex flex-shrink-0 items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700">
+                  <input
+                    v-model="item.multimodal"
+                    type="checkbox"
+                    class="h-3.5 w-3.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  />
+                  {{ t("admin.groups.modelsList.multimodal") }}
+                </label>
                 <button
                   type="button"
                   :disabled="index === 0"
@@ -1963,7 +1970,6 @@
             </button>
           </div>
           <div
-            v-if="editModelsListState.enabled"
             class="overflow-hidden rounded-lg border border-gray-200 bg-gray-50/50 dark:border-dark-600 dark:bg-dark-800/40"
           >
             <div
@@ -2016,6 +2022,14 @@
                 <span class="min-w-0 flex-1 break-all text-sm text-gray-700 dark:text-gray-300">
                   {{ item.id }}
                 </span>
+                <label class="flex flex-shrink-0 items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700">
+                  <input
+                    v-model="item.multimodal"
+                    type="checkbox"
+                    class="h-3.5 w-3.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  />
+                  {{ t("admin.groups.modelsList.multimodal") }}
+                </label>
                 <button
                   type="button"
                   :disabled="index === 0"
@@ -3568,6 +3582,7 @@ const resetModelsListState = (
   const fresh = createInitialModelsListState(config);
   state.enabled = fresh.enabled;
   state.savedModels = fresh.savedModels;
+  state.savedMultimodalModels = fresh.savedMultimodalModels;
   state.items = fresh.items;
 };
 

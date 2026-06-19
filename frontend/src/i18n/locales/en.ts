@@ -729,6 +729,7 @@ export default {
     noAvailableModels: 'No available models',
     copyModelName: 'Copy model name',
     modelCopied: 'Model name copied',
+    multimodal: 'Multimodal',
     noGroup: 'No group',
     searchGroup: 'Search groups...',
     noGroupFound: 'No groups found',
@@ -2270,7 +2271,8 @@ export default {
         title: 'Custom /v1/models Model List',
         hint: 'Only changes the /v1/models response. Whitelist model calls and account routing are unchanged.',
         loading: 'Loading model list...',
-        empty: 'No displayable models'
+        empty: 'No displayable models',
+        multimodal: 'Multimodal'
       },
       claudeCode: {
         title: 'Claude Code Client Restriction',

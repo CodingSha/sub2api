@@ -1,6 +1,6 @@
 import type { Group } from '@/types'
 
-type GroupModelSource = Pick<Group, 'available_models'>
+type GroupModelSource = Pick<Group, 'available_models' | 'available_model_flags'>
 
 const normalizeModels = (models: string[] | undefined): string[] => {
   const seen = new Set<string>()
@@ -19,4 +19,12 @@ export function getGroupAvailableModels(
 ): string[] {
   if (!group) return []
   return normalizeModels(group.available_models)
+}
+
+export function isGroupAvailableModelMultimodal(
+  group: GroupModelSource | null | undefined,
+  model: string
+): boolean {
+  const flags = group?.available_model_flags?.[model]
+  return Array.isArray(flags) && flags.includes('multimodal')
 }
