@@ -144,4 +144,18 @@ describe("groupsModelsList", () => {
       { id: "gpt-5.5-image", selected: false, multimodal: true },
     ]);
   });
+
+  it("saves multimodal-only models even when the custom models list is disabled", () => {
+    const state = hydrateModelsListState({
+      enabled: false,
+      models: [],
+      multimodal_models: ["gpt-5.5-image"],
+    }, ["gpt-5.5", "gpt-5.5-image"]);
+
+    expect(buildModelsListConfig(state)).toEqual({
+      enabled: false,
+      models: ["gpt-5.5-image", "gpt-5.5"],
+      multimodal_models: ["gpt-5.5-image"],
+    });
+  });
 });

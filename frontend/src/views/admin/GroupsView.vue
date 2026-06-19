@@ -4165,10 +4165,15 @@ const handleUpdateGroup = async () => {
     payload.image_rate_multiplier = normalizeImageRateMultiplier(
       payload.image_rate_multiplier,
     );
-    await adminAPI.groups.update(editingGroup.value.id, payload);
+    const updatedGroup = await adminAPI.groups.update(editingGroup.value.id, payload);
+    const groupIndex = groups.value.findIndex((group) => group.id === updatedGroup.id);
+    if (groupIndex !== -1) {
+      groups.value[groupIndex] = updatedGroup;
+    }
+    editingGroup.value = updatedGroup;
     appStore.showSuccess(t("admin.groups.groupUpdated"));
     closeEditModal();
-    loadGroups();
+    await loadGroups();
   } catch (error: any) {
     appStore.showError(
       error.response?.data?.detail || t("admin.groups.failedToUpdate"),
