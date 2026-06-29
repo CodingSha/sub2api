@@ -5,8 +5,6 @@ The script intentionally avoids third-party Python packages so it can run on a
 server with only Python 3, PostgreSQL's psql client, or Docker Compose.
 """
 
-from __future__ import annotations
-
 import argparse
 import csv
 import os
@@ -16,10 +14,9 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import IO, Iterable
+from typing import Dict, IO, Iterable, List, Optional, Set, Tuple
 from xml.sax.saxutils import escape
 
 
@@ -62,20 +59,23 @@ INTEGER_COLUMNS = {
 DECIMAL_COLUMNS = {"total_cost", "actual_cost"}
 
 
-@dataclass
 class QueryRunner:
-    command_prefix: list[str]
-    env: dict[str, str]
+    def __init__(self, command_prefix, env):
+        # type: (List[str], Dict[str, str]) -> None
+        self.command_prefix = command_prefix
+        self.env = env
 
-    def copy_command(self, sql: str) -> list[str]:
+    def copy_command(self, sql):
+        # type: (str) -> List[str]
         copy_sql = f"COPY ({sql}) TO STDOUT WITH CSV HEADER"
         return [*self.command_prefix, "-v", "ON_ERROR_STOP=1", "-c", copy_sql]
 
-    def run_csv_capture(self, sql: str) -> list[dict[str, str]]:
+    def run_csv_capture(self, sql):
+        # type: (str) -> List[Dict[str, str]]
         proc = subprocess.run(
             self.copy_command(sql),
             env=self.env,
-            text=True,
+            universal_newlines=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -83,11 +83,12 @@ class QueryRunner:
             raise RuntimeError(proc.stderr.strip() or "psql command failed")
         return list(csv.DictReader(proc.stdout.splitlines()))
 
-    def open_csv_stream(self, sql: str) -> subprocess.Popen[str]:
+    def open_csv_stream(self, sql):
+        # type: (str) -> subprocess.Popen
         return subprocess.Popen(
             self.copy_command(sql),
             env=self.env,
-            text=True,
+            universal_newlines=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -131,7 +132,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def validate_date(value: str | None, name: str) -> date | None:
+def validate_date(value, name):
+    # type: (Optional[str], str) -> Optional[date]
     if not value:
         return None
     try:
@@ -140,11 +142,12 @@ def validate_date(value: str | None, name: str) -> date | None:
         raise SystemExit(f"{name} must be YYYY-MM-DD, got {value!r}") from exc
 
 
-def load_env_file(path: Path | None) -> dict[str, str]:
+def load_env_file(path):
+    # type: (Optional[Path]) -> Dict[str, str]
     if path is None or not path.exists():
         return {}
 
-    env: dict[str, str] = {}
+    env = {}  # type: Dict[str, str]
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -158,14 +161,16 @@ def load_env_file(path: Path | None) -> dict[str, str]:
     return env
 
 
-def default_env_file() -> Path | None:
+def default_env_file():
+    # type: () -> Optional[Path]
     for candidate in (Path("deploy/.env"), Path(".env")):
         if candidate.exists():
             return candidate
     return None
 
 
-def merged_env(args: argparse.Namespace, env_file: Path | None) -> dict[str, str]:
+def merged_env(args, env_file):
+    # type: (argparse.Namespace, Optional[Path]) -> Dict[str, str]
     env = load_env_file(env_file)
     env.update(os.environ)
 
@@ -190,7 +195,9 @@ def merged_env(args: argparse.Namespace, env_file: Path | None) -> dict[str, str
     return env
 
 
-def env_value(env: dict[str, str], *keys: str, default: str = "") -> str:
+def env_value(env, *keys, **kwargs):
+    # type: (Dict[str, str], *str, **str) -> str
+    default = kwargs.get("default", "")
     for key in keys:
         value = env.get(key)
         if value:
@@ -198,7 +205,8 @@ def env_value(env: dict[str, str], *keys: str, default: str = "") -> str:
     return default
 
 
-def should_use_docker(args: argparse.Namespace, env: dict[str, str]) -> bool:
+def should_use_docker(args, env):
+    # type: (argparse.Namespace, Dict[str, str]) -> bool
     if args.use_docker == "always":
         return True
     if args.use_docker == "never":
@@ -217,7 +225,8 @@ def should_use_docker(args: argparse.Namespace, env: dict[str, str]) -> bool:
     return False
 
 
-def build_runner(args: argparse.Namespace, env_file: Path | None, env: dict[str, str]) -> QueryRunner:
+def build_runner(args, env_file, env):
+    # type: (argparse.Namespace, Optional[Path], Dict[str, str]) -> QueryRunner
     command_env = os.environ.copy()
     command_env.update(env)
 
@@ -254,7 +263,8 @@ def sql_identifier(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
 
 
-def get_columns(runner: QueryRunner, table: str) -> set[str]:
+def get_columns(runner, table):
+    # type: (QueryRunner, str) -> Set[str]
     rows = runner.run_csv_capture(
         "SELECT column_name "
         "FROM information_schema.columns "
@@ -264,13 +274,15 @@ def get_columns(runner: QueryRunner, table: str) -> set[str]:
     return {row["column_name"] for row in rows}
 
 
-def sum_expr(usage_columns: set[str], column: str) -> str:
+def sum_expr(usage_columns, column):
+    # type: (Set[str], str) -> str
     if column in usage_columns:
         return f"COALESCE(SUM(ul.{sql_identifier(column)}), 0)"
     return "0"
 
 
-def user_expr(user_columns: set[str], column: str, fallback: str = "''") -> str:
+def user_expr(user_columns, column, fallback="''"):
+    # type: (Set[str], str, str) -> str
     if column in user_columns:
         return f"COALESCE(u.{sql_identifier(column)}::text, '')"
     return fallback
@@ -278,10 +290,11 @@ def user_expr(user_columns: set[str], column: str, fallback: str = "''") -> str:
 
 def resolve_date_range(
     runner: QueryRunner,
-    start: date | None,
-    end: date | None,
-    timezone: str,
-) -> tuple[date | None, date | None]:
+    start,
+    end,
+    timezone,
+):
+    # type: (QueryRunner, Optional[date], Optional[date], str) -> Tuple[Optional[date], Optional[date]]
     if start and end:
         return start, end
 
@@ -301,14 +314,15 @@ def resolve_date_range(
 
 
 def build_usage_query(
-    usage_columns: set[str],
-    user_columns: set[str],
-    start: date | None,
-    end: date | None,
-    timezone: str,
-    include_zero: bool,
-    active_users_only: bool,
-) -> str:
+    usage_columns,
+    user_columns,
+    start,
+    end,
+    timezone,
+    include_zero,
+    active_users_only,
+):
+    # type: (Set[str], Set[str], Optional[date], Optional[date], str, bool, bool) -> str
     tz = sql_literal(timezone)
     where_parts = []
     join_time_parts = []
@@ -426,7 +440,8 @@ def write_number_cell(out: IO[str], row: int, col: int, value: str, style: int |
     out.write(f'<c r="{ref}"{style_attr}><v>{escape(value)}</v></c>')
 
 
-def write_row(out: IO[str], row_num: int, values: Iterable[str], columns: list[str] | None = None, header: bool = False) -> None:
+def write_row(out, row_num, values, columns=None, header=False):
+    # type: (IO[str], int, Iterable[str], Optional[List[str]], bool) -> None
     out.write(f'<row r="{row_num}">')
     for col_num, value in enumerate(values, start=1):
         value = "" if value is None else str(value)
@@ -443,7 +458,8 @@ def write_row(out: IO[str], row_num: int, values: Iterable[str], columns: list[s
     out.write("</row>")
 
 
-def start_sheet(path: Path, headers: list[str]) -> IO[str]:
+def start_sheet(path, headers):
+    # type: (Path, List[str]) -> IO[str]
     out = path.open("w", encoding="utf-8", newline="")
     out.write('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>')
     out.write('<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">')
@@ -538,7 +554,8 @@ def styles_xml() -> str:
     )
 
 
-def package_xlsx(output_path: Path, sheet_paths: list[Path]) -> None:
+def package_xlsx(output_path, sheet_paths):
+    # type: (Path, List[Path]) -> None
     output_path.parent.mkdir(parents=True, exist_ok=True)
     now = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
     with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -583,7 +600,7 @@ def export_xlsx(runner: QueryRunner, sql: str, output_path: Path) -> int:
     headers = [label for _, label in EXPORT_COLUMNS]
     column_names = [name for name, _ in EXPORT_COLUMNS]
     total_rows = 0
-    sheet_paths: list[Path] = []
+    sheet_paths = []  # type: List[Path]
 
     with tempfile.TemporaryDirectory(prefix="sub2api_usage_export_") as temp_dir:
         temp_base = Path(temp_dir)
@@ -621,7 +638,8 @@ def export_xlsx(runner: QueryRunner, sql: str, output_path: Path) -> int:
     return total_rows
 
 
-def default_output_path(start: date | None, end: date | None) -> Path:
+def default_output_path(start, end):
+    # type: (Optional[date], Optional[date]) -> Path
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if start and end:
         name = f"daily_user_usage_{start.isoformat()}_to_{end.isoformat()}_{stamp}.xlsx"
