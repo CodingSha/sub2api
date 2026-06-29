@@ -428,13 +428,15 @@ def column_letter(index: int) -> str:
     return result
 
 
-def write_string_cell(out: IO[str], row: int, col: int, value: str, style: int | None = None) -> None:
+def write_string_cell(out, row, col, value, style=None):
+    # type: (IO[str], int, int, str, Optional[int]) -> None
     ref = f"{column_letter(col)}{row}"
     style_attr = f' s="{style}"' if style is not None else ""
     out.write(f'<c r="{ref}" t="inlineStr"{style_attr}><is><t>{escape(value)}</t></is></c>')
 
 
-def write_number_cell(out: IO[str], row: int, col: int, value: str, style: int | None = None) -> None:
+def write_number_cell(out, row, col, value, style=None):
+    # type: (IO[str], int, int, str, Optional[int]) -> None
     ref = f"{column_letter(col)}{row}"
     style_attr = f' s="{style}"' if style is not None else ""
     out.write(f'<c r="{ref}"{style_attr}><v>{escape(value)}</v></c>')
