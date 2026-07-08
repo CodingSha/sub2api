@@ -190,6 +190,7 @@ export default {
     channelMonitor: 'Channel Monitor',
     channelStatus: 'Channel Status',
     riskControl: 'Risk Control',
+    audit: 'Content Audit',
   },
 
   // Auth
