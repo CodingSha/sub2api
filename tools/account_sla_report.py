@@ -12,13 +12,21 @@ count_tokens probes and business-limited errors are excluded from the SLA scope.
 import argparse
 import csv
 import os
+import re
 import shutil
 import subprocess
 import sys
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+try:
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+except ImportError:  # Python 3.8 and earlier
+    ZoneInfo = None
+
+    class ZoneInfoNotFoundError(Exception):
+        pass
 
 
 class QueryRunner:
@@ -31,7 +39,7 @@ class QueryRunner:
         proc = subprocess.run(
             [*self.command_prefix, "-v", "ON_ERROR_STOP=1", "-c", copy_sql],
             env=self.env,
-            text=True,
+            universal_newlines=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -233,20 +241,97 @@ def build_runner(
     return QueryRunner(command, command_env)
 
 
-def parse_time(value: Optional[str], tz: ZoneInfo, *, default: datetime) -> datetime:
+def resolve_timezone(name: str) -> tzinfo:
+    if ZoneInfo is not None:
+        try:
+            return ZoneInfo(name)
+        except ZoneInfoNotFoundError:
+            pass
+
+    normalized = name.strip().upper()
+    fixed_offsets = {
+        "ASIA/SHANGHAI": 8 * 60,
+        "PRC": 8 * 60,
+        "UTC": 0,
+        "GMT": 0,
+    }
+    if normalized in fixed_offsets:
+        return timezone(timedelta(minutes=fixed_offsets[normalized]), name)
+
+    offset_text = normalized
+    for prefix in ("UTC", "GMT"):
+        if offset_text.startswith(prefix):
+            offset_text = offset_text[len(prefix):]
+            break
+    if len(offset_text) == 6 and offset_text[0] in "+-" and offset_text[3] == ":":
+        try:
+            hours = int(offset_text[1:3])
+            minutes = int(offset_text[4:6])
+        except ValueError:
+            hours = minutes = -1
+        if 0 <= hours <= 23 and 0 <= minutes <= 59:
+            total_minutes = hours * 60 + minutes
+            if offset_text[0] == "-":
+                total_minutes = -total_minutes
+            return timezone(timedelta(minutes=total_minutes), name)
+
+    if ZoneInfo is None:
+        raise SystemExit(
+            f"timezone {name!r} requires Python 3.9+ zoneinfo; "
+            "use Asia/Shanghai, UTC, or a numeric offset such as UTC+08:00"
+        )
+    raise SystemExit(f"unknown timezone: {name}")
+
+
+def parse_time(value: Optional[str], tz: tzinfo, *, default: datetime) -> datetime:
     if not value:
         return default
     try:
         if len(value) == 10:
-            parsed_date = date.fromisoformat(value)
+            parsed_date = datetime.strptime(value, "%Y-%m-%d").date()
             parsed = datetime.combine(parsed_date, time.min)
         else:
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            parsed = parse_iso_datetime(value)
     except ValueError as exc:
         raise SystemExit(f"invalid date/time: {value!r}") from exc
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=tz)
     return parsed.astimezone(timezone.utc)
+
+
+def parse_iso_datetime(value: str) -> datetime:
+    normalized = value.strip()
+    parsed_timezone = None
+    if normalized.endswith(("Z", "z")):
+        normalized = normalized[:-1]
+        parsed_timezone = timezone.utc
+    else:
+        offset_match = re.search(r"([+-])(\d{2}):?(\d{2})$", normalized)
+        if offset_match and offset_match.start() > 10:
+            hours = int(offset_match.group(2))
+            minutes = int(offset_match.group(3))
+            if hours > 23 or minutes > 59:
+                raise ValueError("invalid UTC offset")
+            total_minutes = hours * 60 + minutes
+            if offset_match.group(1) == "-":
+                total_minutes = -total_minutes
+            parsed_timezone = timezone(timedelta(minutes=total_minutes))
+            normalized = normalized[:offset_match.start()]
+
+    for pattern in (
+        "%Y-%m-%dT%H:%M:%S.%f",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M",
+        "%Y-%m-%d %H:%M:%S.%f",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+    ):
+        try:
+            parsed = datetime.strptime(normalized, pattern)
+            return parsed.replace(tzinfo=parsed_timezone) if parsed_timezone else parsed
+        except ValueError:
+            continue
+    raise ValueError("unsupported ISO-8601 date/time")
 
 
 def sql_literal(value: str) -> str:
@@ -378,10 +463,7 @@ def print_table(rows: List[Dict[str, str]]) -> None:
 
 def main() -> int:
     args = parse_args()
-    try:
-        tz = ZoneInfo(args.timezone)
-    except ZoneInfoNotFoundError as exc:
-        raise SystemExit(f"unknown timezone: {args.timezone}") from exc
+    tz = resolve_timezone(args.timezone)
 
     now = datetime.now(timezone.utc)
     end = parse_time(args.end, tz, default=now)
