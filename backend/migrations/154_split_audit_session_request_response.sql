@@ -50,7 +50,7 @@ EXCEPTION WHEN others THEN
 END;
 $$ LANGUAGE plpgsql;
 
-UPDATE audit_logs
+UPDATE llm_audit_logs
 SET
     request_body = audit_session_request_content(request_body),
     response_body = audit_session_response_content(response_body)

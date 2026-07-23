@@ -20,7 +20,7 @@ func NewAuditHandler(svc *service.AuditService) *AuditHandler {
 
 func (h *AuditHandler) List(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
-	filter := service.AuditLogFilter{
+	filter := service.LLMAuditLogFilter{
 		Pagination: pagination.PaginationParams{
 			Page:      page,
 			PageSize:  pageSize,

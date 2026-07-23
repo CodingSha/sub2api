@@ -1,4 +1,4 @@
-UPDATE audit_logs
+UPDATE llm_audit_logs
 SET updated_at = created_at
 WHERE session_scope = ''
   AND session_id = ''

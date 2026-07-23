@@ -131,7 +131,7 @@ func AuditCapture(auditService *service.AuditService) gin.HandlerFunc {
 		responseBody, responseTruncated := auditResponseBody(c, writer)
 		apiKey, _ := GetAPIKeyFromContext(c)
 		sessionID := extractAuditSessionID(c, rawRequestBody)
-		log := &service.AuditLog{
+		log := &service.LLMAuditLog{
 			RequestID:         requestIDFromContext(c),
 			SessionID:         sessionID,
 			Platform:          platformFromAPIKey(apiKey),
@@ -162,7 +162,7 @@ func AuditCapture(auditService *service.AuditService) gin.HandlerFunc {
 		if log.SessionID == "" {
 			log.SessionID = fallbackAuditSessionID(c, rawRequestBody)
 		}
-		go func(item *service.AuditLog) {
+		go func(item *service.LLMAuditLog) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := auditService.Create(ctx, item); err != nil {
@@ -659,7 +659,6 @@ func auditTextFragments(payload any, eventName string) []string {
 				fragments = append(fragments, auditStringField(delta, "content"))
 			}
 			if message, ok := choiceObj["message"].(map[string]any); ok {
-				fragments = append(fragments, auditStringField(message, "content"))
 				fragments = append(fragments, auditContentFragments(message["content"])...)
 			}
 		}
