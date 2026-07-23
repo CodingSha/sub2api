@@ -298,6 +298,28 @@ func TestExtractAuditSessionIDPrefersClaudeCodeHeader(t *testing.T) {
 	require.Equal(t, "claude-session-123", got)
 }
 
+func TestExtractAuditSessionIDPrefersWorkBuddyConversationHeader(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+	c.Request.Header.Set("X-Conversation-ID", "workbuddy-session-123")
+	c.Request.Header.Set("X-Session-Id", "00000000-0000-0000-0000-000000000000")
+	c.Request.Header.Set("X-Conversation-Request-ID", "request-that-rotates")
+
+	got := extractAuditSessionID(c, []byte(`{"conversation_id":"body-session"}`))
+	require.Equal(t, "workbuddy-session-123", got)
+}
+
+func TestExtractAuditSessionIDSkipsZeroPlaceholder(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+	c.Request.Header.Set("X-Session-Id", "00000000-0000-0000-0000-000000000000")
+
+	got := extractAuditSessionID(c, []byte(`{"conversation_id":"body-session"}`))
+	require.Equal(t, "body-session", got)
+}
+
 func TestExtractAuditSessionIDFromMetadataUserIDJSON(t *testing.T) {
 	got := extractAuditSessionID(nil, []byte(`{"metadata":{"user_id":"{\"device_id\":\"d\",\"session_id\":\"json-session-123\"}"}}`))
 	require.Equal(t, "json-session-123", got)

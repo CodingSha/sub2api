@@ -120,6 +120,7 @@ func TestForwardAsRawChatCompletions_ForcesStreamUsageUpstreamAndPassesUsageDown
 	require.True(t, gjson.GetBytes(upstream.lastBody, "stream_options.include_usage").Bool())
 	require.Contains(t, rec.Body.String(), `"usage"`)
 	require.Contains(t, rec.Body.String(), "data: [DONE]")
+	require.Equal(t, "ok", c.GetString("audit_response_body"))
 }
 
 func TestForwardAsRawChatCompletions_PreservesMappedGPT56MaxEffort(t *testing.T) {
@@ -278,6 +279,7 @@ func TestForwardAsRawChatCompletions_PreservesDeepSeekReasoningContentStreaming(
 	require.Contains(t, rec.Body.String(), `"reasoning_content":"think first"`)
 	require.Contains(t, rec.Body.String(), `"content":"final answer"`)
 	require.Contains(t, rec.Body.String(), "data: [DONE]")
+	require.Equal(t, "final answer", c.GetString("audit_response_body"))
 }
 
 func TestForwardAsRawChatCompletions_PreservesDeepSeekReasoningContentInRequest(t *testing.T) {

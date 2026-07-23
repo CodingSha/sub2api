@@ -1130,7 +1130,7 @@ async function loadRows() {
       model: filters.model.trim() || undefined,
       endpoint: filters.endpoint.trim() || undefined,
     }, { signal: controller.signal })
-    rows.value = result.items.map(mapAuditLog)
+    rows.value = result.items.map(mapAuditLog).filter((row) => row.turns.length > 0)
     pagination.total = result.total
     pagination.page = result.page
     pagination.pageSize = result.page_size

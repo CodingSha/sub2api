@@ -780,12 +780,13 @@ func extractAuditSessionID(c *gin.Context, body []byte) string {
 	if c != nil {
 		for _, header := range []string{
 			"X-Claude-Code-Session-Id",
+			"X-Conversation-ID",
 			"X-Session-Id",
 			"session_id",
 			"conversation_id",
 		} {
-			if value := strings.TrimSpace(c.GetHeader(header)); value != "" {
-				return truncateAuditString(value, 255)
+			if value := normalizeAuditSessionID(c.GetHeader(header)); value != "" {
+				return value
 			}
 		}
 	}
@@ -795,16 +796,22 @@ func extractAuditSessionID(c *gin.Context, body []byte) string {
 		return ""
 	}
 	for _, key := range []string{"session_id", "conversation_id", "prompt_cache_key"} {
-		if value, ok := payload[key].(string); ok && strings.TrimSpace(value) != "" {
-			return truncateAuditString(strings.TrimSpace(value), 255)
+		if value, ok := payload[key].(string); ok {
+			if normalized := normalizeAuditSessionID(value); normalized != "" {
+				return normalized
+			}
 		}
 	}
 	if metadata, ok := payload["metadata"].(map[string]any); ok {
-		if value, ok := metadata["session_id"].(string); ok && strings.TrimSpace(value) != "" {
-			return truncateAuditString(strings.TrimSpace(value), 255)
+		if value, ok := metadata["session_id"].(string); ok {
+			if normalized := normalizeAuditSessionID(value); normalized != "" {
+				return normalized
+			}
 		}
-		if value, ok := metadata["conversation_id"].(string); ok && strings.TrimSpace(value) != "" {
-			return truncateAuditString(strings.TrimSpace(value), 255)
+		if value, ok := metadata["conversation_id"].(string); ok {
+			if normalized := normalizeAuditSessionID(value); normalized != "" {
+				return normalized
+			}
 		}
 		if value, ok := metadata["user_id"].(string); ok && strings.TrimSpace(value) != "" {
 			if parsed := extractAuditSessionFromMetadataUserID(value); parsed != "" {
@@ -817,6 +824,18 @@ func extractAuditSessionID(c *gin.Context, body []byte) string {
 		return "tag:" + auditStableHash(value)
 	}
 	return ""
+}
+
+func normalizeAuditSessionID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	compact := strings.NewReplacer("-", "", "{", "", "}", "").Replace(value)
+	if len(compact) >= 8 && strings.Trim(compact, "0") == "" {
+		return ""
+	}
+	return truncateAuditString(value, 255)
 }
 
 func extractAuditSessionFromMetadataUserID(value string) string {
