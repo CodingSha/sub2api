@@ -1,9 +1,9 @@
-ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS session_id VARCHAR(255) DEFAULT '';
-ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS session_scope VARCHAR(512) DEFAULT '';
-ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS request_count INTEGER NOT NULL DEFAULT 1;
-ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE llm_audit_logs ADD COLUMN IF NOT EXISTS session_id VARCHAR(255) DEFAULT '';
+ALTER TABLE llm_audit_logs ADD COLUMN IF NOT EXISTS session_scope VARCHAR(512) DEFAULT '';
+ALTER TABLE llm_audit_logs ADD COLUMN IF NOT EXISTS request_count INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE llm_audit_logs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
-UPDATE audit_logs SET updated_at = created_at WHERE updated_at IS NULL;
+UPDATE llm_audit_logs SET updated_at = created_at WHERE updated_at IS NULL;
 
 CREATE OR REPLACE FUNCTION append_audit_turns(existing TEXT, incoming TEXT)
 RETURNS TEXT AS $$
@@ -34,6 +34,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE INDEX IF NOT EXISTS idx_audit_logs_updated_at ON audit_logs (updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_audit_logs_session_id ON audit_logs (session_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_logs_session_scope_uniq ON audit_logs (session_scope) WHERE session_scope <> '';
+CREATE INDEX IF NOT EXISTS idx_llm_audit_logs_updated_at ON llm_audit_logs (updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_llm_audit_logs_session_id ON llm_audit_logs (session_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_audit_logs_session_scope_uniq ON llm_audit_logs (session_scope) WHERE session_scope <> '';

@@ -20,6 +20,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 
 	"github.com/gin-gonic/gin"
 )
@@ -402,6 +403,12 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	var firstTokenMs *int
 	clientDisconnected := false
 	sawTerminalEvent := false
+	var auditText strings.Builder
+	defer func() {
+		if value := auditText.String(); strings.TrimSpace(value) != "" {
+			c.Set("audit_response_body", value)
+		}
+	}()
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -523,6 +530,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 			line := ev.line
 			if data, ok := extractAnthropicSSEDataLine(line); ok {
 				trimmed := strings.TrimSpace(data)
+				appendAnthropicAuditData(&auditText, data)
 				if anthropicStreamEventIsTerminal("", trimmed) {
 					sawTerminalEvent = true
 				}
@@ -555,6 +563,14 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 				} else {
 					inPartialEvent = true
 				}
+			}
+			if sawTerminalEvent {
+				if !clientDisconnected {
+					_, _ = io.WriteString(w, "\n")
+					flusher.Flush()
+				}
+				_ = resp.Body.Close()
+				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
 			}
 
 		case <-intervalCh:
@@ -782,6 +798,12 @@ func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 	}
 
 	usage := parseClaudeUsageFromResponseBody(body)
+	if IsForceCacheBilling(ctx) && usage.InputTokens > 0 {
+		body, err = classifyAnthropicResponseInputAsCacheRead(body, usage)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	writeAnthropicPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
@@ -791,6 +813,18 @@ func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 	body = reverseToolNamesIfPresent(c, body)
 	c.Data(resp.StatusCode, contentType, body)
 	return usage, nil
+}
+
+func classifyAnthropicResponseInputAsCacheRead(body []byte, usage *ClaudeUsage) ([]byte, error) {
+	classified, err := sjson.SetBytes(body, "usage.input_tokens", 0)
+	if err != nil {
+		return nil, fmt.Errorf("classify forced cache billing input tokens: %w", err)
+	}
+	classified, err = sjson.SetBytes(classified, "usage.cache_read_input_tokens", usage.CacheReadInputTokens+usage.InputTokens)
+	if err != nil {
+		return nil, fmt.Errorf("classify forced cache billing cache read tokens: %w", err)
+	}
+	return classified, nil
 }
 
 func writeAnthropicPassthroughResponseHeaders(dst http.Header, src http.Header, filter *responseheaders.CompiledHeaderFilter) {

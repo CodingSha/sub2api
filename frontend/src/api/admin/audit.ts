@@ -1,52 +1,71 @@
+/**
+ * Admin operation audit log API.
+ *
+ * The audit log is admin-only (not exposed to end users). It records
+ * management-plane operations with masked header credentials and redacted
+ * request bodies. Entries cannot be deleted individually; the whole log can
+ * only be cleared with a fresh TOTP verification.
+ */
+
 import { apiClient } from '../client'
 import type { PaginatedResponse } from '@/types'
 
 export interface AuditLog {
   id: number
-  request_id: string
-  session_id: string
-  request_count: number
-  user_id?: number | null
-  user_email: string
-  api_key_id?: number | null
-  api_key_name: string
-  group_id?: number | null
-  group_name: string
-  platform: string
-  endpoint: string
-  method: string
-  model: string
-  status_code: number
-  request_body: string
-  response_body: string
-  request_truncated: boolean
-  response_truncated: boolean
-  duration_ms: number
-  ip_address: string
-  user_agent: string
   created_at: string
-  updated_at: string
+  actor_user_id?: number
+  actor_email: string
+  actor_role: string
+  auth_method: string
+  credential_masked: string
+  action: string
+  method: string
+  path: string
+  request_id: string
+  client_ip: string
+  user_agent: string
+  request_body?: string
+  status_code: number
+  latency_ms: number
+  extra?: Record<string, any>
 }
 
-export interface AuditListParams {
+export interface AuditLogQuery {
   page?: number
   page_size?: number
-  search?: string
-  platform?: string
-  model?: string
-  endpoint?: string
-  from?: string
-  to?: string
+  start_time?: string
+  end_time?: string
+  actor_user_id?: number
+  actor_email?: string
+  auth_method?: string
+  action?: string
+  method?: string
+  client_ip?: string
+  success?: string
+  q?: string
 }
 
-export async function list(params: AuditListParams = {}, options?: { signal?: AbortSignal }): Promise<PaginatedResponse<AuditLog>> {
-  const { data } = await apiClient.get<PaginatedResponse<AuditLog>>('/admin/audit', {
-    params,
-    signal: options?.signal,
-  })
+export type AuditLogListResponse = PaginatedResponse<AuditLog>
+
+export async function list(params: AuditLogQuery): Promise<AuditLogListResponse> {
+  const { data } = await apiClient.get('/admin/audit-logs', { params })
   return data
 }
 
-export default {
-  list,
+export async function get(id: number): Promise<AuditLog> {
+  const { data } = await apiClient.get(`/admin/audit-logs/${id}`)
+  return data
 }
+
+export async function clear(totpCode: string): Promise<{ deleted: number }> {
+  const { data } = await apiClient.post('/admin/audit-logs/clear', { totp_code: totpCode })
+  return data
+}
+
+export const auditAPI = {
+  list,
+  get,
+  clear
+}
+
+export default auditAPI

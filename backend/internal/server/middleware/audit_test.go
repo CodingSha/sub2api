@@ -17,10 +17,10 @@ import (
 )
 
 type auditRepoStub struct {
-	items chan *service.AuditLog
+	items chan *service.LLMAuditLog
 }
 
-func (r *auditRepoStub) Create(ctx context.Context, log *service.AuditLog) error {
+func (r *auditRepoStub) Create(ctx context.Context, log *service.LLMAuditLog) error {
 	select {
 	case r.items <- log:
 	case <-ctx.Done():
@@ -29,7 +29,7 @@ func (r *auditRepoStub) Create(ctx context.Context, log *service.AuditLog) error
 	return nil
 }
 
-func (r *auditRepoStub) List(context.Context, service.AuditLogFilter) ([]service.AuditLog, *pagination.PaginationResult, error) {
+func (r *auditRepoStub) List(context.Context, service.LLMAuditLogFilter) ([]service.LLMAuditLog, *pagination.PaginationResult, error) {
 	return nil, nil, nil
 }
 
@@ -142,7 +142,7 @@ func TestNormalizeAuditResponseBodyLeavesPlainJSON(t *testing.T) {
 
 func TestAuditCaptureDetectsLargeStreamingRequestFromFullBody(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	repo := &auditRepoStub{items: make(chan *service.AuditLog, 1)}
+	repo := &auditRepoStub{items: make(chan *service.LLMAuditLog, 1)}
 	router := gin.New()
 	router.Use(AuditCapture(service.NewAuditService(repo)))
 	router.POST("/", func(c *gin.Context) {
@@ -176,7 +176,7 @@ func TestAuditCaptureDetectsLargeStreamingRequestFromFullBody(t *testing.T) {
 
 func TestAuditCapturePrefersExplicitAuditResponseBody(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	repo := &auditRepoStub{items: make(chan *service.AuditLog, 1)}
+	repo := &auditRepoStub{items: make(chan *service.LLMAuditLog, 1)}
 	router := gin.New()
 	router.Use(AuditCapture(service.NewAuditService(repo)))
 	router.POST("/", func(c *gin.Context) {
@@ -268,7 +268,7 @@ func requireAuditEvents(t *testing.T, body string, want ...auditConversationEven
 
 func TestAuditCaptureRestoresWrappedWriterForOuterMiddleware(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	repo := &auditRepoStub{items: make(chan *service.AuditLog, 1)}
+	repo := &auditRepoStub{items: make(chan *service.LLMAuditLog, 1)}
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Next()

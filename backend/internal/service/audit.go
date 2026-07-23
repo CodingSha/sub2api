@@ -11,7 +11,7 @@ const (
 	AuditCaptureMaxBytes = 64 * 1024
 )
 
-type AuditLog struct {
+type LLMAuditLog struct {
 	ID                int64     `json:"id"`
 	RequestID         string    `json:"request_id"`
 	SessionID         string    `json:"session_id"`
@@ -38,7 +38,7 @@ type AuditLog struct {
 	UpdatedAt         time.Time `json:"updated_at"`
 }
 
-type AuditLogFilter struct {
+type LLMAuditLogFilter struct {
 	Pagination pagination.PaginationParams
 	Search     string
 	Platform   string
@@ -49,8 +49,8 @@ type AuditLogFilter struct {
 }
 
 type AuditRepository interface {
-	Create(ctx context.Context, log *AuditLog) error
-	List(ctx context.Context, filter AuditLogFilter) ([]AuditLog, *pagination.PaginationResult, error)
+	Create(ctx context.Context, log *LLMAuditLog) error
+	List(ctx context.Context, filter LLMAuditLogFilter) ([]LLMAuditLog, *pagination.PaginationResult, error)
 }
 
 type AuditService struct {
@@ -61,14 +61,14 @@ func NewAuditService(repo AuditRepository) *AuditService {
 	return &AuditService{repo: repo}
 }
 
-func (s *AuditService) Create(ctx context.Context, log *AuditLog) error {
+func (s *AuditService) Create(ctx context.Context, log *LLMAuditLog) error {
 	if s == nil || s.repo == nil || log == nil {
 		return nil
 	}
 	return s.repo.Create(ctx, log)
 }
 
-func (s *AuditService) List(ctx context.Context, filter AuditLogFilter) ([]AuditLog, *pagination.PaginationResult, error) {
+func (s *AuditService) List(ctx context.Context, filter LLMAuditLogFilter) ([]LLMAuditLog, *pagination.PaginationResult, error) {
 	if filter.Pagination.Page <= 0 {
 		filter.Pagination.Page = 1
 	}

@@ -20,7 +20,7 @@ func NewAuditRepository(db *sql.DB) service.AuditRepository {
 	return &auditRepository{db: db}
 }
 
-func (r *auditRepository) Create(ctx context.Context, log *service.AuditLog) error {
+func (r *auditRepository) Create(ctx context.Context, log *service.LLMAuditLog) error {
 	if r == nil || r.db == nil || log == nil {
 		return nil
 	}
@@ -49,7 +49,7 @@ func (r *auditRepository) Create(ctx context.Context, log *service.AuditLog) err
 		}
 	}
 	return r.db.QueryRowContext(ctx, `
-INSERT INTO audit_logs (
+INSERT INTO llm_audit_logs (
     request_id, session_id, session_scope, request_count, user_id, user_email, api_key_id, api_key_name, group_id, group_name,
     platform, endpoint, method, model, status_code, request_body, response_body,
     request_truncated, response_truncated, duration_ms, ip_address, user_agent
@@ -62,7 +62,7 @@ ON CONFLICT (session_scope)
 WHERE session_scope <> ''
 DO UPDATE SET
     request_id = EXCLUDED.request_id,
-    request_count = audit_logs.request_count + 1,
+    request_count = llm_audit_logs.request_count + 1,
     user_email = EXCLUDED.user_email,
     api_key_name = EXCLUDED.api_key_name,
     group_name = EXCLUDED.group_name,
@@ -71,11 +71,11 @@ DO UPDATE SET
     method = EXCLUDED.method,
     model = EXCLUDED.model,
     status_code = EXCLUDED.status_code,
-    request_body = append_audit_turns(audit_logs.request_body, EXCLUDED.request_body),
-    response_body = append_audit_turns(audit_logs.response_body, EXCLUDED.response_body),
-    request_truncated = audit_logs.request_truncated OR EXCLUDED.request_truncated,
-    response_truncated = audit_logs.response_truncated OR EXCLUDED.response_truncated,
-    duration_ms = audit_logs.duration_ms + EXCLUDED.duration_ms,
+    request_body = append_audit_turns(llm_audit_logs.request_body, EXCLUDED.request_body),
+    response_body = append_audit_turns(llm_audit_logs.response_body, EXCLUDED.response_body),
+    request_truncated = llm_audit_logs.request_truncated OR EXCLUDED.request_truncated,
+    response_truncated = llm_audit_logs.response_truncated OR EXCLUDED.response_truncated,
+    duration_ms = llm_audit_logs.duration_ms + EXCLUDED.duration_ms,
     ip_address = EXCLUDED.ip_address,
     user_agent = EXCLUDED.user_agent,
     updated_at = NOW()
@@ -86,7 +86,7 @@ RETURNING id, request_count, created_at, updated_at`,
 	).Scan(&log.ID, &log.RequestCount, &log.CreatedAt, &log.UpdatedAt)
 }
 
-func auditSessionScope(log *service.AuditLog, sessionID string) string {
+func auditSessionScope(log *service.LLMAuditLog, sessionID string) string {
 	sessionID = strings.TrimSpace(sessionID)
 	if log == nil || sessionID == "" {
 		return ""
@@ -106,12 +106,12 @@ func auditSessionScope(log *service.AuditLog, sessionID string) string {
 	return fmt.Sprintf("api:%d|user:%d|group:%d|session:%s", apiKeyID, userID, groupID, sessionID)
 }
 
-func (r *auditRepository) List(ctx context.Context, filter service.AuditLogFilter) ([]service.AuditLog, *pagination.PaginationResult, error) {
+func (r *auditRepository) List(ctx context.Context, filter service.LLMAuditLogFilter) ([]service.LLMAuditLog, *pagination.PaginationResult, error) {
 	where, args := buildAuditWhere(filter)
 	whereSQL := "WHERE " + strings.Join(where, " AND ")
 
 	var total int64
-	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM audit_logs l "+whereSQL, args...).Scan(&total); err != nil {
+	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM llm_audit_logs l "+whereSQL, args...).Scan(&total); err != nil {
 		return nil, nil, fmt.Errorf("count audit logs: %w", err)
 	}
 
@@ -124,7 +124,7 @@ SELECT
     l.group_id, l.group_name, l.platform, l.endpoint, l.method, l.model,
     l.status_code, l.request_body, l.response_body, l.request_truncated,
     l.response_truncated, l.duration_ms, l.ip_address, l.user_agent, l.created_at, l.updated_at
-FROM audit_logs l `+whereSQL+`
+FROM llm_audit_logs l `+whereSQL+`
 ORDER BY l.updated_at DESC, l.id DESC
 LIMIT $`+fmt.Sprint(len(queryArgs)-1)+` OFFSET $`+fmt.Sprint(len(queryArgs)),
 		queryArgs...,
@@ -134,9 +134,9 @@ LIMIT $`+fmt.Sprint(len(queryArgs)-1)+` OFFSET $`+fmt.Sprint(len(queryArgs)),
 	}
 	defer func() { _ = rows.Close() }()
 
-	items := make([]service.AuditLog, 0)
+	items := make([]service.LLMAuditLog, 0)
 	for rows.Next() {
-		var item service.AuditLog
+		var item service.LLMAuditLog
 		var userID, apiKeyID, groupID sql.NullInt64
 		if err := rows.Scan(
 			&item.ID,
@@ -198,15 +198,15 @@ type auditSessionContent struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
-func auditRequestContentFromLog(log *service.AuditLog) auditSessionContent {
+func auditRequestContentFromLog(log *service.LLMAuditLog) auditSessionContent {
 	return auditContentFromLog(log, log.RequestBody, log.RequestTruncated)
 }
 
-func auditResponseContentFromLog(log *service.AuditLog) auditSessionContent {
+func auditResponseContentFromLog(log *service.LLMAuditLog) auditSessionContent {
 	return auditContentFromLog(log, log.ResponseBody, log.ResponseTruncated)
 }
 
-func auditContentFromLog(log *service.AuditLog, content string, truncated bool) auditSessionContent {
+func auditContentFromLog(log *service.LLMAuditLog, content string, truncated bool) auditSessionContent {
 	return auditSessionContent{
 		RequestID:  log.RequestID,
 		Endpoint:   log.Endpoint,
@@ -220,7 +220,7 @@ func auditContentFromLog(log *service.AuditLog, content string, truncated bool) 
 	}
 }
 
-func buildAuditWhere(filter service.AuditLogFilter) ([]string, []any) {
+func buildAuditWhere(filter service.LLMAuditLogFilter) ([]string, []any) {
 	where := []string{"l.id IS NOT NULL"}
 	args := make([]any, 0)
 	add := func(sql string, value any) {

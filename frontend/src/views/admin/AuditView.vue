@@ -291,7 +291,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
-import auditAPI, { type AuditLog } from '@/api/admin/audit'
+import auditAPI, { type LLMAuditLog } from '@/api/admin/llmAudit'
 
 interface AuditContentItem {
   request_id?: string
@@ -1057,7 +1057,7 @@ function parseAuditContentItems(value: string): AuditContentItem[] | null {
   return null
 }
 
-function buildAuditTurns(item: AuditLog): AuditTurn[] {
+function buildAuditTurns(item: LLMAuditLog): AuditTurn[] {
   const requests = parseAuditContentItems(item.request_body)
   const responses = parseAuditContentItems(item.response_body)
   if (!requests || !responses) {
@@ -1093,7 +1093,7 @@ function buildAuditTurns(item: AuditLog): AuditTurn[] {
   return normalizeHistoricalToolMessages(turns)
 }
 
-function mapAuditLog(item: AuditLog): AuditRow {
+function mapAuditLog(item: LLMAuditLog): AuditRow {
   return {
     id: String(item.id),
     time: formatTime(item.updated_at || item.created_at),
