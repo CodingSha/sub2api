@@ -88,6 +88,8 @@ var ProviderSet = wire.NewSet(
 	NewSettingRepository,
 	NewOpsRepository,
 	NewAuditLogRepository,
+	NewPasskeyRepository,
+	NewPasskeySessionStore,
 	NewUserSubscriptionRepository,
 	NewUserAttributeDefinitionRepository,
 	NewUserAttributeValueRepository,
@@ -148,6 +150,8 @@ var ProviderSet = wire.NewSet(
 
 	// HTTP service ports (DI Strategy A: return interface directly)
 	NewTurnstileVerifier,
+	NewTencentCaptchaVerifier,
+	NewAliyunCaptchaVerifier,
 	ProvidePricingRemoteClient,
 	ProvideGitHubReleaseClient,
 	NewProxyExitInfoProber,
