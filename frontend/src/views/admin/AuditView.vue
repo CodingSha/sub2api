@@ -3,17 +3,17 @@
     <div class="space-y-6">
       <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h1 class="text-2xl font-semibold text-gray-900 dark:text-white">{{ t('admin.audit.title') }}</h1>
-          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t('admin.audit.description') }}</p>
+          <h1 class="text-2xl font-semibold text-gray-900 dark:text-white">{{ t('admin.llmAudit.title') }}</h1>
+          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t('admin.llmAudit.description') }}</p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
           <button type="button" class="btn btn-secondary inline-flex items-center gap-2" @click="resetFilters">
             <Icon name="refresh" size="sm" />
-            {{ t('admin.audit.reset') }}
+            {{ t('admin.llmAudit.reset') }}
           </button>
           <button type="button" class="btn btn-primary inline-flex items-center gap-2" :disabled="loading" @click="loadRows">
             <Icon name="refresh" size="sm" />
-            {{ t('admin.audit.refresh') }}
+            {{ t('admin.llmAudit.refresh') }}
           </button>
         </div>
       </div>
@@ -42,30 +42,30 @@
       <div class="card p-4">
         <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
           <div>
-            <label class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.audit.search') }}</label>
+            <label class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.llmAudit.search') }}</label>
             <div class="relative">
               <Icon name="search" size="sm" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
               <input
                 v-model="filters.keyword"
                 type="search"
                 class="input w-full pl-9"
-                :placeholder="t('admin.audit.searchPlaceholder')"
+                :placeholder="t('admin.llmAudit.searchPlaceholder')"
               />
             </div>
           </div>
           <div>
-            <label class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.audit.platform') }}</label>
+            <label class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.llmAudit.platform') }}</label>
             <select v-model="filters.platform" class="input w-full">
               <option v-for="option in platformOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
             </select>
           </div>
           <div>
-            <label class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.audit.model') }}</label>
-            <input v-model="filters.model" type="text" class="input w-full" :placeholder="t('admin.audit.modelPlaceholder')" />
+            <label class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.llmAudit.model') }}</label>
+            <input v-model="filters.model" type="text" class="input w-full" :placeholder="t('admin.llmAudit.modelPlaceholder')" />
           </div>
           <div>
-            <label class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.audit.endpoint') }}</label>
-            <input v-model="filters.endpoint" type="text" class="input w-full" :placeholder="t('admin.audit.endpointPlaceholder')" />
+            <label class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.llmAudit.endpoint') }}</label>
+            <input v-model="filters.endpoint" type="text" class="input w-full" :placeholder="t('admin.llmAudit.endpointPlaceholder')" />
           </div>
         </div>
       </div>
@@ -74,11 +74,11 @@
         <div class="card overflow-hidden">
           <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-4 py-3 dark:border-dark-700">
             <div>
-              <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('admin.audit.records') }}</h2>
-              <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.audit.recordCount', { count: pagination.total }) }}</p>
+              <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('admin.llmAudit.records') }}</h2>
+              <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.llmAudit.recordCount', { count: pagination.total }) }}</p>
             </div>
             <span class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600 dark:bg-dark-700 dark:text-gray-300">
-              {{ t('admin.audit.retentionBadge') }}
+              {{ t('admin.llmAudit.retentionBadge') }}
             </span>
           </div>
 
@@ -90,19 +90,19 @@
             <table class="min-w-full divide-y divide-gray-200 dark:divide-dark-700">
               <thead class="bg-gray-50 dark:bg-dark-800/80">
                 <tr>
-                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ t('admin.audit.time') }}</th>
-                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ t('admin.audit.user') }}</th>
-                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ t('admin.audit.platform') }}</th>
-                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ t('admin.audit.model') }}</th>
-                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ t('admin.audit.session') }}</th>
-                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ t('admin.audit.statusCode') }}</th>
-                  <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ t('admin.audit.actions') }}</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ t('admin.llmAudit.time') }}</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ t('admin.llmAudit.user') }}</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ t('admin.llmAudit.platform') }}</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ t('admin.llmAudit.model') }}</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ t('admin.llmAudit.session') }}</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ t('admin.llmAudit.statusCode') }}</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ t('admin.llmAudit.actions') }}</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-gray-100 bg-white dark:divide-dark-700 dark:bg-dark-800">
                 <tr v-if="loading">
                   <td colspan="7" class="px-4 py-14 text-center text-sm text-gray-500 dark:text-gray-400">
-                    {{ t('admin.audit.loading') }}
+                    {{ t('admin.llmAudit.loading') }}
                   </td>
                 </tr>
                 <tr v-else-if="rows.length === 0">
@@ -111,8 +111,8 @@
                       <div class="flex h-12 w-12 items-center justify-center rounded-lg bg-gray-100 text-gray-500 dark:bg-dark-700 dark:text-gray-300">
                         <Icon name="inbox" size="lg" />
                       </div>
-                      <p class="mt-4 text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.audit.emptyTitle') }}</p>
-                      <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t('admin.audit.emptyDescription') }}</p>
+                      <p class="mt-4 text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.llmAudit.emptyTitle') }}</p>
+                      <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t('admin.llmAudit.emptyDescription') }}</p>
                     </div>
                   </td>
                 </tr>
@@ -135,7 +135,7 @@
                   <td class="px-4 py-3">
                     <div class="min-w-0">
                       <p class="truncate font-mono text-xs text-gray-600 dark:text-gray-300">{{ row.sessionId }}</p>
-                      <p class="truncate text-xs text-gray-500 dark:text-gray-400">{{ t('admin.audit.turnCount', { count: row.requestCount }) }}</p>
+                      <p class="truncate text-xs text-gray-500 dark:text-gray-400">{{ t('admin.llmAudit.turnCount', { count: row.requestCount }) }}</p>
                     </div>
                   </td>
                   <td class="whitespace-nowrap px-4 py-3">
@@ -145,7 +145,7 @@
                   </td>
                   <td class="whitespace-nowrap px-4 py-3 text-right">
                     <button type="button" class="btn btn-secondary px-2 py-1 text-xs" @click.stop="selectedRow = row">
-                      {{ t('admin.audit.review') }}
+                      {{ t('admin.llmAudit.review') }}
                     </button>
                   </td>
                 </tr>
@@ -155,14 +155,14 @@
 
           <div class="flex flex-col gap-3 border-t border-gray-100 px-4 py-3 text-sm dark:border-dark-700 sm:flex-row sm:items-center sm:justify-between">
             <div class="text-gray-500 dark:text-gray-400">
-              {{ t('admin.audit.pageSummary', { page: pagination.page, pages: pagination.pages }) }}
+              {{ t('admin.llmAudit.pageSummary', { page: pagination.page, pages: pagination.pages }) }}
             </div>
             <div class="flex items-center gap-2">
               <button type="button" class="btn btn-secondary px-3 py-1.5 text-xs" :disabled="loading || pagination.page <= 1" @click="goPage(pagination.page - 1)">
-                {{ t('admin.audit.previousPage') }}
+                {{ t('admin.llmAudit.previousPage') }}
               </button>
               <button type="button" class="btn btn-secondary px-3 py-1.5 text-xs" :disabled="loading || pagination.page >= pagination.pages" @click="goPage(pagination.page + 1)">
-                {{ t('admin.audit.nextPage') }}
+                {{ t('admin.llmAudit.nextPage') }}
               </button>
             </div>
           </div>
@@ -170,29 +170,29 @@
 
         <aside class="card flex max-h-[calc(100vh-9rem)] flex-col overflow-hidden">
           <div class="flex-shrink-0 border-b border-gray-100 px-4 py-3 dark:border-dark-700">
-            <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('admin.audit.detail') }}</h2>
-            <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ selectedRow?.sessionId || selectedRow?.requestId || t('admin.audit.noSelection') }}</p>
+            <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('admin.llmAudit.detail') }}</h2>
+            <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ selectedRow?.sessionId || selectedRow?.requestId || t('admin.llmAudit.noSelection') }}</p>
           </div>
           <div v-if="selectedRow" class="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
             <div class="grid grid-cols-2 gap-3 text-sm">
               <div>
-                <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.audit.account') }}</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.llmAudit.account') }}</p>
                 <p class="mt-1 truncate font-medium text-gray-900 dark:text-white">{{ selectedRow.account }}</p>
               </div>
               <div>
-                <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.audit.turns') }}</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.llmAudit.turns') }}</p>
                 <p class="mt-1 truncate font-medium text-gray-900 dark:text-white">{{ selectedRow.requestCount }}</p>
               </div>
               <div>
-                <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.audit.totalLatency') }}</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.llmAudit.totalLatency') }}</p>
                 <p class="mt-1 truncate font-medium text-gray-900 dark:text-white">{{ selectedRow.latency }}</p>
               </div>
               <div>
-                <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.audit.statusCode') }}</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.llmAudit.statusCode') }}</p>
                 <p class="mt-1 truncate font-medium text-gray-900 dark:text-white">{{ selectedRow.statusCode || '-' }}</p>
               </div>
               <div>
-                <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.audit.ipAddress') }}</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.llmAudit.ipAddress') }}</p>
                 <p class="mt-1 truncate font-medium text-gray-900 dark:text-white">{{ selectedRow.ipAddress }}</p>
               </div>
             </div>
@@ -202,13 +202,13 @@
                 <div class="space-y-2">
                   <div>
                     <p class="mb-1 text-xs font-medium text-sky-700 dark:text-sky-300">
-                      {{ t('admin.audit.requestContent') }}<span v-if="turn.requestTruncated"> · {{ t('admin.audit.truncated') }}</span>
+                      {{ t('admin.llmAudit.requestContent') }}<span v-if="turn.requestTruncated"> · {{ t('admin.llmAudit.truncated') }}</span>
                     </p>
                     <pre class="max-h-40 overflow-auto rounded-lg bg-sky-50 p-3 text-xs text-gray-800 dark:bg-sky-950/30 dark:text-gray-100">{{ turn.request }}</pre>
                   </div>
                   <div>
                     <p class="mb-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-                      {{ t('admin.audit.responseContent') }}<span v-if="turn.responseTruncated"> · {{ t('admin.audit.truncated') }}</span>
+                      {{ t('admin.llmAudit.responseContent') }}<span v-if="turn.responseTruncated"> · {{ t('admin.llmAudit.truncated') }}</span>
                     </p>
                     <pre class="max-h-40 overflow-auto rounded-lg bg-emerald-50 p-3 text-xs text-gray-800 dark:bg-emerald-950/30 dark:text-gray-100">{{ turn.response }}</pre>
                   </div>
@@ -217,15 +217,15 @@
             </div>
             <div v-if="turnPages > 1" class="flex flex-col gap-2 border-t border-gray-100 pt-3 text-xs dark:border-dark-700 sm:flex-row sm:items-center sm:justify-between">
               <p class="text-gray-500 dark:text-gray-400">
-                {{ t('admin.audit.turnPageSummary', { start: turnRangeStart, end: turnRangeEnd, total: selectedTurns.length }) }}
+                {{ t('admin.llmAudit.turnPageSummary', { start: turnRangeStart, end: turnRangeEnd, total: selectedTurns.length }) }}
               </p>
               <div class="flex items-center gap-2">
                 <button type="button" class="btn btn-secondary px-3 py-1.5 text-xs" :disabled="turnPagination.page <= 1" @click="goTurnPage(turnPagination.page - 1)">
-                  {{ t('admin.audit.previousPage') }}
+                  {{ t('admin.llmAudit.previousPage') }}
                 </button>
-                <span class="text-gray-500 dark:text-gray-400">{{ t('admin.audit.pageSummary', { page: turnPagination.page, pages: turnPages }) }}</span>
+                <span class="text-gray-500 dark:text-gray-400">{{ t('admin.llmAudit.pageSummary', { page: turnPagination.page, pages: turnPages }) }}</span>
                 <button type="button" class="btn btn-secondary px-3 py-1.5 text-xs" :disabled="turnPagination.page >= turnPages" @click="goTurnPage(turnPagination.page + 1)">
-                  {{ t('admin.audit.nextPage') }}
+                  {{ t('admin.llmAudit.nextPage') }}
                 </button>
               </div>
             </div>
@@ -235,8 +235,8 @@
               <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-gray-100 text-gray-500 dark:bg-dark-700 dark:text-gray-300">
                 <Icon name="clipboard" size="lg" />
               </div>
-              <p class="mt-4 text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.audit.noSelectionTitle') }}</p>
-              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t('admin.audit.noSelectionDescription') }}</p>
+              <p class="mt-4 text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.llmAudit.noSelectionTitle') }}</p>
+              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t('admin.llmAudit.noSelectionDescription') }}</p>
             </div>
           </div>
         </aside>
@@ -317,40 +317,40 @@ let activeController: AbortController | null = null
 const overviewItems = computed(() => [
   {
     key: 'total',
-    label: t('admin.audit.totalRecords'),
+    label: t('admin.llmAudit.totalRecords'),
     value: pagination.total.toLocaleString(),
-    meta: t('admin.audit.allModels'),
+    meta: t('admin.llmAudit.allModels'),
     icon: 'clipboard' as const,
     iconClass: 'bg-sky-50 text-sky-600 dark:bg-sky-900/20 dark:text-sky-300',
   },
   {
     key: 'success',
-    label: t('admin.audit.successful'),
+    label: t('admin.llmAudit.successful'),
     value: rows.value.filter((row) => row.statusCode >= 200 && row.statusCode < 300).length.toLocaleString(),
-    meta: t('admin.audit.currentPage'),
+    meta: t('admin.llmAudit.currentPage'),
     icon: 'eye' as const,
     iconClass: 'bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-300',
   },
   {
     key: 'errors',
-    label: t('admin.audit.failed'),
+    label: t('admin.llmAudit.failed'),
     value: rows.value.filter((row) => row.statusCode >= 400).length.toLocaleString(),
-    meta: t('admin.audit.currentPage'),
+    meta: t('admin.llmAudit.currentPage'),
     icon: 'shield' as const,
     iconClass: 'bg-rose-50 text-rose-600 dark:bg-rose-900/20 dark:text-rose-300',
   },
   {
     key: 'coverage',
-    label: t('admin.audit.coverage'),
+    label: t('admin.llmAudit.coverage'),
     value: rows.value.length > 0 ? '100%' : '0%',
-    meta: t('admin.audit.captured'),
+    meta: t('admin.llmAudit.captured'),
     icon: 'database' as const,
     iconClass: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-300',
   },
 ])
 
 const platformOptions = computed(() => [
-  { value: 'all', label: t('admin.audit.allPlatforms') },
+  { value: 'all', label: t('admin.llmAudit.allPlatforms') },
   { value: 'openai', label: 'OpenAI' },
   { value: 'anthropic', label: 'Claude / Anthropic' },
   { value: 'gemini', label: 'Gemini' },
@@ -668,7 +668,7 @@ async function loadRows() {
     selectedRow.value = rows.value.find((row) => row.id === selectedRow.value?.id) || rows.value[0] || null
   } catch (error: any) {
     if (error?.code === 'ERR_CANCELED') return
-    errorMessage.value = error?.response?.data?.message || error?.message || t('admin.audit.loadFailed')
+    errorMessage.value = error?.response?.data?.message || error?.message || t('admin.llmAudit.loadFailed')
   } finally {
     if (activeController === controller) {
       activeController = null
