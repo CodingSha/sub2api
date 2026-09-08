@@ -8,7 +8,7 @@
 # =============================================================================
 
 ARG NODE_IMAGE=node:24-alpine
-ARG GOLANG_IMAGE=golang:1.27.0-alpine
+ARG GOLANG_IMAGE=golang:1.27-alpine
 ARG ALPINE_IMAGE=alpine:3.21
 ARG POSTGRES_IMAGE=postgres:18-alpine
 ARG GOPROXY=https://goproxy.cn,direct
@@ -22,12 +22,19 @@ ARG NPM_CONFIG_REGISTRY=
 # it on the native host arch instead of under QEMU emulation for the target.
 FROM --platform=${BUILDPLATFORM} ${NODE_IMAGE} AS frontend-builder
 ARG NPM_CONFIG_REGISTRY
+ENV COREPACK_NPM_REGISTRY=${NPM_CONFIG_REGISTRY}
 
 WORKDIR /app/frontend
 
+# Install pnpm (pinned to v9 to match CI and keep builds reproducible).
+# package.json 的 build 脚本会调用 pnpm（check:i18n），必须先装 pnpm。
+RUN corepack enable && corepack prepare pnpm@9 --activate
+
 # Install dependencies first (better caching)
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
-RUN npm install --include=dev --package-lock=false --legacy-peer-deps --cache=/tmp/npm-cache --no-audit --no-fund
+RUN --mount=type=cache,id=sub2api-pnpm-store,target=/root/.local/share/pnpm/store \
+    if [ -n "${NPM_CONFIG_REGISTRY}" ]; then pnpm config set registry "${NPM_CONFIG_REGISTRY}"; fi && \
+    pnpm install --frozen-lockfile --prefer-offline
 
 # Copy frontend source and build.
 # LegalDocumentView.vue (admin-compliance gate) build-time imports
@@ -35,8 +42,8 @@ RUN npm install --include=dev --package-lock=false --legacy-peer-deps --cache=/t
 # in the image (WORKDIR /app/frontend -> resolves to /app/docs/legal/*.md).
 # Copy only that subtree to keep the build dependency minimal.
 COPY frontend/ ./
-COPY docs/legal /app/docs/legal
-RUN npm run build
+COPY docs/legal/ /app/docs/legal/
+RUN pnpm run build
 
 # -----------------------------------------------------------------------------
 # Stage 2: Backend Builder
