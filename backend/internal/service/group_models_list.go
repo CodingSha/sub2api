@@ -5,17 +5,6 @@ import (
 	"strings"
 )
 
-func normalizeGroupModelsListConfig(cfg GroupModelsListConfig) GroupModelsListConfig {
-	out := GroupModelsListConfig{Enabled: cfg.Enabled}
-	out.Models = normalizeModelIDList(cfg.Models)
-	out.MultimodalModels = normalizeModelIDList(cfg.MultimodalModels)
-	return out
-}
-
-func (g *Group) CustomModelsListEnabled() bool {
-	return g != nil && g.ModelsListConfig.Enabled && len(g.ModelsListConfig.Models) > 0
-}
-
 func availableModelsFromAccountMappings(accounts []Account, platform string) []string {
 	platform = strings.TrimSpace(platform)
 	modelSet := make(map[string]struct{})
@@ -79,11 +68,13 @@ func mergeModelLists(primary []string, extra []string) []string {
 
 const ModelFlagMultimodal = "multimodal"
 
-func availableModelFlagsFromConfig(models []string, cfg GroupModelsListConfig) map[string][]string {
+// availableModelFlagsFromConfig computes user-facing model flags from the group's
+// model allowlist multimodal markers.
+func availableModelFlagsFromConfig(models []string, allowlist GroupModelAllowlist) map[string][]string {
 	if len(models) == 0 {
 		return nil
 	}
-	multimodalModels := normalizeModelIDList(cfg.MultimodalModels)
+	multimodalModels := normalizeModelIDList(allowlist.MultimodalModels)
 	if len(multimodalModels) == 0 {
 		return nil
 	}
@@ -108,9 +99,6 @@ func availableModelFlagsFromConfig(models []string, cfg GroupModelsListConfig) m
 }
 
 func normalizeModelIDList(models []string) []string {
-	if len(models) == 0 {
-		return nil
-	}
 	seen := make(map[string]struct{}, len(models))
 	out := make([]string, 0, len(models))
 	for _, model := range models {
@@ -123,9 +111,6 @@ func normalizeModelIDList(models []string) []string {
 		}
 		seen[model] = struct{}{}
 		out = append(out, model)
-	}
-	if len(out) == 0 {
-		return nil
 	}
 	return out
 }
