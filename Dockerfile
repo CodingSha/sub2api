@@ -64,6 +64,10 @@ ARG TARGETARCH
 
 ENV GOPROXY=${GOPROXY}
 ENV GOSUMDB=${GOSUMDB}
+# 官方 Go 镜像默认 GOTOOLCHAIN=local：镜像版本低于 go.mod 要求时直接报错。
+# 改为 auto，让旧镜像（如被 override 钉住的 1.26.5）也能按需经 GOPROXY 拉取
+# 新工具链（缓存在下面的 gomod cache mount 里，不会重复下载）。
+ENV GOTOOLCHAIN=auto
 
 # Install build dependencies
 RUN apk add --no-cache git ca-certificates tzdata
