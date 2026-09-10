@@ -221,6 +221,7 @@ func groupFromServiceBase(g *service.Group) Group {
 		AllowMessagesDispatch:           g.AllowMessagesDispatch,
 		AllowLive:                       g.AllowLive,
 		AvailableModels:                 cloneStringSlice(g.AvailableModels),
+		AvailableModelFlags:             cloneStringSliceMap(g.AvailableModelFlags),
 		RequireOAuthOnly:                g.RequireOAuthOnly,
 		RequirePrivacySet:               g.RequirePrivacySet,
 		RPMLimit:                        g.RPMLimit,
@@ -238,6 +239,17 @@ func cloneStringSlice(in []string) []string {
 	}
 	out := make([]string, len(in))
 	copy(out, in)
+	return out
+}
+
+func cloneStringSliceMap(in map[string][]string) map[string][]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(in))
+	for key, value := range in {
+		out[key] = cloneStringSlice(value)
+	}
 	return out
 }
 

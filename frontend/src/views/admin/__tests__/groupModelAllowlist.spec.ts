@@ -15,6 +15,7 @@ import {
   selectAllModelAllowlistItems,
   setModelAllowlistCandidates,
   toggleModelAllowlistItem,
+  toggleModelAllowlistItemMultimodal,
 } from "../groupModelAllowlist";
 
 describe("groupModelAllowlist", () => {
@@ -25,8 +26,8 @@ describe("groupModelAllowlist", () => {
 
     expect(state.enabled).toBe(false);
     expect(state.items).toEqual([
-      { id: "gpt-5.5", selected: true },
-      { id: "gpt-5.4", selected: true },
+      { id: "gpt-5.5", selected: true, multimodal: false },
+      { id: "gpt-5.4", selected: true, multimodal: false },
     ]);
   });
 
@@ -40,9 +41,9 @@ describe("groupModelAllowlist", () => {
 
     expect(state.enabled).toBe(true);
     expect(state.items).toEqual([
-      { id: "gpt-5.5", selected: true },
-      { id: "gpt-5.4", selected: true },
-      { id: "legacy-gpt", selected: false },
+      { id: "gpt-5.5", selected: true, multimodal: false },
+      { id: "gpt-5.4", selected: true, multimodal: false },
+      { id: "legacy-gpt", selected: false, multimodal: false },
     ]);
   });
 
@@ -55,8 +56,8 @@ describe("groupModelAllowlist", () => {
     setModelAllowlistCandidates(state, ["gpt-5.5", "gpt-5.4"]);
 
     expect(state.items).toEqual([
-      { id: "gpt-5.5", selected: true },
-      { id: "gpt-5.4", selected: false },
+      { id: "gpt-5.5", selected: true, multimodal: false },
+      { id: "gpt-5.4", selected: false, multimodal: false },
     ]);
   });
 
@@ -108,10 +109,55 @@ describe("groupModelAllowlist", () => {
     selectAllModelAllowlistItems(state);
 
     expect(state.items).toEqual([
-      { id: "gpt-5.5", selected: true },
-      { id: "gpt-5.4", selected: true },
-      { id: "gpt-5.4-mini", selected: true },
+      { id: "gpt-5.5", selected: true, multimodal: false },
+      { id: "gpt-5.4", selected: true, multimodal: false },
+      { id: "gpt-5.4-mini", selected: true, multimodal: false },
     ]);
+  });
+
+  it("restores saved multimodal markers on candidates", () => {
+    const state = createModelAllowlistState({
+      enabled: true,
+      models: ["gpt-5.5", "gpt-5.4"],
+      multimodal_models: ["gpt-5.4"],
+    });
+
+    setModelAllowlistCandidates(state, ["gpt-5.4", "legacy-gpt", "gpt-5.5"]);
+
+    expect(state.items).toEqual([
+      { id: "gpt-5.5", selected: true, multimodal: false },
+      { id: "gpt-5.4", selected: true, multimodal: true },
+      { id: "legacy-gpt", selected: false, multimodal: false },
+    ]);
+  });
+
+  it("toggles a multimodal marker and emits multimodal_models on build", () => {
+    const state = hydrateModelAllowlistState({
+      enabled: true,
+      models: ["gpt-5.5", "gpt-5.4"],
+    }, ["gpt-5.5", "gpt-5.4"]);
+
+    toggleModelAllowlistItemMultimodal(state, "gpt-5.4");
+
+    expect(buildModelAllowlistConfig(state)).toEqual({
+      enabled: true,
+      models: ["gpt-5.5", "gpt-5.4"],
+      multimodal_models: ["gpt-5.4"],
+    });
+  });
+
+  it("keeps saved multimodal markers in payload when candidates have not loaded", () => {
+    const state = createModelAllowlistState({
+      enabled: true,
+      models: ["gpt-5.5", "gpt-5.4"],
+      multimodal_models: ["gpt-5.4"],
+    });
+
+    expect(buildModelAllowlistConfig(state)).toEqual({
+      enabled: true,
+      models: ["gpt-5.5", "gpt-5.4"],
+      multimodal_models: ["gpt-5.4"],
+    });
   });
 
   it("inverts selected models from the toolbar action", () => {
@@ -123,9 +169,9 @@ describe("groupModelAllowlist", () => {
     invertModelAllowlistSelection(state);
 
     expect(state.items).toEqual([
-      { id: "gpt-5.5", selected: false },
-      { id: "gpt-5.4", selected: true },
-      { id: "gpt-5.4-mini", selected: true },
+      { id: "gpt-5.5", selected: false, multimodal: false },
+      { id: "gpt-5.4", selected: true, multimodal: false },
+      { id: "gpt-5.4-mini", selected: true, multimodal: false },
     ]);
   });
 });
@@ -136,7 +182,7 @@ describe("addCustomModelAllowlistItem", () => {
   it("appends a trimmed entry as selected", () => {
     const s = state();
     expect(addCustomModelAllowlistItem(s, "  claude-sonnet-4.5  ")).toBeNull();
-    expect(s.items.at(-1)).toEqual({ id: "claude-sonnet-4.5", selected: true });
+    expect(s.items.at(-1)).toEqual({ id: "claude-sonnet-4.5", selected: true, multimodal: false });
   });
 
   it("accepts trailing wildcard entries", () => {

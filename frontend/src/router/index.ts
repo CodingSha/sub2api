@@ -433,8 +433,8 @@ const routes: RouteRecordRaw[] = [
       requiresAuth: true,
       requiresAdmin: true,
       title: 'Audit Logs',
-      titleKey: 'admin.audit.title',
-      descriptionKey: 'admin.audit.description'
+      titleKey: 'admin.auditLogs.title',
+      descriptionKey: 'admin.auditLogs.description'
     }
   },
   {
@@ -617,8 +617,8 @@ const routes: RouteRecordRaw[] = [
       requiresAuth: true,
       requiresAdmin: true,
       title: 'Content Audit',
-      titleKey: 'admin.audit.title',
-      descriptionKey: 'admin.audit.description'
+      titleKey: 'admin.llmAudit.title',
+      descriptionKey: 'admin.llmAudit.description'
     }
   },
   {

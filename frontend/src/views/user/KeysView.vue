@@ -199,6 +199,12 @@
                   @click.stop="copyModelName(model)"
                 >
                   <span class="truncate">{{ model }}</span>
+                  <span
+                    v-if="isModelMultimodal(row.group, model)"
+                    class="rounded bg-white/70 px-1 text-[10px] leading-4 text-current ring-1 ring-current/20 dark:bg-dark-900/40"
+                  >
+                    {{ t('keys.multimodal') }}
+                  </span>
                   <Icon
                     :name="isModelCopied(model) ? 'check' : 'copy'"
                     size="xs"
@@ -555,6 +561,12 @@
                 @click.stop="copyModelName(model)"
               >
                 <span class="truncate">{{ model }}</span>
+                <span
+                  v-if="isModelMultimodal(selectedFormGroup, model)"
+                  class="rounded bg-white/70 px-1 text-[10px] leading-4 text-current ring-1 ring-current/20 dark:bg-dark-900/40"
+                >
+                  {{ t('keys.multimodal') }}
+                </span>
                 <Icon
                   :name="isModelCopied(model) ? 'check' : 'copy'"
                   size="xs"
@@ -1211,7 +1223,7 @@ import {
   buildCcSwitchImportDeeplink,
   type CcSwitchClientType
 } from '@/utils/ccswitchImport'
-import { getGroupAvailableModels } from '@/utils/groupModels'
+import { getGroupAvailableModels, isGroupAvailableModelMultimodal } from '@/utils/groupModels'
 
 // Helper to format date for datetime-local input
 const formatDateTimeLocal = (isoDate: string): string => {
@@ -1507,6 +1519,13 @@ const modelsForGroup = (group: Group | null | undefined) => {
   const loadedGroup = groupById.value.get(group.id)
   const loadedModels = getGroupAvailableModels(loadedGroup)
   return loadedModels.length > 0 ? loadedModels : getGroupAvailableModels(group)
+}
+
+const isModelMultimodal = (group: Group | null | undefined, model: string) => {
+  if (!group) return false
+  const loadedGroup = groupById.value.get(group.id)
+  return isGroupAvailableModelMultimodal(loadedGroup, model) ||
+    isGroupAvailableModelMultimodal(group, model)
 }
 
 const modelChipClass = (model: string) => {

@@ -1086,6 +1086,7 @@ func (s *APIKeyService) hydrateGroupAvailableModels(ctx context.Context, groups 
 			modelsByGroupID[group.ID] = models
 		}
 		group.AvailableModels = cloneStringSlice(models)
+		group.AvailableModelFlags = availableModelFlagsFromConfig(models, group.ModelAllowlist)
 	}
 	return nil
 }
@@ -1110,6 +1111,7 @@ func (s *APIKeyService) hydrateAPIKeyGroupAvailableModels(ctx context.Context, k
 			modelsByGroupID[group.ID] = models
 		}
 		group.AvailableModels = cloneStringSlice(models)
+		group.AvailableModelFlags = availableModelFlagsFromConfig(models, group.ModelAllowlist)
 	}
 	return nil
 }

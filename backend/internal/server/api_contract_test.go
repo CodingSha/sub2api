@@ -334,9 +334,10 @@ func TestAPIContracts(t *testing.T) {
 						ModelRouting: map[string][]int64{
 							"claude-3-*": []int64{101, 102},
 						},
-						ModelsListConfig: service.GroupModelsListConfig{
-							Enabled: true,
-							Models:  []string{"claude-sonnet-4-6"},
+						ModelAllowlist: service.GroupModelAllowlist{
+							Enabled:          true,
+							Models:           []string{"claude-sonnet-4-6"},
+							MultimodalModels: []string{"claude-sonnet-4-6"},
 						},
 						SupportedModelScopes: []string{"claude"},
 						AccountCount:         2,
@@ -405,6 +406,7 @@ func TestAPIContracts(t *testing.T) {
 						"allow_messages_dispatch": false,
 						"allow_live": false,
 						"available_models": ["claude-sonnet-4-6"],
+						"available_model_flags": {"claude-sonnet-4-6": ["multimodal"]},
 						"fallback_group_id": null,
 						"fallback_group_id_on_invalid_request": null,
 						"require_oauth_only": false,
@@ -1496,7 +1498,7 @@ func newContractDeps(t *testing.T) *contractDeps {
 	settingRepo := newStubSettingRepo()
 	settingService := service.NewSettingService(settingRepo, cfg)
 
-	adminService := service.NewAdminService(nil, userRepo, groupRepo, &accountRepo, proxyRepo, apiKeyRepo, redeemRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	adminService := service.NewAdminService(nil, userRepo, groupRepo, accountRepo, proxyRepo, apiKeyRepo, redeemRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	authHandler := handler.NewAuthHandler(cfg, nil, userService, settingService, nil, redeemService, nil, nil)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 	usageHandler := handler.NewUsageHandler(usageService, apiKeyService, nil, nil)

@@ -16,16 +16,19 @@ import (
 type GroupModelAllowlist struct {
 	Enabled bool     `json:"enabled"`
 	Models  []string `json:"models,omitempty"`
+	// MultimodalModels 标记白名单中支持多模态输入的模型，用户侧以
+	// available_model_flags（例如 "multimodal"）形式透出。
+	MultimodalModels []string `json:"multimodal_models,omitempty"`
 }
 
 // DomainGroupModelAllowlist 把 service 白名单转换为 ent 持久化使用的 domain 类型。
 func DomainGroupModelAllowlist(cfg GroupModelAllowlist) domain.GroupModelAllowlist {
-	return domain.GroupModelAllowlist{Enabled: cfg.Enabled, Models: cfg.Models}
+	return domain.GroupModelAllowlist{Enabled: cfg.Enabled, Models: cfg.Models, MultimodalModels: cfg.MultimodalModels}
 }
 
 // GroupModelAllowlistFromDomain 把 ent 读出的 domain 白名单转换为 service 类型。
 func GroupModelAllowlistFromDomain(cfg domain.GroupModelAllowlist) GroupModelAllowlist {
-	return GroupModelAllowlist{Enabled: cfg.Enabled, Models: cfg.Models}
+	return GroupModelAllowlist{Enabled: cfg.Enabled, Models: cfg.Models, MultimodalModels: cfg.MultimodalModels}
 }
 
 // supplementUnmappedOpenAIModels ensures a partial mapping catalog does not

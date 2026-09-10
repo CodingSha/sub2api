@@ -289,6 +289,12 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	clientOutputStarted := false
 	pendingLines := make([]string, 0, 8)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
+	var auditText strings.Builder
+	defer func() {
+		if value := auditText.String(); strings.TrimSpace(value) != "" {
+			c.Set("audit_response_body", value)
+		}
+	}()
 	var terminal openAIRawStreamTerminalState
 
 	writeLine := func(line string) {
@@ -330,6 +336,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			trimmedPayload := strings.TrimSpace(payload)
 			terminal.ObserveDataLine(trimmedPayload)
 			if trimmedPayload != "[DONE]" {
+				appendRawChatCompletionsAuditText(&auditText, payload)
 				observer.ObserveOpenAI([]byte(payload), strings.TrimSpace(gjson.Get(payload, "type").String()))
 				usageOnlyChunk := isOpenAIChatUsageOnlyStreamChunk(payload)
 				if u := extractCCStreamUsage(payload); u != nil {
@@ -439,6 +446,27 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	}
 
 	return resultWithUsage(), nil
+}
+
+func appendRawChatCompletionsAuditText(builder *strings.Builder, payload string) {
+	if builder == nil || builder.Len() >= AuditCaptureMaxBytes {
+		return
+	}
+	for _, choice := range gjson.Get(payload, "choices").Array() {
+		content := choice.Get("delta.content")
+		if content.Type != gjson.String || content.String() == "" {
+			continue
+		}
+		remaining := AuditCaptureMaxBytes - builder.Len()
+		text := content.String()
+		if len(text) > remaining {
+			text = text[:remaining]
+		}
+		_, _ = builder.WriteString(text)
+		if builder.Len() >= AuditCaptureMaxBytes {
+			return
+		}
+	}
 }
 
 // ensureOpenAIChatStreamUsage 确保 raw Chat Completions 流式请求会让上游返回 usage。

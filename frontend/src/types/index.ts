@@ -610,6 +610,7 @@ export interface Group {
   default_mapped_model?: string
   messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig
   available_models?: string[]
+  available_model_flags?: Record<string, string[]>
   require_oauth_only: boolean
   require_privacy_set: boolean
   created_at: string
@@ -654,6 +655,7 @@ export interface AdminGroup extends Group {
 export interface ModelAllowlist {
   enabled: boolean
   models: string[]
+  multimodal_models?: string[]
 }
 
 // 固定账号获取 Codex Model Manifest 配置（仅 openai 分组）

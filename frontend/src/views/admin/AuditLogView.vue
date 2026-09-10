@@ -8,7 +8,7 @@
             <!-- Left: filter fields -->
             <div class="flex flex-1 flex-wrap items-end gap-4">
               <div class="w-full sm:w-auto sm:min-w-[240px]">
-                <label class="input-label">{{ t('admin.audit.filters.q') }}</label>
+                <label class="input-label">{{ t('admin.auditLogs.filters.q') }}</label>
                 <div class="relative">
                   <Icon
                     name="search"
@@ -19,39 +19,39 @@
                     v-model.trim="filters.q"
                     type="text"
                     class="input pl-10"
-                    :placeholder="t('admin.audit.filters.qPlaceholder')"
+                    :placeholder="t('admin.auditLogs.filters.qPlaceholder')"
                     @keyup.enter="search"
                   />
                 </div>
               </div>
 
               <div class="w-full sm:w-auto sm:min-w-[200px]">
-                <label class="input-label">{{ t('admin.audit.filters.actorEmail') }}</label>
+                <label class="input-label">{{ t('admin.auditLogs.filters.actorEmail') }}</label>
                 <input v-model.trim="filters.actor_email" type="text" class="input" @keyup.enter="search" />
               </div>
 
               <div class="w-full sm:w-auto sm:min-w-[180px]">
-                <label class="input-label">{{ t('admin.audit.filters.action') }}</label>
+                <label class="input-label">{{ t('admin.auditLogs.filters.action') }}</label>
                 <input v-model.trim="filters.action" type="text" class="input" @keyup.enter="search" />
               </div>
 
               <div class="w-full sm:w-auto sm:min-w-[160px]">
-                <label class="input-label">{{ t('admin.audit.filters.clientIp') }}</label>
+                <label class="input-label">{{ t('admin.auditLogs.filters.clientIp') }}</label>
                 <input v-model.trim="filters.client_ip" type="text" class="input" @keyup.enter="search" />
               </div>
 
               <div class="w-full sm:w-auto sm:min-w-[140px]">
-                <label class="input-label">{{ t('admin.audit.filters.method') }}</label>
+                <label class="input-label">{{ t('admin.auditLogs.filters.method') }}</label>
                 <Select v-model="filters.method" :options="methodOptions" @change="search" />
               </div>
 
               <div class="w-full sm:w-auto sm:min-w-[170px]">
-                <label class="input-label">{{ t('admin.audit.filters.authMethod') }}</label>
+                <label class="input-label">{{ t('admin.auditLogs.filters.authMethod') }}</label>
                 <Select v-model="filters.auth_method" :options="authMethodOptions" @change="search" />
               </div>
 
               <div class="w-full sm:w-auto sm:min-w-[140px]">
-                <label class="input-label">{{ t('admin.audit.filters.result') }}</label>
+                <label class="input-label">{{ t('admin.auditLogs.filters.result') }}</label>
                 <Select v-model="filters.success" :options="resultOptions" @change="search" />
               </div>
 
@@ -75,7 +75,7 @@
               </button>
               <button type="button" class="btn btn-danger" @click="openClearDialog">
                 <Icon name="trash" size="sm" class="mr-1.5" />
-                {{ t('admin.audit.clearAll') }}
+                {{ t('admin.auditLogs.clearAll') }}
               </button>
             </div>
           </div>
@@ -133,14 +133,14 @@
               @click="openDetail(row.id)"
             >
               <Icon name="eye" size="sm" />
-              {{ t('admin.audit.columns.detail') }}
+              {{ t('admin.auditLogs.columns.detail') }}
             </button>
           </template>
 
           <template #empty>
             <div class="flex flex-col items-center py-8">
               <Icon name="shield" size="xl" class="mb-4 h-12 w-12 text-gray-300 dark:text-dark-600" />
-              <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.audit.empty') }}</p>
+              <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.auditLogs.empty') }}</p>
             </div>
           </template>
         </DataTable>
@@ -162,7 +162,7 @@
     <!-- Detail dialog -->
     <BaseDialog
       :show="detailVisible"
-      :title="t('admin.audit.detail.title')"
+      :title="t('admin.auditLogs.detail.title')"
       width="wide"
       :close-on-click-outside="true"
       @close="detailVisible = false"
@@ -199,9 +199,9 @@
               <Icon name="clock" size="xs" />
               {{ formatTime(detail.created_at) }}
             </span>
-            <span>{{ t('admin.audit.detail.latency') }} {{ detail.latency_ms }} ms</span>
+            <span>{{ t('admin.auditLogs.detail.latency') }} {{ detail.latency_ms }} ms</span>
             <span v-if="detail.request_id" class="inline-flex items-center gap-1">
-              {{ t('admin.audit.detail.requestId') }}
+              {{ t('admin.auditLogs.detail.requestId') }}
               <span class="break-all font-mono">{{ detail.request_id }}</span>
             </span>
           </div>
@@ -211,7 +211,7 @@
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div class="rounded-xl bg-gray-50 p-4 dark:bg-dark-900">
             <div class="text-xs font-bold uppercase tracking-wider text-gray-400">
-              {{ t('admin.audit.columns.actor') }}
+              {{ t('admin.auditLogs.columns.actor') }}
             </div>
             <div class="mt-1 break-all text-sm font-medium text-gray-900 dark:text-white">
               {{ detail.actor_email || '—' }}
@@ -221,7 +221,7 @@
 
           <div class="rounded-xl bg-gray-50 p-4 dark:bg-dark-900">
             <div class="text-xs font-bold uppercase tracking-wider text-gray-400">
-              {{ t('admin.audit.filters.authMethod') }}
+              {{ t('admin.auditLogs.filters.authMethod') }}
             </div>
             <div class="mt-1 text-sm font-medium text-gray-900 dark:text-white">
               {{ authMethodLabel(detail.auth_method) || '—' }}
@@ -233,7 +233,7 @@
 
           <div class="rounded-xl bg-gray-50 p-4 dark:bg-dark-900">
             <div class="text-xs font-bold uppercase tracking-wider text-gray-400">
-              {{ t('admin.audit.columns.clientIp') }}
+              {{ t('admin.auditLogs.columns.clientIp') }}
             </div>
             <div class="mt-1 break-all font-mono text-sm font-medium text-gray-900 dark:text-white">
               {{ detail.client_ip || '—' }}
@@ -244,7 +244,7 @@
         <!-- User-Agent -->
         <section>
           <h4 class="mb-1.5 text-xs font-bold uppercase tracking-wider text-gray-400">
-            {{ t('admin.audit.detail.userAgent') }}
+            {{ t('admin.auditLogs.detail.userAgent') }}
           </h4>
           <div class="break-all rounded-xl bg-gray-50 p-3 font-mono text-xs leading-relaxed text-gray-600 dark:bg-dark-900 dark:text-gray-400">
             {{ detail.user_agent || '—' }}
@@ -254,7 +254,7 @@
         <!-- Request body (redacted) -->
         <section v-if="detail.request_body">
           <h4 class="mb-1.5 text-xs font-bold uppercase tracking-wider text-gray-400">
-            {{ t('admin.audit.detail.requestBody') }}
+            {{ t('admin.auditLogs.detail.requestBody') }}
           </h4>
           <pre class="max-h-72 overflow-auto rounded-xl bg-gray-50 p-4 font-mono text-xs leading-relaxed text-gray-600 dark:bg-dark-900 dark:text-gray-400">{{ prettyBody(detail.request_body) }}</pre>
         </section>
@@ -262,7 +262,7 @@
         <!-- Extra -->
         <section v-if="detail.extra && Object.keys(detail.extra).length">
           <h4 class="mb-1.5 text-xs font-bold uppercase tracking-wider text-gray-400">
-            {{ t('admin.audit.detail.extra') }}
+            {{ t('admin.auditLogs.detail.extra') }}
           </h4>
           <pre class="max-h-48 overflow-auto rounded-xl bg-gray-50 p-4 font-mono text-xs leading-relaxed text-gray-600 dark:bg-dark-900 dark:text-gray-400">{{ JSON.stringify(detail.extra, null, 2) }}</pre>
         </section>
@@ -304,9 +304,9 @@
     <!-- Clear confirmation → step-up TOTP -->
     <ConfirmDialog
       :show="clearConfirmVisible"
-      :title="t('admin.audit.clearConfirm.title')"
-      :message="t('admin.audit.clearConfirm.message')"
-      :confirm-text="t('admin.audit.clearAll')"
+      :title="t('admin.auditLogs.clearConfirm.title')"
+      :message="t('admin.auditLogs.clearConfirm.message')"
+      :confirm-text="t('admin.auditLogs.clearAll')"
       :cancel-text="t('common.cancel')"
       danger
       @confirm="onClearConfirmed"
@@ -316,13 +316,13 @@
     <!-- TOTP prompt for the clear operation -->
     <BaseDialog
       :show="clearTotpVisible"
-      :title="t('admin.audit.clearConfirm.totpTitle')"
+      :title="t('admin.auditLogs.clearConfirm.totpTitle')"
       width="narrow"
       :z-index="60"
       @close="cancelClearTotp"
     >
       <div class="py-2">
-        <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('admin.audit.clearConfirm.totpHint') }}</p>
+        <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('admin.auditLogs.clearConfirm.totpHint') }}</p>
         <input
           v-model.trim="clearTotpCode"
           type="text"
@@ -344,7 +344,7 @@
           :disabled="clearing || clearTotpCode.length !== 6"
           @click="submitClear"
         >
-          {{ clearing ? t('common.loading') : t('admin.audit.clearAll') }}
+          {{ clearing ? t('common.loading') : t('admin.auditLogs.clearAll') }}
         </button>
       </template>
     </BaseDialog>
@@ -404,7 +404,7 @@ const TIME_RANGE_MINUTES: Record<string, number> = {
 }
 
 const timeRangeOptions = computed(() => [
-  { value: '', label: t('admin.audit.filters.all') },
+  { value: '', label: t('admin.auditLogs.filters.all') },
   { value: '30m', label: t('admin.ops.timeRange.30m') },
   { value: '1h', label: t('admin.ops.timeRange.1h') },
   { value: '6h', label: t('admin.ops.timeRange.6h') },
@@ -464,17 +464,17 @@ function handleCustomTimeRangeCancel() {
 }
 
 const columns = computed<Column[]>(() => [
-  { key: 'created_at', label: t('admin.audit.columns.time') },
-  { key: 'actor', label: t('admin.audit.columns.actor') },
-  { key: 'action', label: t('admin.audit.columns.action') },
-  { key: 'status_code', label: t('admin.audit.columns.result') },
-  { key: 'latency_ms', label: t('admin.audit.detail.latency') },
-  { key: 'client_ip', label: t('admin.audit.columns.clientIp') },
+  { key: 'created_at', label: t('admin.auditLogs.columns.time') },
+  { key: 'actor', label: t('admin.auditLogs.columns.actor') },
+  { key: 'action', label: t('admin.auditLogs.columns.action') },
+  { key: 'status_code', label: t('admin.auditLogs.columns.result') },
+  { key: 'latency_ms', label: t('admin.auditLogs.detail.latency') },
+  { key: 'client_ip', label: t('admin.auditLogs.columns.clientIp') },
   { key: 'actions', label: t('common.actions') }
 ])
 
 const methodOptions = computed(() => [
-  { value: '', label: t('admin.audit.filters.all') },
+  { value: '', label: t('admin.auditLogs.filters.all') },
   { value: 'POST', label: 'POST' },
   { value: 'PUT', label: 'PUT' },
   { value: 'PATCH', label: 'PATCH' },
@@ -483,15 +483,15 @@ const methodOptions = computed(() => [
 ])
 
 const authMethodOptions = computed(() => [
-  { value: '', label: t('admin.audit.filters.all') },
+  { value: '', label: t('admin.auditLogs.filters.all') },
   { value: 'jwt', label: 'JWT' },
   { value: 'admin_api_key', label: 'Admin API Key' }
 ])
 
 const resultOptions = computed(() => [
-  { value: '', label: t('admin.audit.filters.all') },
-  { value: 'true', label: t('admin.audit.filters.resultSuccess') },
-  { value: 'false', label: t('admin.audit.filters.resultFailure') }
+  { value: '', label: t('admin.auditLogs.filters.all') },
+  { value: 'true', label: t('admin.auditLogs.filters.resultSuccess') },
+  { value: 'false', label: t('admin.auditLogs.filters.resultFailure') }
 ])
 
 function authMethodLabel(method: string): string {
@@ -540,7 +540,7 @@ async function fetchLogs() {
     logs.value = res.items
     total.value = res.total
   } catch (err: any) {
-    appStore.showError(err?.message || t('admin.audit.loadFailed'))
+    appStore.showError(err?.message || t('admin.auditLogs.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -588,7 +588,7 @@ async function openDetail(id: number) {
   try {
     detail.value = await adminAPI.audit.get(id)
   } catch (err: any) {
-    appStore.showError(err?.message || t('admin.audit.loadFailed'))
+    appStore.showError(err?.message || t('admin.auditLogs.loadFailed'))
     detailVisible.value = false
   } finally {
     detailLoading.value = false
@@ -622,7 +622,7 @@ async function openClearDialog() {
       return
     }
   } catch (err: any) {
-    appStore.showError(err?.message || t('admin.audit.loadFailed'))
+    appStore.showError(err?.message || t('admin.auditLogs.loadFailed'))
     return
   } finally {
     checkingTotpStatus.value = false
@@ -647,10 +647,10 @@ async function submitClear() {
   try {
     const res = await adminAPI.audit.clear(clearTotpCode.value)
     clearTotpVisible.value = false
-    appStore.showSuccess(t('admin.audit.clearConfirm.success', { count: res.deleted }))
+    appStore.showSuccess(t('admin.auditLogs.clearConfirm.success', { count: res.deleted }))
     search()
   } catch (err: any) {
-    appStore.showError(err?.message || t('admin.audit.clearConfirm.failed'))
+    appStore.showError(err?.message || t('admin.auditLogs.clearConfirm.failed'))
     clearTotpCode.value = ''
   } finally {
     clearing.value = false
@@ -665,7 +665,7 @@ function formatTime(iso: string): string {
 }
 
 function statusText(status: number): string {
-  return status < 400 ? t('admin.audit.filters.resultSuccess') : t('admin.audit.filters.resultFailure')
+  return status < 400 ? t('admin.auditLogs.filters.resultSuccess') : t('admin.auditLogs.filters.resultFailure')
 }
 
 function statusBadgeClass(status: number): string {
