@@ -47,27 +47,16 @@ export interface AuditLogQuery {
 
 export type AuditLogListResponse = PaginatedResponse<AuditLog>
 
-/**
- * List audit logs (paginated, filterable).
- */
 export async function list(params: AuditLogQuery): Promise<AuditLogListResponse> {
   const { data } = await apiClient.get('/admin/audit-logs', { params })
   return data
 }
 
-/**
- * Get a single audit log entry (includes the redacted request body).
- */
 export async function get(id: number): Promise<AuditLog> {
   const { data } = await apiClient.get(`/admin/audit-logs/${id}`)
   return data
 }
 
-/**
- * Clear all audit logs. Requires a fresh TOTP code (verified server-side);
- * unavailable when 2FA is not enabled for the operator.
- * @param totpCode - current 6-digit TOTP code
- */
 export async function clear(totpCode: string): Promise<{ deleted: number }> {
   const { data } = await apiClient.post('/admin/audit-logs/clear', { totp_code: totpCode })
   return data

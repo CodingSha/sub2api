@@ -45,3 +45,16 @@ func TestAPIKeyFromService_MapsNilLastUsedAt(t *testing.T) {
 	require.Nil(t, out.LastUsedAt)
 	require.Nil(t, out.LastUsedIP)
 }
+
+func TestGroupFromServiceShallow_MapsAvailableModels(t *testing.T) {
+	src := &service.Group{
+		ID:              10,
+		Name:            "OpenAI Custom",
+		Platform:        service.PlatformOpenAI,
+		AvailableModels: []string{"gpt-5.4", "gpt-image-2"},
+	}
+
+	out := GroupFromServiceShallow(src)
+	require.NotNil(t, out)
+	require.Equal(t, []string{"gpt-5.4", "gpt-image-2"}, out.AvailableModels)
+}

@@ -1870,6 +1870,12 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	capacityFailoverSuppressedLogged := false
 	failedMessage := ""
 	clientOutputStarted := false
+	var auditText strings.Builder
+	defer func() {
+		if value := auditText.String(); strings.TrimSpace(value) != "" {
+			c.Set("audit_response_body", value)
+		}
+	}()
 	codexFailureTerminal := account != nil && account.Platform == PlatformOpenAI
 	failureDelivered := false
 	suppressCurrentEvent := false
@@ -2024,6 +2030,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					line = "data: " + string(restoredData)
 				}
 			}
+			appendOpenAIAuditText(&auditText, dataBytes)
 			eventType := effectiveOpenAISSEEventType(dataBytes, rawEventType)
 			if codexFailureTerminal && sawBareError && !sawResponseFailed && eventType != "response.failed" {
 				suppressCurrentEvent = true
@@ -2194,6 +2201,11 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					flushPendingOutput()
 				}
 			}
+		}
+		// 干净终止（成功 terminal 且无任何待定失败态）时立即返回，不等待上游 EOF。
+		if line == "" && sawTerminalEvent && !sawFailedEvent && !responseFailedPending && !sawBareError {
+			s.clearOpenAIProxyStreamDisconnect(account)
+			return resultWithUsage(), nil
 		}
 		if line == "" && responseFailedPending {
 			responseFailedPending = false

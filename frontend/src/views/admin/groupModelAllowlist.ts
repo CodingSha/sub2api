@@ -1,16 +1,19 @@
 export interface ModelAllowlistConfig {
   enabled: boolean
   models: string[]
+  multimodal_models?: string[]
 }
 
 export interface ModelAllowlistItem {
   id: string
   selected: boolean
+  multimodal: boolean
 }
 
 export interface ModelAllowlistState {
   enabled: boolean
   savedModels: string[]
+  savedMultimodalModels: string[]
   items: ModelAllowlistItem[]
 }
 
@@ -22,6 +25,7 @@ export const createModelAllowlistState = (
 ): ModelAllowlistState => ({
   enabled: config?.enabled ?? false,
   savedModels: normalizeModels(config?.models ?? []),
+  savedMultimodalModels: normalizeModels(config?.multimodal_models ?? []),
   items: [],
 })
 
@@ -44,6 +48,10 @@ export const setModelAllowlistCandidates = (
   )
   const currentKnown = new Set(state.items.map(item => item.id))
   const savedSelected = new Set(state.savedModels)
+  const currentMultimodal = new Set(
+    state.items.filter(item => item.multimodal).map(item => item.id),
+  )
+  const savedMultimodal = new Set(state.savedMultimodalModels)
   const hasExistingItems = state.items.length > 0
   const selectionOrder = normalizeModels([
     ...state.items.map(item => item.id),
@@ -61,6 +69,7 @@ export const setModelAllowlistCandidates = (
     return {
       id,
       selected: selected && (currentKnown.has(id) || savedSelected.has(id) || state.savedModels.length === 0),
+      multimodal: hasExistingItems ? currentMultimodal.has(id) : savedMultimodal.has(id),
     }
   })
 }
@@ -72,6 +81,18 @@ export const toggleModelAllowlistItem = (
   const item = state.items.find(item => item.id === modelID)
   if (item) {
     item.selected = !item.selected
+  }
+}
+
+// toggleModelAllowlistItemMultimodal 切换某个白名单模型的多模态标记，
+// 保存后以 multimodal_models 形式下发，用户侧透出为 available_model_flags。
+export const toggleModelAllowlistItemMultimodal = (
+  state: ModelAllowlistState,
+  modelID: string,
+) => {
+  const item = state.items.find(item => item.id === modelID)
+  if (item) {
+    item.multimodal = !item.multimodal
   }
 }
 
@@ -124,18 +145,26 @@ export const addCustomModelAllowlistItem = (
   ) {
     return 'duplicate'
   }
-  state.items.push({ id: entry, selected: true })
+  state.items.push({ id: entry, selected: true, multimodal: false })
   return null
 }
 
 export const buildModelAllowlistConfig = (
   state: ModelAllowlistState,
-): ModelAllowlistConfig => ({
-  enabled: state.enabled,
-  models: state.items.length > 0
+): ModelAllowlistConfig => {
+  const models = state.items.length > 0
     ? state.items.filter(item => item.selected).map(item => item.id)
-    : [...state.savedModels],
-})
+    : [...state.savedModels]
+  const multimodalModels = state.items.length > 0
+    ? state.items.filter(item => item.multimodal).map(item => item.id)
+    : [...state.savedMultimodalModels]
+
+  return {
+    enabled: state.enabled,
+    models,
+    ...(multimodalModels.length > 0 ? { multimodal_models: multimodalModels } : {}),
+  }
+}
 
 export const selectedModelAllowlistCount = (state: ModelAllowlistState): number =>
   state.items.filter(item => item.selected).length

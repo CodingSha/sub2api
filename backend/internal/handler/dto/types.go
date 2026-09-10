@@ -145,6 +145,11 @@ type Group struct {
 	// OpenAI Live 接口开关
 	AllowLive bool `json:"allow_live"`
 
+	// 用户侧可见的可用模型，来源于分组下活跃账号的 model_mapping；未限制账号按平台默认模型展示。
+	AvailableModels []string `json:"available_models"`
+	// 用户侧可见的模型标记，key 为模型名，value 为标记列表（例如 multimodal）。
+	AvailableModelFlags map[string][]string `json:"available_model_flags,omitempty"`
+
 	// 账号过滤控制（仅 OpenAI/Antigravity 平台有效）
 	RequireOAuthOnly  bool `json:"require_oauth_only"`
 	RequirePrivacySet bool `json:"require_privacy_set"`
@@ -194,7 +199,8 @@ type AdminGroup struct {
 	CodexModelsManifestConfig domain.GroupCodexModelsManifestConfig `json:"codex_models_manifest_config"`
 
 	// 支持的模型系列（仅 antigravity 平台使用）
-	SupportedModelScopes    []string       `json:"supported_model_scopes"`
+	SupportedModelScopes []string `json:"supported_model_scopes"`
+
 	AccountGroups           []AccountGroup `json:"account_groups,omitempty"`
 	AccountCount            int64          `json:"account_count,omitempty"`
 	ActiveAccountCount      int64          `json:"active_account_count,omitempty"`

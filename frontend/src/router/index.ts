@@ -433,8 +433,8 @@ const routes: RouteRecordRaw[] = [
       requiresAuth: true,
       requiresAdmin: true,
       title: 'Audit Logs',
-      titleKey: 'admin.audit.title',
-      descriptionKey: 'admin.audit.description'
+      titleKey: 'admin.auditLogs.title',
+      descriptionKey: 'admin.auditLogs.description'
     }
   },
   {
@@ -607,6 +607,18 @@ const routes: RouteRecordRaw[] = [
       titleKey: 'admin.riskControl.title',
       descriptionKey: 'admin.riskControl.description',
       requiresRiskControl: true
+    }
+  },
+  {
+    path: '/admin/audit',
+    name: 'AdminAudit',
+    component: () => import('@/views/admin/AuditView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Content Audit',
+      titleKey: 'admin.llmAudit.title',
+      descriptionKey: 'admin.llmAudit.description'
     }
   },
   {

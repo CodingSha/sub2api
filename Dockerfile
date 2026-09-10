@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 # =============================================================================
 # Sub2API Multi-Stage Dockerfile
 # =============================================================================
@@ -8,7 +7,7 @@
 # =============================================================================
 
 ARG NODE_IMAGE=node:24-alpine
-ARG GOLANG_IMAGE=golang:1.27.0-alpine
+ARG GOLANG_IMAGE=golang:1.27-alpine
 ARG ALPINE_IMAGE=alpine:3.21
 ARG POSTGRES_IMAGE=postgres:18-alpine
 ARG GOPROXY=https://goproxy.cn,direct
@@ -25,14 +24,15 @@ ARG NPM_CONFIG_REGISTRY
 
 WORKDIR /app/frontend
 
-# Install pnpm (pinned to v9 to match CI and keep builds reproducible)
-RUN corepack enable && corepack prepare pnpm@9 --activate
+# package.json 的 build 脚本会调用 pnpm（check:i18n），需要全局安装 pnpm；
+# 但依赖安装仍用 npm：pnpm 的内容寻址 store 依赖硬链接，在部分 Docker
+# overlayfs 宿主（如阿里云 ECS）上跨 buildkit 缓存挂载写入会报 EPERM。
+# npm 遵循 NPM_CONFIG_REGISTRY 环境变量作为镜像源。
+RUN npm install -g pnpm@9 --no-audit --no-fund
 
 # Install dependencies first (better caching)
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
-RUN --mount=type=cache,id=sub2api-pnpm-store,target=/root/.local/share/pnpm/store \
-    if [ -n "${NPM_CONFIG_REGISTRY}" ]; then pnpm config set registry "${NPM_CONFIG_REGISTRY}"; fi && \
-    pnpm install --frozen-lockfile --prefer-offline
+RUN npm install --include=dev --package-lock=false --legacy-peer-deps --cache=/tmp/npm-cache --no-audit --no-fund
 
 # Copy frontend source and build.
 # LegalDocumentView.vue (admin-compliance gate) build-time imports
@@ -41,7 +41,7 @@ RUN --mount=type=cache,id=sub2api-pnpm-store,target=/root/.local/share/pnpm/stor
 # Copy only that subtree to keep the build dependency minimal.
 COPY frontend/ ./
 COPY docs/legal/ /app/docs/legal/
-RUN pnpm run build
+RUN npm run build
 
 # -----------------------------------------------------------------------------
 # Stage 2: Backend Builder
@@ -64,6 +64,10 @@ ARG TARGETARCH
 
 ENV GOPROXY=${GOPROXY}
 ENV GOSUMDB=${GOSUMDB}
+# 官方 Go 镜像默认 GOTOOLCHAIN=local：镜像版本低于 go.mod 要求时直接报错。
+# 改为 auto，让旧镜像（如被 override 钉住的 1.26.5）也能按需经 GOPROXY 拉取
+# 新工具链（缓存在下面的 gomod cache mount 里，不会重复下载）。
+ENV GOTOOLCHAIN=auto
 
 # Install build dependencies
 RUN apk add --no-cache git ca-certificates tzdata

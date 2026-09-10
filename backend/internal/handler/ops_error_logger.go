@@ -32,8 +32,9 @@ const (
 	opsRoutingCapacityLimitedKey = "ops_routing_capacity_limited"
 	opsDedicatedErrorRecordedKey = "ops_dedicated_error_recorded"
 
-	opsUpstreamModelKey = service.OpsUpstreamModelKey
-	opsRequestTypeKey   = "ops_request_type"
+	opsUpstreamModelKey    = service.OpsUpstreamModelKey
+	opsUpstreamEndpointKey = "ops_upstream_endpoint"
+	opsRequestTypeKey      = "ops_request_type"
 
 	// 错误过滤匹配常量 — shouldSkipOpsErrorLog 和错误分类共用
 	opsErrContextCanceled            = "context canceled"
@@ -462,6 +463,26 @@ func setOpsEndpointContext(c *gin.Context, upstreamModel string, requestType int
 		c.Set(opsUpstreamModelKey, upstreamModel)
 	}
 	c.Set(opsRequestTypeKey, requestType)
+}
+
+func setOpsUpstreamEndpointContext(c *gin.Context, endpoint string) {
+	if c == nil {
+		return
+	}
+	if endpoint = strings.TrimSpace(endpoint); endpoint != "" {
+		c.Set(opsUpstreamEndpointKey, endpoint)
+	}
+}
+
+func getOpsUpstreamEndpoint(c *gin.Context, platform string) string {
+	if c != nil {
+		if v, ok := c.Get(opsUpstreamEndpointKey); ok {
+			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+				return strings.TrimSpace(s)
+			}
+		}
+	}
+	return GetUpstreamEndpoint(c, platform)
 }
 
 func setOpsSelectedAccount(c *gin.Context, accountID int64, platform ...string) {
@@ -1195,7 +1216,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 			}(),
 			Stream:           stream,
 			InboundEndpoint:  GetInboundEndpoint(c),
-			UpstreamEndpoint: GetUpstreamEndpoint(c, platform),
+			UpstreamEndpoint: getOpsUpstreamEndpoint(c, platform),
 			RequestedModel:   modelName,
 			UpstreamModel: func() string {
 				if v, ok := c.Get(opsUpstreamModelKey); ok {
@@ -1367,7 +1388,7 @@ func logOpsRecoveredUpstream(c *gin.Context, ops *service.OpsService, finalStatu
 		requestContext = c.Request.Context()
 	}
 	entry.Platform = resolveOpsPlatform(requestContext, apiKey, fallbackPlatform)
-	entry.UpstreamEndpoint = GetUpstreamEndpoint(c, entry.Platform)
+	entry.UpstreamEndpoint = getOpsUpstreamEndpoint(c, entry.Platform)
 	if apiKey != nil {
 		entry.APIKeyID = &apiKey.ID
 		entry.APIKeyPrefix = keyPrefix(apiKey.Key, 8)

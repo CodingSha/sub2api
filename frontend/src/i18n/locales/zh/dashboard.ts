@@ -89,6 +89,12 @@ export default {
     apiKey: 'API 密钥',
     group: '分组',
     currentConcurrency: '当前并发',
+    availableModels: '可用模型',
+    noAvailableModels: '暂无可用模型',
+    copyModelName: '复制模型名',
+    modelCopied: '模型名已复制',
+    multimodal: '多模态',
+    modelCount: '{count} 个模型',
     noGroup: '无分组',
     searchGroup: '搜索分组...',
     noGroupFound: '未找到匹配的分组',
@@ -149,7 +155,22 @@ export default {
         noteWindows:
           '按 Win+R，输入 %userprofile%\\.codex 打开配置目录。如目录不存在，请先手动创建。'
       },
+      workbuddy: {
+        title: 'WorkBuddy 自定义模型配置手册',
+        description:
+          '在 WorkBuddy 中添加 OpenAI 兼容自定义模型，可使用页面配置或直接编辑 models.json。',
+        pageTitle: '页面配置方式',
+        stepOpen: '打开 WorkBuddy 的模型配置页面，点击“+ 配置自定义模型”；也可按官方文档编辑 models.json。',
+        stepPaste: '将下方 url、apiKey 和模型名称填入 WorkBuddy；url 必须使用完整的 /v1/chat/completions 地址。',
+        stepSelect: '保存后在 WorkBuddy 的模型列表中选择该自定义模型。',
+        screenshotAlt: 'WorkBuddy 自定义模型页面配置截图 {index}',
+        screenshotStepSettings: '第 1 步：从左下角账户入口进入设置。',
+        screenshotStepAdd: '第 2 步：进入“模型”，点击“添加模型”，选择“自定义 / Custom”。',
+        screenshotStepFill: '第 3 步：填写接口地址、API Key、模型名称，并按模型能力勾选工具调用、图片输入、思考模式等高级配置。',
+        note: '参考 WorkBuddy / CodeBuddy 官方模型文档：自定义模型配置使用 models.json，url 字段填写完整的 OpenAI 兼容 chat completions 接口。'
+      },
       cliTabs: {
+        workbuddy: 'WorkBuddy',
         claudeCode: 'Claude Code',
         geminiCli: 'Gemini CLI',
         codexCli: 'Codex CLI',

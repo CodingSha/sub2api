@@ -498,6 +498,23 @@ func TestExtractOpenAIResponseIDFromJSONBytes(t *testing.T) {
 	require.Empty(t, extractOpenAIResponseIDFromJSONBytes([]byte(`not-json`)))
 }
 
+func TestAppendOpenAIAuditTextDoneOnlyEvents(t *testing.T) {
+	var builder strings.Builder
+	appendOpenAIAuditText(&builder, []byte(`{"type":"response.content_part.done","part":{"type":"output_text","text":"part text"}}`))
+	appendOpenAIAuditText(&builder, []byte(`{"type":"response.output_item.done","item":{"type":"message","content":[{"type":"output_text","text":" item text"}]}}`))
+
+	require.Equal(t, "part text item text", builder.String())
+}
+
+func TestAppendOpenAIAuditTextDoesNotDuplicateDoneSnapshot(t *testing.T) {
+	var builder strings.Builder
+	appendOpenAIAuditText(&builder, []byte(`{"type":"response.output_text.delta","delta":"hello"}`))
+	appendOpenAIAuditText(&builder, []byte(`{"type":"response.content_part.done","part":{"type":"output_text","text":"hello"}}`))
+	appendOpenAIAuditText(&builder, []byte(`{"type":"response.output_item.done","item":{"type":"message","content":[{"type":"output_text","text":"hello world"}]}}`))
+
+	require.Equal(t, "hello world", builder.String())
+}
+
 // 复现 #4386：gpt-image-2 /v1/images/edits 的 usage 携带 input_tokens_details.image_tokens，
 // 提取器须将图片输入 token 单独填入 ImageInputTokens（此前被丢弃并入 InputTokens 按文本价计费）。
 func TestExtractOpenAIUsage_CapturesImageInputTokens(t *testing.T) {
@@ -2657,6 +2674,7 @@ func TestOpenAIStreamingPassthroughResponseDoneWithoutDoneMarkerStillSucceeds(t 
 
 	go func() {
 		defer func() { _ = pw.Close() }()
+		_, _ = pw.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n"))
 		_, _ = pw.Write([]byte("data: {\"type\":\"response.done\",\"response\":{\"usage\":{\"input_tokens\":2,\"output_tokens\":3,\"input_tokens_details\":{\"cached_tokens\":1}}}}\n\n"))
 	}()
 
@@ -2668,6 +2686,55 @@ func TestOpenAIStreamingPassthroughResponseDoneWithoutDoneMarkerStillSucceeds(t 
 	require.Equal(t, 2, result.usage.InputTokens)
 	require.Equal(t, 3, result.usage.OutputTokens)
 	require.Equal(t, 1, result.usage.CacheReadInputTokens)
+	require.Equal(t, "hello", c.GetString("audit_response_body"))
+}
+
+func TestOpenAIStreamingPassthroughReturnsAfterTerminalEventWithoutEOF(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			MaxLineSize: defaultMaxLineSize,
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	pr, pw := io.Pipe()
+	defer func() { _ = pr.Close() }()
+	defer func() { _ = pw.Close() }()
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       pr,
+		Header:     http.Header{},
+	}
+
+	type passthroughResult struct {
+		result *openaiStreamingResultPassthrough
+		err    error
+	}
+	done := make(chan passthroughResult, 1)
+	go func() {
+		result, err := svc.handleStreamingResponsePassthrough(c.Request.Context(), resp, c, &Account{ID: 1}, time.Now(), "", "")
+		done <- passthroughResult{result: result, err: err}
+	}()
+
+	_, err := pw.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n"))
+	require.NoError(t, err)
+	_, err = pw.Write([]byte("data: {\"type\":\"response.done\",\"response\":{\"usage\":{\"input_tokens\":2,\"output_tokens\":3}}}\n\n"))
+	require.NoError(t, err)
+
+	select {
+	case got := <-done:
+		require.NoError(t, got.err)
+		require.NotNil(t, got.result)
+	case <-time.After(time.Second):
+		t.Fatal("passthrough stream handler did not return after terminal event")
+	}
+	require.Contains(t, rec.Body.String(), "response.done")
+	require.Equal(t, "hello", c.GetString("audit_response_body"))
 }
 
 func TestOpenAIStreamingPassthroughResponseIncompleteWithoutDoneMarkerStillSucceeds(t *testing.T) {
@@ -2703,6 +2770,56 @@ func TestOpenAIStreamingPassthroughResponseIncompleteWithoutDoneMarkerStillSucce
 	require.Equal(t, 2, result.usage.InputTokens)
 	require.Equal(t, 3, result.usage.OutputTokens)
 	require.Equal(t, 1, result.usage.CacheReadInputTokens)
+}
+
+func TestOpenAIStreamingReturnsAfterTerminalEventWithoutEOF(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			StreamDataIntervalTimeout: 0,
+			StreamKeepaliveInterval:   0,
+			MaxLineSize:               defaultMaxLineSize,
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	pr, pw := io.Pipe()
+	defer func() { _ = pr.Close() }()
+	defer func() { _ = pw.Close() }()
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       pr,
+		Header:     http.Header{},
+	}
+
+	type streamingResultValue struct {
+		result *openaiStreamingResult
+		err    error
+	}
+	done := make(chan streamingResultValue, 1)
+	go func() {
+		result, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI, Name: "acc"}, time.Now(), "model", "model")
+		done <- streamingResultValue{result: result, err: err}
+	}()
+
+	_, err := pw.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"pong\"}\n\n"))
+	require.NoError(t, err)
+	_, err = pw.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":null,\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"))
+	require.NoError(t, err)
+
+	select {
+	case got := <-done:
+		require.NoError(t, got.err)
+		require.NotNil(t, got.result)
+	case <-time.After(time.Second):
+		t.Fatal("OpenAI stream handler did not return after terminal event")
+	}
+	require.Contains(t, rec.Body.String(), "response.completed")
+	require.Equal(t, "pong", c.GetString("audit_response_body"))
 }
 
 func TestOpenAIStreamingTooLong(t *testing.T) {
@@ -2880,6 +2997,7 @@ func TestOpenAIStreamingReuseScannerBufferAndStillWorks(t *testing.T) {
 
 	go func() {
 		defer func() { _ = pw.Close() }()
+		_, _ = pw.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n"))
 		_, _ = pw.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":2,\"input_tokens_details\":{\"cached_tokens\":3}}}}\n\n"))
 	}()
 
@@ -2891,6 +3009,7 @@ func TestOpenAIStreamingReuseScannerBufferAndStillWorks(t *testing.T) {
 	require.Equal(t, 1, result.usage.InputTokens)
 	require.Equal(t, 2, result.usage.OutputTokens)
 	require.Equal(t, 3, result.usage.CacheReadInputTokens)
+	require.Equal(t, "hello", c.GetString("audit_response_body"))
 }
 
 func TestOpenAIInvalidBaseURLWhenAllowlistDisabled(t *testing.T) {
