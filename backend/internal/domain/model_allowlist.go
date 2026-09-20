@@ -5,4 +5,7 @@ package domain
 type GroupModelAllowlist struct {
 	Enabled bool     `json:"enabled"`
 	Models  []string `json:"models,omitempty"`
+	// MultimodalModels 标记白名单中支持多模态输入的模型，用户侧以
+	// available_model_flags（例如 "multimodal"）形式透出。
+	MultimodalModels []string `json:"multimodal_models,omitempty"`
 }

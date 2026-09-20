@@ -5,6 +5,25 @@
 --   1. 不提供单条删除；仅支持带 2FA 验证的全量清空（TRUNCATE），清空后写入留痕记录
 --   2. credential_masked 仅保存请求头凭证的首尾片段（中间以 * 遮蔽）
 --   3. request_body 为脱敏后的请求体（敏感键值已擦除、超长截断）
+DO $$
+BEGIN
+    -- 兼容内容审计功能先于本迁移部署、且历史上占用了 audit_logs 表名的实例。
+    IF to_regclass('public.audit_logs') IS NOT NULL
+       AND EXISTS (
+           SELECT 1 FROM information_schema.columns
+           WHERE table_schema = 'public' AND table_name = 'audit_logs' AND column_name = 'request_truncated'
+       )
+       AND NOT EXISTS (
+           SELECT 1 FROM information_schema.columns
+           WHERE table_schema = 'public' AND table_name = 'audit_logs' AND column_name = 'actor_user_id'
+       ) THEN
+        IF to_regclass('public.llm_audit_logs') IS NOT NULL THEN
+            RAISE EXCEPTION 'cannot migrate legacy audit_logs: llm_audit_logs already exists';
+        END IF;
+        ALTER TABLE audit_logs RENAME TO llm_audit_logs;
+    END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS audit_logs (
     id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

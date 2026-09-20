@@ -40,7 +40,7 @@ describe('UseKeyModal', () => {
     saveAsMock.mockClear()
   })
 
-  it('omits the attribution override from every standard Claude Code setup form', async () => {
+  it('ships DeepSeek model defaults and the attribution override in Claude Code settings.json', async () => {
     const wrapper = mount(UseKeyModal, {
       props: {
         show: true,
@@ -78,10 +78,14 @@ describe('UseKeyModal', () => {
       const allCode = codeBlocks.join('\n')
       const settings = JSON.parse(codeBlocks.find((content) => content.includes('"$schema"'))!)
 
-      expect(allCode).not.toContain('CLAUDE_CODE_ATTRIBUTION_HEADER')
       expect(allCode).toContain(trafficSetting)
       expect(settings.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1')
-      expect(settings.env).not.toHaveProperty('CLAUDE_CODE_ATTRIBUTION_HEADER')
+      expect(settings.env.CLAUDE_CODE_ATTRIBUTION_HEADER).toBe('0')
+      expect(settings.env.ANTHROPIC_MODEL).toBe('deepseek-v4-pro')
+      expect(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('deepseek-v4-pro')
+      expect(settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('deepseek-v4-flash')
+      expect(settings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('deepseek-v4-flash')
+      expect(settings.env.ANTHROPIC_REASONING_MODEL).toBe('deepseek-v4-pro')
     }
   })
 
@@ -341,7 +345,7 @@ describe('UseKeyModal', () => {
     expect(codeBlocks.join('\n')).toContain('experimental_bearer_token = "sk-grok-codex-test"')
   })
 
-  it('keeps legacy OpenAI Codex config as the default', () => {
+  it('renders legacy OpenAI Codex config after selecting Codex', async () => {
     const wrapper = mount(UseKeyModal, {
       props: {
         show: true,
@@ -360,6 +364,14 @@ describe('UseKeyModal', () => {
         }
       }
     })
+
+    const codexTab = wrapper.findAll('button').find((button) =>
+      button.text().includes('keys.useKeyModal.cliTabs.codexCli')
+    )
+
+    expect(codexTab).toBeDefined()
+    await codexTab!.trigger('click')
+    await nextTick()
 
     const codeBlocks = wrapper.findAll('pre code').map((code) => code.text())
     const configToml = codeBlocks.find((content) => content.includes('model_provider = "OpenAI"'))
@@ -403,6 +415,13 @@ describe('UseKeyModal', () => {
         }
       }
     })
+
+    const codexTab = wrapper.findAll('button').find((button) =>
+      button.text().includes('keys.useKeyModal.cliTabs.codexCli')
+    )
+    expect(codexTab).toBeDefined()
+    await codexTab!.trigger('click')
+    await nextTick()
 
     const apiKeyMode = wrapper.get('[data-testid="codex-auth-mode-api-key"]')
     await apiKeyMode.trigger('click')
@@ -503,6 +522,13 @@ describe('UseKeyModal', () => {
       }
     })
 
+    const codexTab = wrapper.findAll('button').find((button) =>
+      button.text().includes('keys.useKeyModal.cliTabs.codexCli')
+    )
+    expect(codexTab).toBeDefined()
+    await codexTab!.trigger('click')
+    await nextTick()
+
     const apiKeyMode = wrapper.get('[data-testid="codex-auth-mode-api-key"]')
     await apiKeyMode.trigger('click')
 
@@ -549,6 +575,13 @@ describe('UseKeyModal', () => {
       }
     })
 
+    const codexTab = wrapper.findAll('button').find((button) =>
+      button.text().includes('keys.useKeyModal.cliTabs.codexCli')
+    )
+    expect(codexTab).toBeDefined()
+    await codexTab!.trigger('click')
+    await nextTick()
+
     await wrapper.get('[data-testid="codex-auth-mode-api-key"]').trigger('click')
     await wrapper.setProps({ show: false })
     await wrapper.setProps({ show: true })
@@ -560,6 +593,13 @@ describe('UseKeyModal', () => {
     await wrapper.get('[data-testid="codex-auth-mode-api-key"]').trigger('click')
     await wrapper.setProps({ platform: 'gemini' })
     await wrapper.setProps({ platform: 'openai' })
+    await nextTick()
+
+    const reopenedCodexTab = wrapper.findAll('button').find((button) =>
+      button.text().includes('keys.useKeyModal.cliTabs.codexCli')
+    )
+    expect(reopenedCodexTab).toBeDefined()
+    await reopenedCodexTab!.trigger('click')
     await nextTick()
 
     expect(wrapper.get('[data-testid="codex-auth-mode-legacy"]').attributes('aria-checked')).toBe('true')
@@ -598,6 +638,44 @@ describe('UseKeyModal', () => {
     expect(codeBlock.exists()).toBe(true)
     expect(codeBlock.text()).toContain('"name": "GPT-5.4 Mini"')
     expect(codeBlock.text()).not.toContain('"name": "GPT-5.4 Nano"')
+  })
+
+  it('renders Claude Code settings.json with default DeepSeek models', () => {
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-test',
+        baseUrl: 'https://example.com/v1',
+        platform: 'antigravity'
+      },
+      global: {
+        stubs: {
+          BaseDialog: {
+            template: '<div><slot /><slot name="footer" /></div>'
+          },
+          Icon: {
+            template: '<span />'
+          }
+        }
+      }
+    })
+
+    const settingsJson = wrapper.findAll('pre code')
+      .map((code) => code.text())
+      .find((content) => content.includes('"ANTHROPIC_BASE_URL"'))
+
+    expect(settingsJson).toBeDefined()
+    const parsed = JSON.parse(settingsJson!)
+
+    expect(parsed.env).toMatchObject({
+      ANTHROPIC_BASE_URL: 'https://example.com/v1/antigravity',
+      ANTHROPIC_AUTH_TOKEN: 'sk-test',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'deepseek-v4-flash',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'deepseek-v4-pro',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'deepseek-v4-flash',
+      ANTHROPIC_MODEL: 'deepseek-v4-pro',
+      ANTHROPIC_REASONING_MODEL: 'deepseek-v4-pro'
+    })
   })
 
   it('renders GPT-5.6 and GPT-6 Astra capabilities in OpenCode config', async () => {

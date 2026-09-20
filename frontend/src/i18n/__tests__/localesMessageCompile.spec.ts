@@ -39,3 +39,13 @@ describe('locale messages compile', () => {
     expect(errors).toEqual([])
   })
 })
+
+describe('audit locale namespaces', () => {
+  it.each([
+    ['zh', zh, '审计详情', '操作日志详情'],
+    ['en', en, 'Audit Detail', 'Audit Log Detail']
+  ] as const)('%s keeps content audit and audit logs separate', (_locale, messages, contentDetail, logDetail) => {
+    expect(messages.admin.audit.detail).toBe(contentDetail)
+    expect(messages.admin.auditLogs.detail.title).toBe(logDetail)
+  })
+})

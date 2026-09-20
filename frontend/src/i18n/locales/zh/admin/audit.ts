@@ -1,5 +1,5 @@
 export default {
-  audit: {
+  auditLogs: {
     title: '操作日志',
     description: '记录管理员与用户的管理面操作，请求头凭证仅保留首尾、请求体已脱敏。日志无法单条删除，全量清理需二次验证。',
     clearAll: '全部清理',

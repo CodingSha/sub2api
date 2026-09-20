@@ -51,6 +51,43 @@
           </nav>
         </div>
 
+        <!-- WorkBuddy page setup -->
+        <div v-if="activeClientTab === 'workbuddy'" class="space-y-4">
+          <div class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-800 dark:bg-emerald-900/20">
+            <div class="flex items-start gap-3">
+              <Icon name="infoCircle" size="md" class="mt-0.5 flex-shrink-0 text-emerald-600 dark:text-emerald-400" />
+              <div class="min-w-0 flex-1">
+                <p class="text-sm font-semibold text-emerald-900 dark:text-emerald-100">
+                  {{ t('keys.useKeyModal.workbuddy.pageTitle') }}
+                </p>
+                <ol class="mt-2 list-decimal space-y-1 pl-4 text-sm text-emerald-800 dark:text-emerald-200">
+                  <li>{{ t('keys.useKeyModal.workbuddy.stepOpen') }}</li>
+                  <li>{{ t('keys.useKeyModal.workbuddy.stepPaste') }}</li>
+                  <li>{{ t('keys.useKeyModal.workbuddy.stepSelect') }}</li>
+                </ol>
+              </div>
+            </div>
+          </div>
+
+          <div class="space-y-3">
+            <figure
+              v-for="(screenshot, index) in workbuddyScreenshots"
+              :key="screenshot.src"
+              class="overflow-hidden rounded-lg border border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-800"
+            >
+              <img
+                :src="screenshot.src"
+                :alt="t('keys.useKeyModal.workbuddy.screenshotAlt', { index: index + 1 })"
+                class="w-full object-contain"
+                loading="lazy"
+              />
+              <figcaption class="border-t border-gray-200 px-3 py-2 text-xs text-gray-500 dark:border-dark-700 dark:text-gray-400">
+                {{ screenshot.caption }}
+              </figcaption>
+            </figure>
+          </div>
+        </div>
+
         <!-- Codex Authentication Mode -->
         <div
           v-if="showCodexAuthMode"
@@ -334,7 +371,7 @@ const codexManifestContext = computed(() => {
 const defaultClientTab = computed(() => {
   switch (props.platform) {
     case 'openai':
-      return 'codex'
+      return 'workbuddy'
     case 'grok':
       return 'grok'
     case 'gemini':
@@ -439,6 +476,7 @@ const clientTabs = computed((): TabConfig[] => {
   switch (props.platform) {
     case 'openai': {
       const tabs: TabConfig[] = [
+        { id: 'workbuddy', label: t('keys.useKeyModal.cliTabs.workbuddy'), icon: TerminalIcon },
         { id: 'codex', label: t('keys.useKeyModal.cliTabs.codexCli'), icon: TerminalIcon },
         { id: 'codex-ws', label: t('keys.useKeyModal.cliTabs.codexCliWs'), icon: TerminalIcon },
       ]
@@ -498,7 +536,7 @@ const openaiTabs: TabConfig[] = [
   { id: 'windows', label: 'Windows', icon: WindowsIcon }
 ]
 
-const showShellTabs = computed(() => activeClientTab.value !== 'opencode')
+const showShellTabs = computed(() => !['opencode', 'workbuddy'].includes(activeClientTab.value))
 
 const showCodexAuthMode = computed(() =>
   props.platform === 'openai' &&
@@ -524,6 +562,9 @@ const platformDescription = computed(() => {
   }
   switch (props.platform) {
     case 'openai':
+      if (activeClientTab.value === 'workbuddy') {
+        return t('keys.useKeyModal.workbuddy.description')
+      }
       if (activeClientTab.value === 'claude') {
         return t('keys.useKeyModal.description')
       }
@@ -568,6 +609,9 @@ const platformNote = computed(() => {
   }
   switch (props.platform) {
     case 'openai':
+      if (activeClientTab.value === 'workbuddy') {
+        return t('keys.useKeyModal.workbuddy.note')
+      }
       if (activeClientTab.value === 'claude') {
         return t('keys.useKeyModal.note')
       }
@@ -614,7 +658,7 @@ const platformNote = computed(() => {
   }
 })
 
-const showPlatformNote = computed(() => activeClientTab.value !== 'opencode')
+const showPlatformNote = computed(() => !['opencode', 'workbuddy'].includes(activeClientTab.value))
 
 function resetCodexModelManifest() {
   codexModelManifestController?.abort()
@@ -733,6 +777,10 @@ const currentFiles = computed((): FileConfig[] => {
     }
   }
 
+  if (activeClientTab.value === 'workbuddy') {
+    return [workbuddyFile.value]
+  }
+
   switch (props.platform) {
     case 'openai':
       if (activeClientTab.value === 'claude') {
@@ -786,6 +834,52 @@ const currentFiles = computed((): FileConfig[] => {
   }
 })
 
+const workbuddyFile = computed((): FileConfig => {
+  const baseUrl = props.baseUrl || window.location.origin
+  const chatCompletionsUrl = `${baseUrl.replace(/\/+$/, '')}/v1/chat/completions`
+  const model = props.platform === 'gemini' ? 'gemini-2.0-flash' : 'gpt-5.5'
+  const content = JSON.stringify(
+    {
+      models: [
+        {
+          id: model,
+          name: model,
+          vendor: 'OpenAI',
+          url: chatCompletionsUrl,
+          apiKey: props.apiKey,
+          maxInputTokens: 128000,
+          maxOutputTokens: 4096,
+          supportsToolCall: true,
+          supportsImages: false
+        }
+      ],
+      availableModels: [model]
+    },
+    null,
+    2
+  )
+
+  return {
+    path: '~/.codebuddy/models.json',
+    content
+  }
+})
+
+const workbuddyScreenshots = computed(() => [
+  {
+    src: '/workbuddy/setup-1.jpg',
+    caption: t('keys.useKeyModal.workbuddy.screenshotStepSettings')
+  },
+  {
+    src: '/workbuddy/setup-2.jpg',
+    caption: t('keys.useKeyModal.workbuddy.screenshotStepAdd')
+  },
+  {
+    src: '/workbuddy/setup-3.jpg',
+    caption: t('keys.useKeyModal.workbuddy.screenshotStepFill')
+  }
+])
+
 function generateAnthropicFiles(baseUrl: string, apiKey: string): FileConfig[] {
   let path: string
   let content: string
@@ -823,7 +917,13 @@ $env:CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`
   "env": {
     "ANTHROPIC_BASE_URL": "${baseUrl}",
     "ANTHROPIC_AUTH_TOKEN": "${apiKey}",
-    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-flash",
+    "ANTHROPIC_MODEL": "deepseek-v4-pro",
+    "ANTHROPIC_REASONING_MODEL": "deepseek-v4-pro",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "CLAUDE_CODE_ATTRIBUTION_HEADER": "0"
   }
 }`
 

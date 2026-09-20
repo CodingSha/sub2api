@@ -269,6 +269,7 @@ func TestHandleResponsesBufferedStreamingResponse_PreservesMessageStartCacheUsag
 	require.Equal(t, 9, result.Usage.CacheReadInputTokens)
 	require.Equal(t, 3, result.Usage.CacheCreationInputTokens)
 	require.Contains(t, rec.Body.String(), `"cached_tokens":9`)
+	require.Equal(t, "hello", c.GetString("audit_response_body"))
 }
 
 func TestHandleResponsesStreamingResponse_PreservesMessageStartCacheUsage(t *testing.T) {
@@ -305,6 +306,7 @@ func TestHandleResponsesStreamingResponse_PreservesMessageStartCacheUsage(t *tes
 	require.Equal(t, 11, result.Usage.CacheReadInputTokens)
 	require.Equal(t, 4, result.Usage.CacheCreationInputTokens)
 	require.Contains(t, rec.Body.String(), `response.completed`)
+	require.Equal(t, "hello", c.GetString("audit_response_body"))
 }
 
 func TestParseAnthropicSSEField(t *testing.T) {
