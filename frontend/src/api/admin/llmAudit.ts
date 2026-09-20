@@ -39,6 +39,15 @@ export interface LLMAuditListParams {
   to?: string
 }
 
+export interface AuditWhitelistEntry {
+	user_id: number
+	email: string
+	username: string
+	created_by?: number | null
+	created_by_email?: string
+	created_at: string
+}
+
 export async function list(
   params: LLMAuditListParams = {},
   options?: { signal?: AbortSignal }
@@ -50,6 +59,25 @@ export async function list(
   return data
 }
 
+export async function listWhitelist(): Promise<AuditWhitelistEntry[]> {
+	const { data } = await apiClient.get<AuditWhitelistEntry[]>('/admin/audit/whitelist')
+	return data
+}
+
+export async function addWhitelist(userId: number): Promise<AuditWhitelistEntry> {
+	const { data } = await apiClient.post<AuditWhitelistEntry>('/admin/audit/whitelist', {
+		user_id: userId,
+	})
+	return data
+}
+
+export async function removeWhitelist(userId: number): Promise<void> {
+	await apiClient.delete(`/admin/audit/whitelist/${userId}`)
+}
+
 export default {
-  list,
+	list,
+	listWhitelist,
+	addWhitelist,
+	removeWhitelist,
 }

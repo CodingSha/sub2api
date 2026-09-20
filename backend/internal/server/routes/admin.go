@@ -166,6 +166,9 @@ func registerAuditRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	audit := admin.Group("/audit")
 	{
 		audit.GET("", h.Admin.Audit.List)
+		audit.GET("/whitelist", h.Admin.Audit.ListWhitelist)
+		audit.POST("/whitelist", h.Admin.Audit.AddWhitelist)
+		audit.DELETE("/whitelist/:user_id", h.Admin.Audit.RemoveWhitelist)
 	}
 }
 

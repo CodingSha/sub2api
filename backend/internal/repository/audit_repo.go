@@ -186,6 +186,95 @@ LIMIT $`+fmt.Sprint(len(queryArgs)-1)+` OFFSET $`+fmt.Sprint(len(queryArgs)),
 	return items, paginationResultFromTotal(total, params), nil
 }
 
+func (r *auditRepository) ListWhitelist(ctx context.Context) ([]service.AuditWhitelistEntry, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT w.user_id, u.email, COALESCE(u.username, ''), w.created_by,
+       COALESCE(actor.email, ''), w.created_at
+FROM audit_whitelist_users w
+JOIN users u ON u.id = w.user_id
+LEFT JOIN users actor ON actor.id = w.created_by
+ORDER BY w.created_at DESC, w.user_id DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("list audit whitelist: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	items := make([]service.AuditWhitelistEntry, 0)
+	for rows.Next() {
+		var item service.AuditWhitelistEntry
+		var createdBy sql.NullInt64
+		if err := rows.Scan(&item.UserID, &item.Email, &item.Username, &createdBy, &item.CreatedByEmail, &item.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan audit whitelist: %w", err)
+		}
+		if createdBy.Valid {
+			value := createdBy.Int64
+			item.CreatedBy = &value
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate audit whitelist: %w", err)
+	}
+	return items, nil
+}
+
+func (r *auditRepository) ListWhitelistUserIDs(ctx context.Context) ([]int64, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT user_id FROM audit_whitelist_users`)
+	if err != nil {
+		return nil, fmt.Errorf("list audit whitelist user ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	ids := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan audit whitelist user id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate audit whitelist user ids: %w", err)
+	}
+	return ids, nil
+}
+
+func (r *auditRepository) AddWhitelist(ctx context.Context, userID int64, createdBy *int64) (*service.AuditWhitelistEntry, error) {
+	var actor any
+	if createdBy != nil && *createdBy > 0 {
+		actor = *createdBy
+	}
+	var item service.AuditWhitelistEntry
+	var itemCreatedBy sql.NullInt64
+	err := r.db.QueryRowContext(ctx, `
+WITH upsert AS (
+    INSERT INTO audit_whitelist_users (user_id, created_by)
+    SELECT id, $2 FROM users WHERE id = $1 AND deleted_at IS NULL
+    ON CONFLICT (user_id) DO UPDATE SET user_id = EXCLUDED.user_id
+    RETURNING user_id, created_by, created_at
+)
+SELECT w.user_id, u.email, COALESCE(u.username, ''), w.created_by,
+       COALESCE(actor.email, ''), w.created_at
+FROM upsert w
+JOIN users u ON u.id = w.user_id
+LEFT JOIN users actor ON actor.id = w.created_by`, userID, actor).Scan(
+		&item.UserID, &item.Email, &item.Username, &itemCreatedBy, &item.CreatedByEmail, &item.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if itemCreatedBy.Valid {
+		value := itemCreatedBy.Int64
+		item.CreatedBy = &value
+	}
+	return &item, nil
+}
+
+func (r *auditRepository) RemoveWhitelist(ctx context.Context, userID int64) error {
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM audit_whitelist_users WHERE user_id = $1`, userID); err != nil {
+		return fmt.Errorf("remove audit whitelist user: %w", err)
+	}
+	return nil
+}
+
 type auditSessionContent struct {
 	RequestID  string    `json:"request_id"`
 	Endpoint   string    `json:"endpoint"`

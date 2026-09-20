@@ -30,6 +30,16 @@ type fakePromptEngine struct {
 	evaluates atomic.Int64
 }
 
+type fakeUserExemptionChecker struct {
+	whitelisted bool
+	calls       atomic.Int64
+}
+
+func (f *fakeUserExemptionChecker) IsAuditWhitelisted(context.Context, int64) bool {
+	f.calls.Add(1)
+	return f.whitelisted
+}
+
 func (f *fakePromptEngine) EffectiveMode() Mode { return f.mode }
 func (f *fakePromptEngine) Enqueue(context.Context, Request) error {
 	f.enqueues.Add(1)
@@ -81,6 +91,22 @@ func TestCoordinatorDoesNotMutateRequestBody(t *testing.T) {
 	decision := NewCoordinator(&fakeLegacyEngine{}, prompt).Check(context.Background(), Request{Body: body})
 	require.True(t, decision.AllowNextStage)
 	require.Equal(t, original, body)
+}
+
+func TestCoordinatorSkipsAllEnginesForWhitelistedUser(t *testing.T) {
+	legacy := &fakeLegacyEngine{decision: &LegacyDecision{Blocked: true}}
+	prompt := &fakePromptEngine{mode: ModeBlocking, decision: &PromptDecision{Kind: DecisionBlock}}
+	exemptions := &fakeUserExemptionChecker{whitelisted: true}
+	coordinator := &Coordinator{legacy: legacy, prompt: prompt, exemptions: exemptions}
+
+	decision := coordinator.Check(context.Background(), Request{UserID: 42, Body: []byte(`{"input":"private"}`)})
+
+	require.Equal(t, DecisionAllow, decision.Kind)
+	require.True(t, decision.AllowNextStage)
+	require.Equal(t, int64(1), exemptions.calls.Load())
+	require.Zero(t, legacy.calls.Load())
+	require.Zero(t, prompt.enqueues.Load())
+	require.Zero(t, prompt.evaluates.Load())
 }
 
 func TestCoordinatorBlockingPriorityCoversBothEngineDecisionMatrix(t *testing.T) {

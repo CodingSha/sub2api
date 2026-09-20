@@ -52,6 +52,24 @@ export default {
     toolStatus: '状态',
     toolError: '错误',
     inferredToolCall: '推断的工具调用',
-    records: '记录'
+    records: '记录',
+    whitelist: '审计白名单',
+    whitelistTitle: '审计白名单',
+    whitelistDescription: '白名单用户后续的所有会话均不会被记录，也不会进行内容或提示词审计。已有审计记录不会删除。',
+    whitelistSearch: '搜索用户',
+    whitelistSearchPlaceholder: '输入邮箱或用户名',
+    whitelistCandidates: '可添加用户',
+    whitelistMembers: '白名单用户',
+    whitelistEmptyCandidates: '没有可添加的用户',
+    whitelistEmpty: '白名单为空',
+    whitelistLoading: '正在加载白名单…',
+    whitelistLoadFailed: '加载白名单失败',
+    whitelistSearchFailed: '搜索用户失败',
+    whitelistAdd: '加入',
+    whitelistAddFailed: '加入白名单失败',
+    whitelistRemove: '移出白名单',
+    whitelistRemoveFailed: '移出白名单失败',
+    whitelistAddedBy: '由 {email} 添加',
+    whitelistAddedAt: '添加于 {time}'
   }
 }

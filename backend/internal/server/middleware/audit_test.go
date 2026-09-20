@@ -17,7 +17,8 @@ import (
 )
 
 type auditRepoStub struct {
-	items chan *service.LLMAuditLog
+	items       chan *service.LLMAuditLog
+	whitelisted map[int64]bool
 }
 
 func (r *auditRepoStub) Create(ctx context.Context, log *service.LLMAuditLog) error {
@@ -32,6 +33,26 @@ func (r *auditRepoStub) Create(ctx context.Context, log *service.LLMAuditLog) er
 func (r *auditRepoStub) List(context.Context, service.LLMAuditLogFilter) ([]service.LLMAuditLog, *pagination.PaginationResult, error) {
 	return nil, nil, nil
 }
+
+func (r *auditRepoStub) ListWhitelist(context.Context) ([]service.AuditWhitelistEntry, error) {
+	return nil, nil
+}
+
+func (r *auditRepoStub) ListWhitelistUserIDs(context.Context) ([]int64, error) {
+	ids := make([]int64, 0, len(r.whitelisted))
+	for id, enabled := range r.whitelisted {
+		if enabled {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
+func (r *auditRepoStub) AddWhitelist(context.Context, int64, *int64) (*service.AuditWhitelistEntry, error) {
+	return nil, nil
+}
+
+func (r *auditRepoStub) RemoveWhitelist(context.Context, int64) error { return nil }
 
 func TestAuditResponseWriterFlushDelegates(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -171,6 +192,32 @@ func TestAuditCaptureDetectsLargeStreamingRequestFromFullBody(t *testing.T) {
 		require.Equal(t, "session-large", item.SessionID)
 	case <-time.After(time.Second):
 		t.Fatal("audit log was not created")
+	}
+}
+
+func TestAuditCaptureSkipsWhitelistedUserBeforeCapturingBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &auditRepoStub{
+		items:       make(chan *service.LLMAuditLog, 1),
+		whitelisted: map[int64]bool{42: true},
+	}
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(ContextKeyUser), AuthSubject{UserID: 42})
+		c.Next()
+	})
+	router.Use(AuditCapture(service.NewAuditService(repo)))
+	router.POST("/", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"model":"gpt-5","messages":[{"role":"user","content":"private"}]}`))
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusNoContent, rec.Code)
+	select {
+	case <-repo.items:
+		t.Fatal("whitelisted request must not be recorded")
+	case <-time.After(50 * time.Millisecond):
 	}
 }
 

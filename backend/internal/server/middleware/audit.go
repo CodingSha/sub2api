@@ -113,6 +113,10 @@ func AuditCapture(auditService *service.AuditService) gin.HandlerFunc {
 			c.Next()
 			return
 		}
+		if subject, ok := GetAuthSubjectFromContext(c); ok && auditService.IsAuditWhitelisted(c.Request.Context(), subject.UserID) {
+			c.Next()
+			return
+		}
 
 		start := time.Now()
 		requestBody, rawRequestBody, requestTruncated := readAndRestoreRequestBody(c, service.AuditCaptureMaxBytes)

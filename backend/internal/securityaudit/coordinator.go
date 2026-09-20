@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"sync"
+
+	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 type LegacyEngine interface {
@@ -17,17 +19,29 @@ type PromptEngine interface {
 	Evaluate(ctx context.Context, req Request) (*PromptDecision, error)
 }
 
+type UserExemptionChecker interface {
+	IsAuditWhitelisted(ctx context.Context, userID int64) bool
+}
+
 type Coordinator struct {
-	legacy LegacyEngine
-	prompt PromptEngine
+	legacy     LegacyEngine
+	prompt     PromptEngine
+	exemptions UserExemptionChecker
 }
 
 func NewCoordinator(legacy LegacyEngine, prompt PromptEngine) *Coordinator {
 	return &Coordinator{legacy: legacy, prompt: prompt}
 }
 
+func NewCoordinatorWithWhitelist(legacy LegacyEngine, prompt PromptEngine, exemptions *service.AuditService) *Coordinator {
+	return &Coordinator{legacy: legacy, prompt: prompt, exemptions: exemptions}
+}
+
 func (c *Coordinator) Check(ctx context.Context, req Request) Decision {
 	if c == nil {
+		return allowDecision(nil, nil)
+	}
+	if req.UserID > 0 && c.exemptions != nil && c.exemptions.IsAuditWhitelisted(ctx, req.UserID) {
 		return allowDecision(nil, nil)
 	}
 	mode := ModeOff

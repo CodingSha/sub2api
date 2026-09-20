@@ -53,7 +53,11 @@
             </div>
           </div>
 
-          <div class="flex items-end gap-2 2xl:justify-end">
+          <div class="flex flex-wrap items-end gap-2 2xl:justify-end">
+            <button type="button" class="btn btn-secondary inline-flex h-9 items-center gap-2 px-3 text-sm" @click="openWhitelist">
+              <Icon name="userPlus" size="sm" />
+              {{ t('admin.llmAudit.whitelist') }}
+            </button>
             <button type="button" class="btn btn-secondary inline-flex h-9 items-center gap-2 px-3 text-sm" @click="resetFilters">
               <Icon name="refresh" size="sm" />
               {{ t('admin.llmAudit.reset') }}
@@ -282,6 +286,100 @@
           </div>
         </aside>
       </div>
+
+      <BaseDialog
+        :show="showWhitelistDialog"
+        :title="t('admin.llmAudit.whitelistTitle')"
+        width="wide"
+        @close="closeWhitelist"
+      >
+        <div class="space-y-5">
+          <div class="flex gap-3 border-l-4 border-amber-400 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+            <Icon name="shield" size="sm" class="mt-0.5 flex-shrink-0" />
+            <p>{{ t('admin.llmAudit.whitelistDescription') }}</p>
+          </div>
+
+          <div>
+            <label class="input-label">{{ t('admin.llmAudit.whitelistSearch') }}</label>
+            <div class="relative">
+              <Icon name="search" size="sm" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                v-model="whitelistSearch"
+                type="search"
+                class="input pl-9"
+                :placeholder="t('admin.llmAudit.whitelistSearchPlaceholder')"
+              />
+            </div>
+          </div>
+
+          <p v-if="whitelistError" class="text-sm text-rose-600 dark:text-rose-300">{{ whitelistError }}</p>
+
+          <div class="grid gap-5 md:grid-cols-2">
+            <section>
+              <h4 class="mb-2 text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.llmAudit.whitelistCandidates') }}</h4>
+              <div class="max-h-64 divide-y divide-gray-100 overflow-y-auto border-y border-gray-200 dark:divide-dark-700 dark:border-dark-700">
+                <div v-if="searchingUsers" class="px-3 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                  {{ t('admin.llmAudit.loading') }}
+                </div>
+                <div v-else-if="availableWhitelistCandidates.length === 0" class="px-3 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                  {{ t('admin.llmAudit.whitelistEmptyCandidates') }}
+                </div>
+                <template v-else>
+                  <div v-for="user in availableWhitelistCandidates" :key="user.id" class="flex items-center gap-3 px-3 py-3">
+                    <div class="min-w-0 flex-1">
+                      <p class="truncate text-sm font-medium text-gray-900 dark:text-white">{{ user.email }}</p>
+                      <p class="truncate text-xs text-gray-500 dark:text-gray-400">{{ user.username || `#${user.id}` }}</p>
+                    </div>
+                    <button
+                      type="button"
+                      class="btn btn-primary inline-flex h-8 items-center gap-1.5 px-2.5 text-xs"
+                      :disabled="whitelistBusyUserId !== null"
+                      @click="addUserToWhitelist(user.id)"
+                    >
+                      <Icon name="plus" size="xs" />
+                      {{ t('admin.llmAudit.whitelistAdd') }}
+                    </button>
+                  </div>
+                </template>
+              </div>
+            </section>
+
+            <section>
+              <h4 class="mb-2 text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.llmAudit.whitelistMembers') }}</h4>
+              <div class="max-h-64 divide-y divide-gray-100 overflow-y-auto border-y border-gray-200 dark:divide-dark-700 dark:border-dark-700">
+                <div v-if="whitelistLoading" class="px-3 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                  {{ t('admin.llmAudit.whitelistLoading') }}
+                </div>
+                <div v-else-if="whitelistEntries.length === 0" class="px-3 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                  {{ t('admin.llmAudit.whitelistEmpty') }}
+                </div>
+                <template v-else>
+                  <div v-for="entry in whitelistEntries" :key="entry.user_id" class="flex items-center gap-3 px-3 py-3">
+                    <div class="min-w-0 flex-1">
+                      <p class="truncate text-sm font-medium text-gray-900 dark:text-white">{{ entry.email }}</p>
+                      <p class="truncate text-xs text-gray-500 dark:text-gray-400">
+                        {{ entry.created_by_email
+                          ? t('admin.llmAudit.whitelistAddedBy', { email: entry.created_by_email })
+                          : t('admin.llmAudit.whitelistAddedAt', { time: formatTime(entry.created_at) }) }}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      class="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md text-gray-500 transition hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 dark:text-gray-400 dark:hover:bg-rose-950/30 dark:hover:text-rose-300"
+                      :title="t('admin.llmAudit.whitelistRemove')"
+                      :aria-label="t('admin.llmAudit.whitelistRemove')"
+                      :disabled="whitelistBusyUserId !== null"
+                      @click="removeUserFromWhitelist(entry.user_id)"
+                    >
+                      <Icon name="trash" size="sm" />
+                    </button>
+                  </div>
+                </template>
+              </div>
+            </section>
+          </div>
+        </div>
+      </BaseDialog>
     </div>
   </AppLayout>
 </template>
@@ -290,8 +388,11 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
-import auditAPI, { type LLMAuditLog } from '@/api/admin/llmAudit'
+import auditAPI, { type AuditWhitelistEntry, type LLMAuditLog } from '@/api/admin/llmAudit'
+import usersAPI from '@/api/admin/users'
+import type { AdminUser } from '@/types'
 
 interface AuditContentItem {
   request_id?: string
@@ -352,6 +453,14 @@ const loading = ref(false)
 const loadingOlderTurns = ref(false)
 const errorMessage = ref('')
 const conversationViewport = ref<HTMLElement | null>(null)
+const showWhitelistDialog = ref(false)
+const whitelistEntries = ref<AuditWhitelistEntry[]>([])
+const whitelistCandidates = ref<AdminUser[]>([])
+const whitelistSearch = ref('')
+const whitelistLoading = ref(false)
+const searchingUsers = ref(false)
+const whitelistBusyUserId = ref<number | null>(null)
+const whitelistError = ref('')
 const pagination = reactive({
   page: 1,
   pageSize: 20,
@@ -360,6 +469,12 @@ const pagination = reactive({
 })
 const visibleTurnCount = ref(CONVERSATION_TURN_PAGE_SIZE)
 let activeController: AbortController | null = null
+let whitelistSearchController: AbortController | null = null
+
+const whitelistedUserIds = computed(() => new Set(whitelistEntries.value.map((entry) => entry.user_id)))
+const availableWhitelistCandidates = computed(() => (
+  whitelistCandidates.value.filter((user) => !whitelistedUserIds.value.has(user.id))
+))
 
 const overviewItems = computed(() => [
   {
@@ -418,6 +533,83 @@ function resetFilters() {
   filters.endpoint = ''
   pagination.page = 1
   loadRows()
+}
+
+function errorText(error: any, fallback: string) {
+  return error?.response?.data?.message || error?.message || fallback
+}
+
+async function loadWhitelist() {
+  whitelistLoading.value = true
+  whitelistError.value = ''
+  try {
+    whitelistEntries.value = await auditAPI.listWhitelist()
+  } catch (error: any) {
+    whitelistError.value = errorText(error, t('admin.llmAudit.whitelistLoadFailed'))
+  } finally {
+    whitelistLoading.value = false
+  }
+}
+
+async function searchWhitelistUsers() {
+  whitelistSearchController?.abort()
+  const controller = new AbortController()
+  whitelistSearchController = controller
+  searchingUsers.value = true
+  try {
+    const result = await usersAPI.list(1, 20, {
+      search: whitelistSearch.value.trim() || undefined,
+      sort_by: 'email',
+      sort_order: 'asc',
+    }, { signal: controller.signal })
+    whitelistCandidates.value = result.items
+  } catch (error: any) {
+    if (error?.code !== 'ERR_CANCELED') {
+      whitelistError.value = errorText(error, t('admin.llmAudit.whitelistSearchFailed'))
+    }
+  } finally {
+    if (whitelistSearchController === controller) {
+      whitelistSearchController = null
+      searchingUsers.value = false
+    }
+  }
+}
+
+function openWhitelist() {
+  showWhitelistDialog.value = true
+  whitelistError.value = ''
+  void Promise.all([loadWhitelist(), searchWhitelistUsers()])
+}
+
+function closeWhitelist() {
+  showWhitelistDialog.value = false
+  whitelistSearchController?.abort()
+}
+
+async function addUserToWhitelist(userId: number) {
+  whitelistBusyUserId.value = userId
+  whitelistError.value = ''
+  try {
+    const entry = await auditAPI.addWhitelist(userId)
+    whitelistEntries.value = [entry, ...whitelistEntries.value.filter((item) => item.user_id !== userId)]
+  } catch (error: any) {
+    whitelistError.value = errorText(error, t('admin.llmAudit.whitelistAddFailed'))
+  } finally {
+    whitelistBusyUserId.value = null
+  }
+}
+
+async function removeUserFromWhitelist(userId: number) {
+  whitelistBusyUserId.value = userId
+  whitelistError.value = ''
+  try {
+    await auditAPI.removeWhitelist(userId)
+    whitelistEntries.value = whitelistEntries.value.filter((entry) => entry.user_id !== userId)
+  } catch (error: any) {
+    whitelistError.value = errorText(error, t('admin.llmAudit.whitelistRemoveFailed'))
+  } finally {
+    whitelistBusyUserId.value = null
+  }
 }
 
 function statusClass(statusCode: number) {
@@ -1185,6 +1377,7 @@ function handleConversationScroll() {
 }
 
 let filterTimer: ReturnType<typeof setTimeout> | undefined
+let whitelistSearchTimer: ReturnType<typeof setTimeout> | undefined
 watch(filters, () => {
   if (filterTimer) clearTimeout(filterTimer)
   filterTimer = setTimeout(() => {
@@ -1192,6 +1385,12 @@ watch(filters, () => {
     loadRows()
   }, 300)
 }, { deep: true })
+
+watch(whitelistSearch, () => {
+  if (!showWhitelistDialog.value) return
+  if (whitelistSearchTimer) clearTimeout(whitelistSearchTimer)
+  whitelistSearchTimer = setTimeout(searchWhitelistUsers, 250)
+})
 
 watch(() => selectedRow.value?.id, () => {
   visibleTurnCount.value = CONVERSATION_TURN_PAGE_SIZE
@@ -1212,6 +1411,8 @@ onMounted(loadRows)
 
 onBeforeUnmount(() => {
   activeController?.abort()
+  whitelistSearchController?.abort()
   if (filterTimer) clearTimeout(filterTimer)
+  if (whitelistSearchTimer) clearTimeout(whitelistSearchTimer)
 })
 </script>

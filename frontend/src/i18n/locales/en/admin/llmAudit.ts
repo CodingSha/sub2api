@@ -52,6 +52,24 @@ export default {
     toolStatus: 'Status',
     toolError: 'Error',
     inferredToolCall: 'Inferred tool call',
-    records: 'Records'
+    records: 'Records',
+    whitelist: 'Audit whitelist',
+    whitelistTitle: 'Audit whitelist',
+    whitelistDescription: 'All future sessions for whitelisted users bypass capture, content moderation, and prompt auditing. Existing audit records are retained.',
+    whitelistSearch: 'Search users',
+    whitelistSearchPlaceholder: 'Enter an email or username',
+    whitelistCandidates: 'Users to add',
+    whitelistMembers: 'Whitelisted users',
+    whitelistEmptyCandidates: 'No users available to add',
+    whitelistEmpty: 'The whitelist is empty',
+    whitelistLoading: 'Loading whitelist…',
+    whitelistLoadFailed: 'Failed to load the whitelist',
+    whitelistSearchFailed: 'Failed to search users',
+    whitelistAdd: 'Add',
+    whitelistAddFailed: 'Failed to add user to the whitelist',
+    whitelistRemove: 'Remove from whitelist',
+    whitelistRemoveFailed: 'Failed to remove user from the whitelist',
+    whitelistAddedBy: 'Added by {email}',
+    whitelistAddedAt: 'Added {time}'
   }
 }
