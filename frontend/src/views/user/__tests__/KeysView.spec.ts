@@ -177,6 +177,9 @@ const DataTableStub = {
         <div data-test="current-concurrency">
           <slot name="cell-current_concurrency" :value="row.current_concurrency" :row="row" />
         </div>
+        <div data-test="models">
+          <slot name="cell-models" :value="row.group?.available_models" :row="row" />
+        </div>
         <div
           v-if="columns.some((col) => col.key === 'last_used_ip')"
           data-test="last-used-ip"
@@ -502,6 +505,29 @@ describe('user KeysView column settings', () => {
     const wrapper = await mountView()
 
     expect(wrapper.get('[data-test="current-concurrency"]').text()).toBe('3')
+  })
+
+  it('labels the Shenzhen self-hosted model without changing the copied model name', async () => {
+    const model = 'deepseek-v4.1-flash-local'
+    const key = {
+      ...createApiKey(),
+      group_id: 1,
+      group: {
+        id: 1,
+        name: 'DeepSeek',
+        platform: 'deepseek',
+        available_models: [model, 'deepseek-chat'],
+      },
+    } as unknown as ApiKey
+    listKeys.mockResolvedValueOnce({ items: [key], total: 1, page: 1, page_size: 20, pages: 1 })
+    copyToClipboard.mockResolvedValue(true)
+
+    const wrapper = await mountView()
+    const modelButton = wrapper.get(`[data-model-name="${model}"]`)
+
+    expect(modelButton.text()).toContain(`${model}（深圳地面站自部署）`)
+    await modelButton.trigger('click')
+    expect(copyToClipboard).toHaveBeenCalledWith(model, 'keys.modelCopied')
   })
 
   it('marks current concurrency as sortable', async () => {

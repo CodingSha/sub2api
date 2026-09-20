@@ -209,17 +209,18 @@
           </template>
 
           <template #cell-models="{ row }">
-            <div v-if="row.group" class="max-w-[360px] whitespace-normal" :title="modelsForGroup(row.group).join(', ')">
+            <div v-if="row.group" class="max-w-[360px] whitespace-normal" :title="modelsForGroup(row.group).map(modelDisplayName).join(', ')">
               <div class="flex flex-wrap gap-1">
                 <button
                   v-for="model in modelsForGroup(row.group)"
                   :key="`${row.id}-${model}`"
                   type="button"
+                  :data-model-name="model"
                   :class="modelChipClass(model)"
                   :title="isModelCopied(model) ? t('keys.modelCopied') : t('keys.copyModelName')"
                   @click.stop="copyModelName(model)"
                 >
-                  <span class="truncate">{{ model }}</span>
+                  <span class="truncate">{{ modelDisplayName(model) }}</span>
                   <span
                     v-if="isModelMultimodal(row.group, model)"
                     class="rounded bg-white/70 px-1 text-[10px] leading-4 text-current ring-1 ring-current/20 dark:bg-dark-900/40"
@@ -629,11 +630,12 @@
                 v-for="model in selectedFormGroupModels"
                 :key="`form-${model}`"
                 type="button"
+                :data-model-name="model"
                 :class="modelChipClass(model)"
                 :title="isModelCopied(model) ? t('keys.modelCopied') : t('keys.copyModelName')"
                 @click.stop="copyModelName(model)"
               >
-                <span class="truncate">{{ model }}</span>
+                <span class="truncate">{{ modelDisplayName(model) }}</span>
                 <span
                   v-if="isModelMultimodal(selectedFormGroup, model)"
                   class="rounded bg-white/70 px-1 text-[10px] leading-4 text-current ring-1 ring-current/20 dark:bg-dark-900/40"
@@ -1643,6 +1645,13 @@ const selectedFormGroup = computed(() => {
 })
 
 const selectedFormGroupModels = computed(() => modelsForGroup(selectedFormGroup.value))
+
+const SELF_HOSTED_MODEL_LABELS: Record<string, string> = {
+  'deepseek-v4.1-flash-local': '（深圳地面站自部署）'
+}
+
+const modelDisplayName = (model: string) =>
+  `${model}${SELF_HOSTED_MODEL_LABELS[model] ?? ''}`
 
 const modelsForGroup = (group: Group | null | undefined) => {
   if (!group) return []
