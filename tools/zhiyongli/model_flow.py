@@ -16,12 +16,14 @@ class ModelFlow:
         self.read_only=read_only
         expected={'version','budget_key','approved_by','reason','max_concurrency','requests_per_minute',
             'reserved_tokens_per_minute','max_requests','transient_failure_limit','cooldown_seconds'}
-        if (set(config)-{'max_429_retries'}!=expected or config['version']!=1 or any(not isinstance(config[k],str) or not config[k].strip()
+        if (set(config)-{'max_429_retries','max_interrupted_retries'}!=expected or config['version']!=1 or any(not isinstance(config[k],str) or not config[k].strip()
                 for k in ('budget_key','approved_by','reason')) or any(type(config[k]) is not int or config[k]<1
                 for k in expected-{'version','budget_key','approved_by','reason'})):
             raise ValueError('全局模型配额须显式指定范围、确认人与全部正整数限制')
         if type(config.get('max_429_retries',0)) is not int or not 0<=config.get('max_429_retries',0)<=3:
             raise ValueError('429续跑次数须显式设置为0至3；每次仍计入全部预算')
+        if type(config.get('max_interrupted_retries',0)) is not int or not 0<=config.get('max_interrupted_retries',0)<=3:
+            raise ValueError('传输中断续发次数须显式设置为0至3；每次仍计入全部预算')
         if read_only:
             if not self.path.exists():raise ValueError('全局模型账簿不存在')
             return

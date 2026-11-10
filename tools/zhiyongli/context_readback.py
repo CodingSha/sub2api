@@ -43,7 +43,7 @@ def expand(unit, packet, requested):
     return result
 
 
-def complete(unit, packet, directory, client, receive, progress=lambda *args: None, navigation_access=None):
+def complete(unit, packet, directory, client, receive, progress=lambda *args: None, navigation_access=None, feedback=None):
     """每轮独立绑定输入和回执；恢复时重验同一链，不覆盖前序候选。"""
     root = Path(directory)
     if str(unit.get('user_id')) != str(packet['user_id']):
@@ -58,7 +58,8 @@ def complete(unit, packet, directory, client, receive, progress=lambda *args: No
     receipt = root/'review.receipt.json'
     event_rounds=node_rounds=0
     for index in range(MAX_ROUNDS + MAX_NODE_ROUNDS + 1):
-        record = client.call(current, receipt)
+        # 仅自动修订轮携带前一候选与复查意见；补读各轮沿用同一份，保证请求可复验。
+        record = client.call(current, receipt) if feedback is None else client.call(current, receipt, feedback=feedback)
         value = receive(record)
         requested = value.get('needs_events')
         nodes=value.get('needs_nodes',[])

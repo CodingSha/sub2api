@@ -9,5 +9,6 @@
   "max_requests": null,
   "transient_failure_limit": null,
   "cooldown_seconds": null,
-  "max_429_retries": null
+  "max_429_retries": null,
+  "max_interrupted_retries": null
 }

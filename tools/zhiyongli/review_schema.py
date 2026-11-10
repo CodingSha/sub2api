@@ -14,6 +14,42 @@ def array(items):
     return {'type': 'array', 'items': items}
 
 
+def compact(schema):
+    """把重复出现的相同子结构集中到$defs并原位引用；约束内容不变，只缩小请求体。
+
+    分项变体里的事件枚举和公共子对象会重复数十次，事件越多请求体越大。"""
+    import json
+    counts = {}
+
+    def children(node):
+        yield from node.get('properties', {}).values()
+        if isinstance(node.get('items'), dict): yield node['items']
+        yield from node.get('anyOf', [])
+
+    def count(node):
+        key = json.dumps(node, sort_keys=True, ensure_ascii=False)
+        counts[key] = counts.get(key, 0) + 1
+        for child in children(node): count(child)
+
+    count(schema)
+    # 短结构引用后并不更小，保持内联。
+    names = {key: 's' + str(index) for index, key in enumerate(sorted(k for k, n in counts.items() if n > 1 and len(k) > 120))}
+
+    def rewrite(node, top=False):
+        if not top:
+            name = names.get(json.dumps(node, sort_keys=True, ensure_ascii=False))
+            if name: return {'$ref': '#/$defs/' + name}
+        result = dict(node)
+        if 'properties' in node: result['properties'] = {k: rewrite(v) for k, v in node['properties'].items()}
+        if isinstance(node.get('items'), dict): result['items'] = rewrite(node['items'])
+        if 'anyOf' in node: result['anyOf'] = [rewrite(v) for v in node['anyOf']]
+        return result
+
+    result = rewrite(schema, top=True)
+    if names: result['$defs'] = {name: rewrite(json.loads(key), top=True) for key, name in names.items()}
+    return result
+
+
 def schema(unit, rubric, version):
     text = {'type': 'string'}
     refs = array(text)
@@ -113,4 +149,4 @@ def schema(unit, rubric, version):
         from navigation_access import query_schema
         result['properties']['needs_nodes']=query_schema(unit)
         result['required'].append('needs_nodes')
-    return result
+    return compact(result)

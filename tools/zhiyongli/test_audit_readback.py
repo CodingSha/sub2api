@@ -77,6 +77,63 @@ class AuditReadbackTests(unittest.TestCase):
             self.assertEqual('80.0',result['reports'][0]['score']);self.assertEqual(calls,client.calls)
             self.assertEqual(original,(root/'audit-readback/1/audit.receipt.json').read_bytes())
 
+    def test_bounded_auto_revision_feeds_audit_back_and_keeps_prior_rounds(self):
+        class Reviser(Auditor):
+            accepts_revision_feedback=True
+            feedback=None;always=False
+            def call(self,u,path,feedback=None):
+                if feedback is not None and not path.exists():self.feedback=feedback
+                return super().call(u,path)
+            def audit_review(self,u,r,path):
+                self.revise=self.always or self.feedback is None
+                return super().audit_review(u,r,path)
+        with tempfile.TemporaryDirectory() as tmp,patch('pipeline.reading_view',side_effect=view):
+            root=Path(tmp);p=source();client=Reviser();result=evaluate_week(p,root,client)
+            self.assertEqual('80.0',result['reports'][0]['score'])
+            self.assertIn('按复查意见自动修订',''.join(result['reports'][0]['limitations']))
+            # 首轮候选与复查分歧原样保留，修订轮带入的是首轮逐项意见。
+            self.assertFalse(json.loads((root/'audit.json').read_text())['supported']);self.assertFalse((root/'bundle.json').exists())
+            self.assertEqual((1,'revise'),(client.feedback['round'],client.feedback['audit']['items']['P2']['verdict']))
+            rounds=list((root/'revisions').iterdir());self.assertEqual(1,len(rounds))
+            self.assertEqual(1,json.loads((rounds[0]/'revision.json').read_text())['automatic_round'])
+            self.assertEqual((root/'identify.receipt.json').stat().st_ino,(rounds[0]/'identify.receipt.json').stat().st_ino)
+            calls=client.calls;self.assertEqual(result,evaluate_week(p,root,client));self.assertEqual(calls,client.calls)
+        with tempfile.TemporaryDirectory() as tmp,patch('pipeline.reading_view',side_effect=view):
+            root=Path(tmp);p=source();client=Reviser();client.always=True
+            with self.assertRaises(Paused) as caught:evaluate_week(p,root,client)
+            self.assertEqual('needs_review',caught.exception.state);self.assertEqual(2,len(list((root/'revisions').iterdir())))
+            calls=client.calls
+            with self.assertRaises(Paused):evaluate_week(p,root,client)
+            self.assertEqual((calls,2),(client.calls,len(list((root/'revisions').iterdir()))))
+
+    def test_review_failing_program_checks_is_revised_with_the_checker_reason(self):
+        class Misquoting(Auditor):
+            accepts_revision_feedback=True
+            feedback=None;always=False
+            def call(self,u,path,feedback=None):
+                if path.exists():return json.loads(path.read_text())
+                if feedback is not None:self.feedback=feedback
+                value=received(super().call(u,path))
+                if feedback is None or self.always:value['evidence'][0]['quote']='来源中不存在的合成引文'
+                return record(value,path)
+        with tempfile.TemporaryDirectory() as tmp,patch('pipeline.reading_view',side_effect=view):
+            root=Path(tmp);p=source();client=Misquoting();result=evaluate_week(p,root,client)
+            self.assertEqual(1,len(result['reports']))
+            self.assertEqual(('review',None),(client.feedback['contract_error']['stage'],client.feedback['audit']))
+            self.assertIn('逐字',client.feedback['contract_error']['error'])
+            self.assertEqual('来源中不存在的合成引文',client.feedback['previous_review']['evidence'][0]['quote'])
+            # 未过校验的首轮候选不进入复查，也不产出报告。
+            self.assertFalse((root/'audit.receipt.json').exists());self.assertFalse((root/'bundle.json').exists())
+        with tempfile.TemporaryDirectory() as tmp,patch('pipeline.reading_view',side_effect=view):
+            root=Path(tmp);client=Misquoting();client.always=True
+            with self.assertRaises(Paused) as caught:evaluate_week(source(),root,client)
+            self.assertEqual('needs_review',caught.exception.state);self.assertIn('未通过程序校验',str(caught.exception))
+            self.assertEqual(2,len(list((root/'revisions').iterdir())))
+        # 不支持修订反馈的执行器保持原有校验异常，不改写为争议状态。
+        with tempfile.TemporaryDirectory() as tmp,patch('pipeline.reading_view',side_effect=view):
+            client=Misquoting();client.accepts_revision_feedback=False
+            with self.assertRaises(ValueError):evaluate_week(source(),Path(tmp),client)
+
     def test_unknown_supplement_stays_unknown_across_resume(self):
         with tempfile.TemporaryDirectory() as tmp,patch('pipeline.reading_view',side_effect=view):
             root=Path(tmp);p=source();client=Auditor();client.unknown=True
@@ -170,6 +227,44 @@ class AuditReadbackTests(unittest.TestCase):
         self.assertEqual(['missing-context','present'],contract['properties']['needs_events']['items']['enum'])
         with self.assertRaises(ValueError):validate(unit,{},dict(items={},global_issues=[],needs_events=['missing-context']),RUBRIC['items'])
         with self.assertRaises(ValueError):validate(unit,{},dict(items={},global_issues=[],needs_events=None),RUBRIC['items'])
+
+    def test_remarks_do_not_block_but_global_issues_do_and_event_enum_is_defined_once(self):
+        from semantic_audit import schema,validate
+        from review_schema import schema as review_schema
+        from runtime import VERSION
+        unit=dict(key='k',events=[dict(event='only-synthetic-event',text='合成材料')],person_events=['only-synthetic-event'])
+        items={i:dict(verdict='supported',reason='合成',source_quotes=[dict(event='only-synthetic-event',quote='合成')],problem_codes=[])
+            for i in RUBRIC['items']}
+        value=dict(items=items,global_issues=[],remarks=['仅说明材料范围'],needs_events=[])
+        self.assertTrue(validate(unit,{},value,RUBRIC['items'])['supported'])
+        self.assertFalse(validate(unit,{},dict(value,global_issues=['跨项重复归责']),RUBRIC['items'])['supported'])
+        with self.assertRaises(ValueError):validate(unit,{},dict(value,remarks='说明'),RUBRIC['items'])
+        # 复查先独立判定状态：与候选状态不同时，即使结论写了支持也不算通过，并指明分项供修订。
+        review=dict(period_reviews=[dict(cells=[dict(item=i,state='observed') for i in RUBRIC['items']])])
+        agreed={i:dict(v,person_act='合成行为',own_state='observed') for i,v in items.items()}
+        self.assertTrue(validate(unit,review,dict(value,items=agreed),RUBRIC['items'])['supported'])
+        differing=dict(agreed,M3=dict(agreed['M3'],person_act='无',own_state='no_opportunity'))
+        result=validate(unit,review,dict(value,items=differing),RUBRIC['items'])
+        self.assertEqual((False,['M3']),(result['supported'],result['state_mismatches']))
+        with self.assertRaises(ValueError):validate(unit,review,dict(value,items=dict(agreed,M3=dict(agreed['M3'],own_state='其他'))),RUBRIC['items'])
+        for contract in (schema(unit,RUBRIC['items']),review_schema(unit,RUBRIC,VERSION)):
+            text=json.dumps(contract)
+            # 变体内只引用集中定义，事件枚举不再随分项重复。
+            self.assertLessEqual(text.count('only-synthetic-event'),5);self.assertIn('#/$defs/',text)
+
+    def test_compacted_schema_expands_back_to_the_same_constraints(self):
+        from review_schema import compact,obj,array,enum
+        shared=obj(dict(event=enum(*['synthetic-event-'+str(i) for i in range(8)]),quote=dict(type='string')))
+        original=obj(dict(a=array(shared),b={'anyOf':[obj(dict(kind=enum('x'),refs=array(shared))),obj(dict(kind=enum('y'),refs=array(shared)))]}))
+        compacted=compact(original)
+        def expand(node):
+            if isinstance(node,dict):
+                if '$ref' in node:return expand(compacted['$defs'][node['$ref'].rsplit('/',1)[1]])
+                return {k:expand(v) for k,v in node.items() if k!='$defs'}
+            return [expand(v) for v in node] if isinstance(node,list) else node
+        self.assertEqual(original,expand(compacted))
+        self.assertLess(len(json.dumps(compacted)),len(json.dumps(original)))
+        self.assertNotIn('$defs',compact(obj(dict(a=dict(type='string')))))
 
 
 class NodeAuditor(Auditor):

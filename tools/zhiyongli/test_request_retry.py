@@ -24,6 +24,7 @@ class RetryTests(unittest.TestCase):
             def open(self,request,**kw):
                 test.sends+=1
                 error=test.errors.pop(0) if test.errors else None
+                if error=='cut':raise ConnectionResetError('合成传输中断')
                 if error:raise HTTPError(request.full_url,error,'synthetic',{'Retry-After':'180'},None)
                 return original.open(request,**kw)
         patcher=patch.object(ModelConfig,'opener',return_value=Opener());patcher.start();self.addCleanup(patcher.stop)
@@ -67,6 +68,39 @@ class RetryTests(unittest.TestCase):
             self.errors=[code];path=self.root/(str(code)+'.receipt.json');before=self.sends
             client=self.client(str(code));client._call(self.payload,path);self.now+=181
             client._call(self.payload,path);self.assertEqual(before+1,self.sends)
+
+    def interrupted_flow(self):
+        self.flow=ModelFlow(self.root/'flow-cut',dict(self.flow.config,max_interrupted_retries=2),now=lambda:self.now)
+
+    def test_interrupted_transport_resends_within_limit_and_keeps_original(self):
+        from request_retry import blocking_status
+        self.interrupted_flow();self.errors=['cut'];client=self.client()
+        result=client._call(self.payload,self.receipt)
+        self.assertEqual('received',result['status']);self.assertEqual((2,2),(self.sends,client.budget.used()))
+        original=json.loads(attempt_path(self.receipt,0).read_text())
+        self.assertEqual(('unknown','ConnectionResetError'),(original['status'],original['error']))
+        self.assertEqual('chained',blocking_status(attempt_path(self.receipt,0)))
+        self.assertEqual('received',blocking_status(self.receipt))
+        self.client('b')._call(self.payload,self.receipt);self.assertEqual(2,self.sends)
+
+    def test_repeated_interruption_exhausts_as_unknown_without_more_sends(self):
+        from request_retry import blocking_status
+        self.interrupted_flow();self.errors=['cut','cut','cut','cut']
+        with self.assertRaises(Paused) as ex:self.client()._call(self.payload,self.receipt)
+        self.assertEqual(('queued',2),(ex.exception.state,self.sends))
+        self.assertEqual('retry_wait',blocking_status(self.receipt))
+        self.assertEqual('unknown',self.client('b')._call(self.payload,self.receipt)['status'])
+        self.assertEqual('unknown',self.client('c')._call(self.payload,self.receipt)['status'])
+        self.assertEqual(3,self.sends);self.assertEqual('unknown',blocking_status(self.receipt))
+
+    def test_orphaned_requesting_receipt_resends_in_place_only_when_configured(self):
+        self.errors=[]
+        atomic(self.receipt,dict(request_sha256=digest(dict(endpoint=self.config.responses_url,payload=self.payload)),
+            status='requesting',sent_at=self.now,response_id=None))
+        self.assertEqual(('requesting',0),(self.client()._call(self.payload,self.receipt)['status'],self.sends))
+        self.interrupted_flow()
+        self.assertEqual(('received',1),(self.client('b')._call(self.payload,self.receipt)['status'],self.sends))
+        self.assertEqual('requesting',json.loads(attempt_path(self.receipt,0).read_text())['status'])
 
     def test_budget_refusal_keeps_pending_but_can_resume_without_new_send_intent(self):
         first=self.start(self.client(limit=1));self.now+=181
@@ -112,8 +146,9 @@ class RetryTests(unittest.TestCase):
         with patch.object(first.budget,'reserve',side_effect=crash):
             with self.assertRaises(RuntimeError):fixtures.ReadingCacheTests.read(self,self.page,first)
         other=self.client('b');other.reading_cache_root=self.root/'shared'
-        value=fixtures.ReadingCacheTests.read(self,self.page,other)
-        self.assertEqual('unknown',value['blocked'][0]['state']);self.assertEqual((1,0),(self.sends,other.budget.used()))
+        # 共享页扫描按链的实际待发送状态判断，缺回执的预留在入口处即按结果不明拦住。
+        with self.assertRaises(Paused) as ex:fixtures.ReadingCacheTests.read(self,self.page,other)
+        self.assertEqual('unknown',ex.exception.state);self.assertEqual((1,0),(self.sends,other.budget.used()))
 
 
 if __name__=='__main__':unittest.main()

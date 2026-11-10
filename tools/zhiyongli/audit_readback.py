@@ -7,7 +7,7 @@ from bounded_read import raw_size
 from context_readback import expand, MAX_ROUNDS, MAX_NODE_ROUNDS
 from navigation_access import freeze
 from runtime import digest, RUBRIC, moment
-from semantic_audit import validate
+from semantic_audit import validate, ContractError
 
 INPUT_BYTES=120_000
 
@@ -33,13 +33,14 @@ def complete(unit, review, packet, directory, client, receive, progress=lambda *
         events=value.get('needs_events',[]);nodes=value.get('needs_nodes',[])
         if not isinstance(events,list) or not isinstance(nodes,list):raise ValueError('复查补读请求须为明确列表')
         if not events and not nodes:
-            result=validate(unit,review,value,RUBRIC['items'],context=current)
+            try:result=validate(unit,review,value,RUBRIC['items'],context=current)
+            except ValueError as ex:raise ContractError(str(ex)) from None
             save(root,unit,review,packet,current,receipt)
             return result
-        if value.get('items') or value.get('global_issues'):
+        if value.get('items') or value.get('global_issues') or value.get('remarks'):
             raise ValueError('复查补读不能同时提交逐项结论或跨项结论；原回执保留')
         fields={'items','global_issues','needs_events'} | ({'needs_nodes'} if access is not None else set())
-        if set(value)!=fields or value['items']!={} or value['global_issues']!=[] or events and nodes:
+        if set(value)-{'remarks'}!=fields or value['items']!={} or value['global_issues']!=[] or events and nodes:
             raise ValueError('复查补读字段不符或混合事件与节点请求')
         stage=str(event_rounds+node_rounds+1)
         if nodes:

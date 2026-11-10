@@ -186,9 +186,9 @@ def _read_all(packet, directory, *, client=None, max_bytes=PAGE_BYTES, limit=1,o
     contract=digest(dict(instructions=INSTRUCTIONS,schemas=[schema(page) for page in reading['pages']]))
     for prior in base.glob('*/plan.json'):
         saved=json.loads(prior.read_text())
+        from request_retry import blocking_status
         for receipt in prior.parent.glob('*.receipt.json'):
-            record=json.loads(receipt.read_text())
-            if record.get('status') in {'requesting','unknown'}:
+            if blocking_status(receipt) in {'requesting','unknown'}:
                 return dict(state='reading_blocked',blocked=[dict(state='unknown',receipt=str(receipt))],
                     semantic_acceptance=False,reason='同来源旧请求结果不明，变更阅读合同也不能重新发送')
     root = base/digest(dict(plan=reading,contract=contract))
@@ -203,7 +203,8 @@ def _read_all(packet, directory, *, client=None, max_bytes=PAGE_BYTES, limit=1,o
         for index, page in enumerate(reading['pages']):
             receipt = root/(str(index)+'.receipt.json')
             if not receipt.exists() and (client is None or handled >= limit): continue
-            if receipt.exists():
+            from request_retry import retry_pending
+            if receipt.exists() and not (client is not None and retry_pending(receipt)):
                 actual_receipt,record=receipt_value(receipt)
                 if record.get('status') in {'requesting','unknown','rejected'}:
                     blocked.append(dict(page=index,state='unknown' if record['status']=='requesting' else record['status']));break

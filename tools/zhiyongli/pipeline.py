@@ -14,6 +14,8 @@ from qualify_results import qualify_bundle
 TZ=timezone(timedelta(hours=8))
 # 工程请求预算，非评分门槛。真实262144-token端点曾拒绝约75万token输入。
 DIRECT_BYTES=120_000
+# 复查分歧后按逐项意见自动修订的轮数上限；用尽仍有分歧则保留待人工核对。属执行上限，不是评分门槛。
+AUTO_REVISIONS=2
 
 class Paused(ValueError):
     def __init__(self, state, message):
@@ -232,9 +234,70 @@ def assemble(packet, identified):
         result['candidate_segmentation']=copy.deepcopy(packet['candidate_segmentation'])
     return result
 
+class Disputed(Paused):
+    """候选未通过另次语义复查或程序校验；有界自动修订用尽后才交人工核对。"""
+    def __init__(self,message='语义复查仍存在判断分歧，各轮候选与复查意见已保留；需实际核对，不自动改分'):
+        super().__init__('needs_review',message)
+
+
+def contract_failure(root,stage,ex,client):
+    """评分或复查输出未过确定性校验：记下校验原因供修订轮改正；原回执不动。不支持修订的执行器维持原异常。"""
+    if not getattr(client,'accepts_revision_feedback',False):raise ex
+    atomic(Path(root)/'contract-error.json',dict(stage=stage,error=str(ex)[:2000]))
+    raise Disputed(('评分' if stage=='review' else '语义复查')+'输出未通过程序校验：'+str(ex)[:300]+'；原回执保留，需实际核对') from None
+
+
+def revision_round(root):
+    path=Path(root)/'revision.json'
+    return json.loads(path.read_text()).get('automatic_round',0) if path.exists() else 0
+
+
+def revision_feedback(root):
+    """自动修订轮把前一候选和逐项复查意见作为待核材料交给评分；人工发起的修订不带入。"""
+    if not revision_round(root):return None
+    parent=Path(json.loads((Path(root)/'revision.json').read_text())['parent_directory'])
+    def load(name):
+        path=parent/name
+        return json.loads(path.read_text()) if path.exists() else None
+    review,audit,error=load('model-review.json'),load('model-audit.json'),load('contract-error.json')
+    # 复查已支持的分项不重复携带理由和引文，修订请求只带需要重新核对的意见；输出不可解析时没有前序候选。
+    return dict(round=revision_round(root),
+        previous_review=dict(evidence=review['value'].get('evidence',[]),period_reviews=review['value'].get('period_reviews',[])) if review else None,
+        audit=dict(items={k:v for k,v in audit['value']['items'].items()
+                if v['verdict']!='supported' or k in audit.get('state_mismatches',[])},
+            global_issues=audit['value']['global_issues']) if audit else None,
+        contract_error=error)
+
+
+def auto_revise(base,current,client):
+    """按另次复查的逐项意见开一轮新修订；不是换随机结果重评，原候选、复查回执和前序文件签名全部保留。"""
+    done=revision_round(current)
+    if done>=AUTO_REVISIONS or not getattr(client,'accepts_revision_feedback',False):return False
+    from review_control import revise
+    target=revise(base,'自动修订（同模型复查意见驱动）',
+        '语义复查存在逐项分歧，按复查意见进行第'+str(done+1)+'轮有界修订；前序候选与复查回执保留',automatic_round=done+1)
+    # 评分之前的目标识别按相同请求复用原回执，修订轮只重新评分和复查。
+    import os
+    current=Path(current).resolve()
+    for source in sorted(current.rglob('*.receipt.json')):
+        relative=source.relative_to(current)
+        if relative.parts[0]=='identification' or len(relative.parts)==1 and relative.name.startswith('identify.'):
+            (target/relative).parent.mkdir(parents=True,exist_ok=True,mode=0o700)
+            os.link(source,target/relative)
+    return True
+
+
 def evaluate_week(packet, directory, client, progress=lambda *args:None,shared_root=None):
     from review_control import selected
-    directory=selected(directory)
+    while True:
+        current=selected(directory)
+        try:return _shared_week(packet,current,client,progress,shared_root)
+        except Disputed:
+            if not auto_revise(directory,current,client):raise
+            progress('reviewing',0,1,'按复查意见或程序校验结果自动修订；前序候选保留')
+
+
+def _shared_week(packet, directory, client, progress,shared_root):
     if shared_root is None or not packet['events']:return _evaluate_week(packet,directory,client,progress)
     from shared_weeks import slot
     with slot(shared_root,packet,directory) as result:
@@ -305,7 +368,7 @@ def identify_packet(packet,frozen_packet,root,client,progress):
     else:identified=canonical(packet,received(client.identify(packet,root/'identify.receipt.json')))
     return packet,identified
 
-def review_materials(packet,unit,root,client,progress):
+def review_materials(packet,unit,root,client,progress,feedback=None):
     """按完整材料签名建立模型视图，回填时仅增加冻结背景。"""
     from context_readback import complete
     from shared_weeks import reference
@@ -323,7 +386,7 @@ def review_materials(packet,unit,root,client,progress):
         from context_navigation import Navigation
         from navigation_access import Access
         access=Access(Navigation(root/'context-navigation',packet),root/'navigation-access',native=native if projected else None)
-    unit,record,receipt=complete(unit,packet,root,client,received,progress,navigation_access=access)
+    unit,record,receipt=complete(unit,packet,root,client,received,progress,navigation_access=access,feedback=feedback)
     view=unit
     if projected:
         from model_view import hydrate
@@ -356,27 +419,33 @@ def audit_materials(packet,unit,view,review,root,client,progress,projected,acces
 def evaluate_unit(packet,unit,root,client,progress):
     """同一固定判据处理完整周或月内片段；不重新识别已核目标。"""
     progress('reviewing',0,1,'按1.6上下文合同评审12个分项')
-    unit,view,record,projected,access=review_materials(packet,unit,root,client,progress)
+    unit,view,record,projected,access=review_materials(packet,unit,root,client,progress,revision_feedback(root))
     from review_control import resolution
     resolved=resolution(root,unit)
     if resolved:
         review,audit,proof=resolved
         adaptation=dict(version='explicit-review-resolution',resolution=proof,changes_evidence=True,changes_scores=True)
     else:
-        received(record);review,adaptation=response_value(unit,record)
-        if projected:
-            from model_view import check_review
-            check_review(view,review)
-        atomic(root/'model-review.json',dict(value=review,adaptation=adaptation))
+        received(record)
+        try:
+            review,adaptation=response_value(unit,record)
+            atomic(root/'model-review.json',dict(value=review,adaptation=adaptation))
+            if projected:
+                from model_view import check_review
+                check_review(view,review)
+            validate_review(unit,review)
+        except (ValueError,KeyError,TypeError) as ex:contract_failure(root,'review',ex,client)
     rows=validate_review(unit,review)
     atomic(root/'review.json',dict(value=review,adaptation=adaptation,rows=rows))
     progress('checking',0,1,'核对引用、归属、算术与判断对应关系')
     if not resolved:
-        audit=audit_materials(packet,unit,view,review,root,client,progress,projected,access)
+        from semantic_audit import ContractError
+        try:audit=audit_materials(packet,unit,view,review,root,client,progress,projected,access)
+        except ContractError as ex:contract_failure(root,'audit',ex,client)
         atomic(root/'model-audit.json',audit)
     atomic(root/'audit.json',audit)
     if not audit['supported']:
-        raise Paused('needs_review','语义复查存在判断分歧，候选已保留；需实际核对，不自动改分或重发')
+        raise Disputed()
     if unit['evaluation_scope']=='person_week_fragment':
         return None
     entry=dict(user_email=packet['user_email'],source_user_id=packet['user_id'],period_type='week',
@@ -384,7 +453,9 @@ def evaluate_unit(packet,unit,root,client,progress):
         periods=[dict(unit={'name':'unit'},review={'name':'review'})])
     report,_=convert(root,entry,lambda ref:unit if ref['name']=='unit' else review)
     report['limitations'].append(('模型候选经'+proof['reviewer_kind']+'有理由逐项处置，原模型与复查记录保留；'
-        if resolved else 'AI自动评审并经同模型另次语义检查；')+'未经独立真人校准，发布前由管理员核对。')
+        if resolved else 'AI自动评审并经同模型另次语义检查'+('，此前'+str(revision_round(root))+'轮候选已按复查意见自动修订，各轮记录保留；'
+            if revision_round(root) else '；'))+'未经独立真人校准，发布前由管理员核对。'
+        +('复查另附'+str(len(audit['value']['remarks']))+'条不要求改动候选的说明，见复查记录。' if not resolved and audit['value'].get('remarks') else ''))
     atomic(root/'native-report.json',report)
     result=qualify_bundle(dict(schema_version=1,source_name='自动评审1.6:'+unit['key'],reports=[report]))
     atomic(root/'bundle.json',result)
@@ -477,10 +548,17 @@ def evaluate_month(source_root,user_id,start,end,directory,client,progress=lambd
 
 
 def evaluate_fragment(fragment,unit,lo,hi,target,client,progress):
+    from review_control import selected
+    while True:
+        current=selected(target)
+        try:return _evaluate_fragment(fragment,unit,lo,hi,current,client,progress)
+        except Disputed:
+            if not auto_revise(target,current,client):raise
+
+
+def _evaluate_fragment(fragment,unit,lo,hi,target,client,progress):
     def read(path):return json.loads(path.read_text())
     unit=month_fragment(unit,lo.isoformat(),hi.isoformat())
-    from review_control import selected
-    target=selected(target)
     target.mkdir(parents=True,exist_ok=True,mode=0o700)
     stamp=dict(packet_sha256=digest(fragment),unit_sha256=digest(unit),policy_sha256=policy())
     if (target/'input.json').exists() and read(target/'input.json')!=stamp:

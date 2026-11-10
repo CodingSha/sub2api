@@ -141,8 +141,8 @@ def slot(shared_root,packet,directory):
         for prior in root.glob('*.json'):
             entry=json.loads(prior.read_text())
             if entry['directory']==str(directory):continue
-            from request_retry import read_receipt
-            if any(read_receipt(p).get('status') in {'unknown','requesting'}
+            from request_retry import blocking_status
+            if any(blocking_status(p) in {'unknown','requesting'}
                 for p in Path(entry['directory']).rglob('*.receipt.json')):
                 raise Paused('unknown','同来源周评已有结果不明请求，跨任务或换合同也不能重发；请核对原执行记录')
         existing=json.loads(path.read_text()) if path.exists() else None

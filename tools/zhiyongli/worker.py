@@ -25,6 +25,8 @@ RULES='1.6'
 
 class JobClient(CompanyClient):
     """按任务账簿预记新发送；跨任务复用回执不消耗本任务预算。"""
+    # 复查分歧时可接收前一候选及逐项意见做有界修订；修订请求同样计入任务与全局预算。
+    accepts_revision_feedback=True
     def __init__(self,config,root,limit,new_request_limit=1,flow=None):
         super().__init__(config);self.root=root;self.limit=limit;self.new_request_limit=new_request_limit
         from request_budget import RequestBudget
@@ -124,7 +126,8 @@ def process(db,job,state,source,client,send,excluded_keys,max_requests=100,new_r
         review_root=selected(root/'review')
         if job['period_type']=='week':
             packet=prepare(source_root,job['user_id'],start,end,workday_scope=scope)
-            bundle=evaluate_week(packet,review_root,client,progress,shared_root=Path(state)/'shared-weeks')
+            # 传未选定的基目录：自动修订的各轮目录平铺在同一revisions下，由evaluate_week选定当前轮。
+            bundle=evaluate_week(packet,root/'review',client,progress,shared_root=Path(state)/'shared-weeks')
         else:
             bundle=evaluate_month(source_root,job['user_id'],start,end,review_root,client,progress,shared_root=Path(state)/'shared-weeks',workday_scope=scope)
         progress('importing',0,1,'接入已核候选；等待管理员确认发布')

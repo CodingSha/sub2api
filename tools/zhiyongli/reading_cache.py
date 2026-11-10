@@ -32,9 +32,9 @@ class ReadingCache:
             try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
             except BlockingIOError:
                 raise Paused('queued','相同来源页正在读取，等待原请求落盘后复用') from None
+            from request_retry import blocking_status
             for receipt in source.glob('*.receipt.json'):
-                record=json.loads(receipt.read_text())
-                if record.get('status') in {'unknown','requesting'}:
+                if blocking_status(receipt) in {'unknown','requesting'}:
                     raise Paused('unknown','同一来源页已有结果不明请求，禁止跨任务或换合同重发')
             reservation=source/'reservation.json'
             if reservation.exists():

@@ -46,19 +46,22 @@ def is_revision(directory,parent,packet):
     return True
 
 
-def revise(base,reviewer,reason):
+def revise(base,reviewer,reason,automatic_round=None):
     # 仅创建有理由的新修订时允许定位旧合同；正常执行仍拒绝沿用旧合同结果。
     base=Path(base).resolve();parent=selected(base,allow_historical=True)
     if not reviewer.strip() or not reason.strip():raise ValueError('修订须记录核对人和具体原因')
     if (parent/'bundle.json').exists():raise ValueError('已有已核候选不能通过失败任务修订入口覆盖，须另走报告修订')
     receipts=list(base.rglob('*.receipt.json'))
-    if any(read_receipt(p).get('status') in {'unknown','requesting','budget_paused'} for p in receipts):
+    from request_retry import blocking_status
+    if any(blocking_status(p) in {'unknown','requesting','budget_paused','retry_wait','interrupted'} for p in receipts):
         raise ValueError('存在结果不明或预算会话，须先核对原请求；不能换目录重发')
     packet=json.loads((parent/'packet.json').read_text())
     files=[reference(p) for p in parent.rglob('*') if p.is_file() and 'revisions' not in p.relative_to(parent).parts
         and p.name not in {'active-revision.json'} and not p.name.endswith('.lock')]
     proof=dict(parent_directory=str(parent),source_identity=source_identity(packet),parent_files=files,
         policy_sha256=policy(),reviewer=reviewer,reason=reason,at=time.time())
+    # 自动修订标明轮次，评分时据此带入前序候选与复查意见；人工修订不带。
+    if automatic_round is not None:proof['automatic_round']=automatic_round
     directory=base/'revisions'/digest(proof);directory.mkdir(parents=True,exist_ok=False,mode=0o700)
     proof['directory']=str(directory);atomic(directory/'revision.json',proof)
     atomic(base/'active-revision.json',reference(directory/'revision.json'))
