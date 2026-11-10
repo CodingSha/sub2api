@@ -114,6 +114,26 @@ class NavigatingClient(FixtureClient):
 
 
 class NavigationPipelineTests(unittest.TestCase):
+    def test_identification_readback_round_judgment_is_not_adopted(self):
+        from identification_readback import complete
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);p=packet('2026-09-07T00:00:00+08:00','2026-09-14T00:00:00+08:00')
+            helper=navigation_tests.NavigationTests();p['events'].extend(helper.packet(80)['events'])
+            nav=Navigation(root/'context-navigation',p);nav.build(helper.notes(p),navigation_tests.Reader(),received)
+            class Client(FixtureClient):
+                def identify(self,page,path,feedback=None):
+                    value=json.loads(super().identify(page,path)['response']['output'][0]['content'][0]['text'])
+                    access=page['context_access']
+                    # 补读轮同时附带完整归属判断：只采用节点请求，判断不采用。
+                    value['needs_nodes']=[] if access['inspected_node_ids'] else [dict(node_id=access['root']['node_id'],mode='inspect')]
+                    return record(value,path)
+            current,value=complete(p,root/'readback',Access(nav,root/'navigation-access'),Client(),received)
+            self.assertEqual([],value['needs_nodes'])
+            self.assertEqual(1,len(current['context_access']['inspected_node_ids']))
+            request=json.loads((root/'readback/0/request.json').read_text())
+            self.assertTrue(request['provisional_judgment_not_adopted'])
+            self.assertFalse(list((root/'readback').rglob('*.contract-error.json')))
+
     def test_review_and_audit_use_navigated_raw_and_replay_never_resends(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);p=packet('2026-09-07T00:00:00+08:00','2026-09-14T00:00:00+08:00')

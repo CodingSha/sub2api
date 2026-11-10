@@ -15,8 +15,7 @@ def complete(page, root, access, client, receive):
         path=root/str(index)
         def check(value,page=current,stage=str(index)):
             if not value.get('needs_nodes',[]):return canonical(page,value)
-            if set(value)!={'materials','goals','needs_nodes'} or value['materials']!={} or value['goals']!=[]:
-                raise ValueError('归属补读不能同时提交本人或目标判断：请求补读时materials须为{}、goals须为[]；给出判断时needs_nodes须为空')
+            # 仍在补读的轮次只采用节点请求；同轮附带的归属判断不采用、不校验，只有最终不再补读的一轮才形成判断。
             if int(stage)>=MAX_ROUNDS:raise ValueError('归属分层补读达到执行上限：须基于已提供内容给出判断，不再请求节点')
             # 节点请求不合合同或超容量时同样带原因有界重发，不直接终止整周；成功展开才留存证明。
             return access.expand(page,value['needs_nodes'],stage)
@@ -26,6 +25,7 @@ def complete(page, root, access, client, receive):
             freeze(root/'context.json',current)
             return current,value
         freeze(path/'request.json',dict(previous_page_sha256=digest(current),
-            previous_response_sha256=digest(record),next_page_sha256=digest(next_page),nodes=nodes))
+            previous_response_sha256=digest(record),next_page_sha256=digest(next_page),nodes=nodes,
+            provisional_judgment_not_adopted=bool(value.get('materials') or value.get('goals'))))
         current=next_page
     raise AssertionError('归属补读未到达终态')

@@ -100,7 +100,7 @@ timestamp_basis=audit_capture是审计采集定位，不是历史消息发送时
 查询、解释、学习可成立目标，不要求方法、验收或成果才识别；边界是否明确与目标是否完成分开。
 截断只限制对应已保存内容，不删除其他完整输入或后续轮次。unknown的来源时间与归属不补造。
 goals给title,purpose,boundary(confirmed/unresolved),boundary_reason,context_event_ids；输出不含评分。
-context_access存在时，当前批次只含完整来源的一部分，根节点概括仅作定位，不能把摘要当原文或因本批没出现就判没有。需要时输出materials:{}、goals:[]、needs_nodes:[{node_id,mode:inspect/raw}]，仅访问已展示节点；补读不能同时提交判断，最终needs_nodes为空。补读得到的背景不能增加候选本人槽位。
+context_access存在时，当前批次只含完整来源的一部分，根节点概括仅作定位，不能把摘要当原文或因本批没出现就判没有。需要时输出materials:{}、goals:[]、needs_nodes:[{node_id,mode:inspect/raw}]，仅访问已展示节点；请求补读的轮次只采用needs_nodes，同轮materials和goals不被采用，应留空；只有needs_nodes为空的最终一轮形成判断。补读得到的背景不能增加候选本人槽位。
 """
 
 
