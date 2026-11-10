@@ -224,7 +224,8 @@ class AuditReadbackTests(unittest.TestCase):
         from semantic_audit import schema,validate
         unit=dict(events=[dict(event='present',text='合成材料')],reading_notes=[dict(event_id='missing-context')])
         contract=schema(unit,RUBRIC['items'])
-        self.assertEqual(['missing-context','present'],contract['properties']['needs_events']['items']['enum'])
+        # 已在材料中的事件不再可请求，只能请求导航中尚未提供原文的事件。
+        self.assertEqual(['missing-context'],contract['properties']['needs_events']['items']['enum'])
         with self.assertRaises(ValueError):validate(unit,{},dict(items={},global_issues=[],needs_events=['missing-context']),RUBRIC['items'])
         with self.assertRaises(ValueError):validate(unit,{},dict(items={},global_issues=[],needs_events=None),RUBRIC['items'])
 

@@ -55,7 +55,8 @@ def schema(unit, items):
     judgment={'anyOf':[obj(dict(facts,verdict=enum('supported'),reason=text,source_quotes=quotes,problem_codes=dict(array(text),maxItems=0))),
         obj(dict(facts,verdict=enum('revise','unresolved'),reason=text,source_quotes=quotes,problem_codes=array(text)))]}
     cells=obj({key: judgment for key in items})
-    readable=sorted({e['event'] for e in unit['events']} | {n['event_id'] for n in unit.get('reading_notes',[])})
+    # 只可请求导航中尚未提供原文的事件；已在材料中的事件再请求没有意义，也会被补读拒绝。
+    readable=sorted({n['event_id'] for n in unit.get('reading_notes',[])}-set(event_ids))
     needs=dict(array(enum(*readable)),maxItems=24) if readable else dict(array(text),maxItems=0)
     result=obj(dict(items={'anyOf':[cells,obj({})]},global_issues=array(text),remarks=array(text),needs_events=needs))
     if unit.get('context_access'):

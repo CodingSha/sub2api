@@ -114,7 +114,7 @@ class ReadbackTests(unittest.TestCase):
         u=self.unit(self.source())
         u['events']=[dict(event='present')]
         transport=schema(u,RUBRIC,VERSION)['properties']['needs_events']
-        self.assertEqual(['missing-context','present'],transport['items']['enum'])
+        self.assertEqual(['missing-context'],transport['items']['enum'])
         self.assertEqual(24,transport['maxItems'])
 
     def test_shared_reuse_checks_supplemental_receipt_signature(self):

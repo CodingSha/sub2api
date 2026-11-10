@@ -139,7 +139,7 @@ def schema(unit, rubric, version):
         if events:
             evidence.append(obj(dict(id=dict(type='string', pattern='^'+prefix+'-[A-Za-z0-9_-]+$'),
                 event=enum(*events), quote=text, origin=enum(*origins), origin_reason=text)))
-    readable = sorted(set(all_events) | {n['event_id'] for n in unit.get('reading_notes', [])})
+    readable = sorted({n['event_id'] for n in unit.get('reading_notes', [])} - set(all_events))
     needs = dict(type='array',items=enum(*readable),maxItems=24) if readable else dict(type='array',items=text,maxItems=0)
     result = obj(dict(version=enum(version), review_policy=enum(REVIEW_POLICY), key=enum(unit['key']),
                     evidence=array({'anyOf': evidence}) if evidence else dict(array(text),maxItems=0),
