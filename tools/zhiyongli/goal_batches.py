@@ -5,7 +5,7 @@ from pathlib import Path
 
 from runtime import atomic,digest,moment
 from bounded_read import raw_size
-from task_identification import canonical,validate
+from task_identification import canonical,checked,validate
 from review_schema import obj,array,enum
 
 MERGE_INSTRUCTIONS = '''这是跨分段目标归并，不评分。局部目标只是候选边界，不能以页、会话、次数或标题相同替代语义判断。
@@ -105,7 +105,7 @@ def identify(packet,directory,client,receive,progress=lambda *args:None,access_f
     for i,page in enumerate(pages):
         progress('identifying',i,len(pages),'逐批核对本人归属，局部目标稍后统一归并')
         if access_factory is None:
-            graph=receive(client.identify(page,root/(str(i)+'.receipt.json')))
+            graph=checked(client,page,root/(str(i)+'.receipt.json'),receive,lambda value:canonical(page,value))[1]
         else:
             from identification_readback import complete
             initial={e['event'] for e in page['events']}

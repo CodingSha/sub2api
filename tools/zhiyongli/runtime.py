@@ -278,11 +278,13 @@ class CompanyClient:
             metadata=dict(purpose='zhiyongli_backend_integration',runtime=RUNTIME_VERSION))
         return self._call(payload,receipt)
 
-    def identify(self,packet,receipt):
-        # 同一持久回执与未知隔离，不另开自动重试链路。
-        from task_identification import INSTRUCTIONS as task_instructions, schema as task_schema, model_packet
-        payload=dict(model=self.config.model,instructions=task_instructions,
-            input=json.dumps(model_packet(packet),ensure_ascii=False,separators=(',',':')),
+    def identify(self,packet,receipt,feedback=None):
+        # 同一持久回执与未知隔离；feedback仅在上一次输出未过程序校验时由识别流程有界带入。
+        from task_identification import INSTRUCTIONS as task_instructions, CORRECTION, schema as task_schema, model_packet
+        transport=model_packet(packet)
+        if feedback is not None:transport['contract_feedback']=feedback
+        payload=dict(model=self.config.model,instructions=task_instructions+(CORRECTION if feedback is not None else ''),
+            input=json.dumps(transport,ensure_ascii=False,separators=(',',':')),
             stream=True,store=False,max_output_tokens=24000,
             text=dict(format=dict(type='json_schema',name='zhiyongli_task_identification',
                                   strict=True,schema=task_schema(packet))),

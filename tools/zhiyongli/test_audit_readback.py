@@ -266,6 +266,58 @@ class AuditReadbackTests(unittest.TestCase):
         self.assertLess(len(json.dumps(compacted)),len(json.dumps(original)))
         self.assertNotIn('$defs',compact(obj(dict(a=dict(type='string')))))
 
+    def test_identification_contract_failure_is_resent_with_reason_and_bounded(self):
+        from task_identification import checked,CONTRACT_RETRIES
+        class Client:
+            accepts_revision_feedback=True
+            def __init__(self,good_after):self.good_after=good_after;self.seen=[]
+            def identify(self,packet,path,feedback=None):
+                self.seen.append((path.name,feedback))
+                return dict(ok=len(self.seen)>self.good_after)
+        def check(value):
+            if not value['ok']:raise ValueError('synthetic contract problem')
+            return 'accepted'
+        with tempfile.TemporaryDirectory() as d:
+            client=Client(1);receipt=Path(d)/'0.receipt.json'
+            self.assertEqual('accepted',checked(client,{},receipt,lambda record:record,check)[2])
+            # 第二次请求带上校验原因并使用独立回执；首个回执路径不被覆盖。
+            self.assertEqual([('0.receipt.json',None),('0.fix1.receipt.json',dict(attempt=1,error='ValueError: synthetic contract problem'))],client.seen)
+            self.assertEqual(dict(attempt=1,error='ValueError: synthetic contract problem'),json.loads((Path(d)/'0.contract-error.json').read_text()))
+            client=Client(99)
+            with self.assertRaisesRegex(ValueError,'synthetic contract problem'):
+                checked(client,{},Path(d)/'1.receipt.json',lambda record:record,check)
+            self.assertEqual(CONTRACT_RETRIES+1,len(client.seen))
+            # 不支持修订的执行器维持原行为：只发一次，校验失败直接上抛。
+            client=Client(99);client.accepts_revision_feedback=False
+            with self.assertRaises(ValueError):checked(client,{},Path(d)/'2.receipt.json',lambda record:record,check)
+            self.assertEqual(1,len(client.seen))
+            # 结果不明等暂停状态不进入重发。
+            client=Client(0)
+            def paused(record):raise Paused('unknown','synthetic unknown')
+            with self.assertRaises(Paused):checked(client,{},Path(d)/'3.receipt.json',paused,check)
+            self.assertEqual(1,len(client.seen))
+
+    def test_identification_schema_forbids_goal_on_non_human_material(self):
+        from task_identification import schema as task_schema
+        events=[dict(event='synthetic-a',actor_class='candidate_user',timestamp_unknown=False),
+            dict(event='synthetic-b',actor_class='candidate_user',timestamp_unknown=True),
+            dict(event='synthetic-c',actor_class='context',timestamp_unknown=False)]
+        contract=task_schema(dict(events=events))
+        def expand(node):
+            if isinstance(node,dict):
+                if '$ref' in node:return expand(contract['$defs'][node['$ref'].rsplit('/',1)[1]])
+                return {k:expand(v) for k,v in node.items() if k!='$defs'}
+            return [expand(v) for v in node] if isinstance(node,list) else node
+        slots=expand(contract)['properties']['materials']['properties']
+        self.assertEqual({'synthetic-a','synthetic-b'},set(slots))
+        for key,others in (('synthetic-a',['system','auxiliary','unresolved']),('synthetic-b',['system','auxiliary','duplicate','unresolved'])):
+            human,other=slots[key]['anyOf']
+            self.assertEqual(['human'],human['properties']['classification']['enum'])
+            self.assertEqual(['string','null'],human['properties']['goal_id']['type'])
+            self.assertEqual(others,other['properties']['classification']['enum'])
+            # 非本人材料的目标字段只能为空，模型无法再输出会被程序整批拒绝的组合。
+            self.assertEqual(dict(type='null'),other['properties']['goal_id'])
+
 
 class NodeAuditor(Auditor):
     def audit_review(self,u,r,path):

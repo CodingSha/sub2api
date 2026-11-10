@@ -79,7 +79,7 @@ class Access:
             if key in seen:raise ValueError('同轮节点请求重复')
             seen.add(key)
             if key in access['raw_node_ids'] or mode=='inspect' and key in access['inspected_node_ids']:
-                raise ValueError('该节点内容已经提供，禁止循环补读')
+                raise ValueError('该节点内容已经提供，禁止循环补读：'+key+'（已提供内容见context_access.observations）')
 
     def raw_event(self, unit, value):
         original=self.navigation.events[value['event_id']]

@@ -94,7 +94,7 @@ INSTRUCTIONS = PRINCIPLES + """
 source_segment标明同一原消息的连续执行片段；切口不是目标或缺陷，须结合全部片段及相关上下文。片段不能作为额外消息或任务计数，其他片段尚不清楚时保留未决，不能猜测本人或系统边界。
 已知时间的真实提交即使同文也不判duplicate。历史副本可作背景，不补造本期发送时间。
 timestamp_basis=audit_capture是审计采集定位，不是历史消息发送时刻。展示顺序或同一采集时间不能证明实际发送先后、响应耗时或缓存/预取。结合同一来源的非空request_id核对输入与返回，先检查已提供的前后配对内容，再提出补读。编号大小或相邻、参数相似不能证明同一任务或业务分组；参数JSON可能就是所求成果，不能默认还应有后续业务查询。
-每个候选必须有唯一materials槽位；确有目标则goal_id关联，纯寒暄等可为null并说明，目标不明保留局部表达及未决原因。
+每个候选必须有唯一materials槽位；确有目标则goal_id关联，纯寒暄等可为null并说明，目标不明保留局部表达及未决原因。只有classification为human的槽位可以关联goal_id；判为system、auxiliary、duplicate或unresolved的槽位goal_id必须为null，若认为该输入是某个目标内的本人表达就应判为human。
 每个materials槽位须给非空assignment_reason，说明为何归入该goal_id或为何不归入目标；reason解释本人归属，不能替代assignment_reason。step表示目标内本次动作，无法确认时用null，不填空字符串。
 同一目标的追问、方法设计、纠错和交付归为连续过程；独立目标按语义拆分，片段、页、会话、调用次数不是目标边界。
 查询、解释、学习可成立目标，不要求方法、验收或成果才识别；边界是否明确与目标是否完成分开。
@@ -102,6 +102,33 @@ timestamp_basis=audit_capture是审计采集定位，不是历史消息发送时
 goals给title,purpose,boundary(confirmed/unresolved),boundary_reason,context_event_ids；输出不含评分。
 context_access存在时，当前批次只含完整来源的一部分，根节点概括仅作定位，不能把摘要当原文或因本批没出现就判没有。需要时输出materials:{}、goals:[]、needs_nodes:[{node_id,mode:inspect/raw}]，仅访问已展示节点；补读不能同时提交判断，最终needs_nodes为空。补读得到的背景不能增加候选本人槽位。
 """
+
+
+CONTRACT_RETRIES = 2
+
+CORRECTION = """
+contract_feedback存在时，上一次对同一输入的输出没有通过程序的确定性校验，error是校验器给出的具体原因；它只说明输出格式或合同关系哪里不成立，不是证据，也不提示任何归属结论。重新完整阅读输入后按固定合同输出完整结果，并改正该问题。
+"""
+
+
+def checked(client, packet, receipt, receive, check):
+    """识别输出未过确定性校验时，带校验原因有界重发；每次请求回执独立保留，程序不代改归属结论。"""
+    import json
+    from pathlib import Path
+    receipt = Path(receipt); feedback = None
+    for attempt in range(CONTRACT_RETRIES + 1):
+        path = receipt if not attempt else receipt.with_name(
+            receipt.name.replace('.receipt.json', '.fix' + str(attempt) + '.receipt.json'))
+        record = client.identify(packet, path) if feedback is None else client.identify(packet, path, feedback)
+        value = receive(record)  # 结果不明、预算暂停等状态原样上抛，不进入重发。
+        try:
+            return record, value, check(value)
+        except (ValueError, KeyError, TypeError) as ex:
+            if attempt >= CONTRACT_RETRIES or not getattr(client, 'accepts_revision_feedback', False):
+                raise
+            feedback = dict(attempt=attempt + 1, error=(type(ex).__name__ + ': ' + str(ex))[:1000])
+            note = path.with_name(path.name.replace('.receipt.json', '.contract-error.json'))
+            note.write_text(json.dumps(feedback, ensure_ascii=False))
 
 
 def schema(packet):
@@ -113,12 +140,13 @@ def schema(packet):
     slots = {}
     for event in candidates:
         known = not event['timestamp_unknown']
-        slots[event['event']] = obj(dict(
-            classification=enum(*(('human', 'system', 'auxiliary', 'unresolved') if known else
-                                 ('human', 'system', 'auxiliary', 'duplicate', 'unresolved'))),
-            human_quotes=array(text), reason=text,
-            duplicate_of=dict(type='null') if known else dict(type=['string', 'null'], enum=ids+[None]),
-            goal_id=nullable, step=nullable, assignment_reason=dict(type='string',minLength=1)))
+        others = ('system', 'auxiliary', 'unresolved') if known else ('system', 'auxiliary', 'duplicate', 'unresolved')
+        def slot(classification, goal_id):
+            return obj(dict(classification=classification, human_quotes=array(text), reason=text,
+                duplicate_of=dict(type='null') if known else dict(type=['string', 'null'], enum=ids+[None]),
+                goal_id=goal_id, step=nullable, assignment_reason=dict(type='string',minLength=1)))
+        # 非本人材料不能挂目标：写进结构合同，不等整批输出到程序校验时才失败。
+        slots[event['event']] = {'anyOf': [slot(enum('human'), nullable), slot(enum(*others), dict(type='null'))]}
     materials = obj(slots)
     contexts = array(dict(type='string', enum=context_ids)) if context_ids else dict(type='array', items=text, maxItems=0)
     result=obj(dict(materials=materials, goals=array(obj(dict(goal_id=text, title=text, purpose=text,
@@ -127,7 +155,8 @@ def schema(packet):
         from navigation_access import query_schema
         result['properties']['materials']={'anyOf':[materials,obj({})]}
         result['properties']['needs_nodes']=query_schema(packet);result['required'].append('needs_nodes')
-    return result
+    from review_schema import compact
+    return compact(result)
 
 
 def canonical(packet, graph):

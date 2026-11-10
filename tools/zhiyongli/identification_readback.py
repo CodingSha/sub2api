@@ -2,7 +2,7 @@
 from pathlib import Path
 
 from navigation_access import freeze
-from task_identification import canonical
+from task_identification import canonical,checked
 from runtime import digest
 
 MAX_ROUNDS=24
@@ -13,14 +13,16 @@ def complete(page, root, access, client, receive):
     freeze(root/'input.json',dict(page_sha256=digest(page),navigation=access.identity))
     for index in range(MAX_ROUNDS+1):
         path=root/str(index)
-        record=client.identify(current,path/'identify.receipt.json');value=receive(record)
+        def check(value,page=current):
+            if not value.get('needs_nodes',[]):canonical(page,value)
+            elif set(value)!={'materials','goals','needs_nodes'} or value['materials']!={} or value['goals']!=[]:
+                raise ValueError('归属补读不能同时提交本人或目标判断：请求补读时materials须为{}、goals须为[]；给出判断时needs_nodes须为空')
+            else:access.check(page,value['needs_nodes']) # 节点请求不合合同同样带原因有界重发，不直接终止整周。
+        record,value,_=checked(client,current,path/'identify.receipt.json',receive,check)
         nodes=value.get('needs_nodes',[])
         if not nodes:
-            canonical(current,value)
             freeze(root/'context.json',current)
             return current,value
-        if (set(value)!={'materials','goals','needs_nodes'} or value['materials']!={} or value['goals']!=[]):
-            raise ValueError('归属补读不能同时提交本人或目标判断')
         if index>=MAX_ROUNDS:raise ValueError('归属分层补读达到执行上限，原回执保留待核')
         next_page=access.expand(current,nodes,str(index))
         freeze(path/'request.json',dict(previous_page_sha256=digest(current),

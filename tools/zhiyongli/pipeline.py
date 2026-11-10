@@ -365,7 +365,9 @@ def identify_packet(packet,frozen_packet,root,client,progress):
     elif raw_size(packet)>85000:
         from goal_batches import identify
         identified=identify(packet,root/'identification',client,received,progress)
-    else:identified=canonical(packet,received(client.identify(packet,root/'identify.receipt.json')))
+    else:
+        from task_identification import checked
+        identified=checked(client,packet,root/'identify.receipt.json',received,lambda value:canonical(packet,value))[2]
     return packet,identified
 
 def review_materials(packet,unit,root,client,progress,feedback=None):
