@@ -292,6 +292,15 @@ class AuditReadbackTests(unittest.TestCase):
             client=Client(99);client.accepts_revision_feedback=False
             with self.assertRaises(ValueError):checked(client,{},Path(d)/'2.receipt.json',lambda record:record,check)
             self.assertEqual(1,len(client.seen))
+            # 输出写满长度上限未完成：带原因重发，不直接终止整周。
+            class Truncated(Client):
+                def identify(self,packet,path,feedback=None):
+                    self.seen.append((path.name,feedback))
+                    if feedback is None:return dict(status='received',response=dict(status='incomplete',incomplete_details=dict(reason='max_output_tokens')))
+                    return dict(status='received',ok=True)
+            client=Truncated(0)
+            self.assertEqual('accepted',checked(client,{},Path(d)/'4.receipt.json',lambda record:record,check)[2])
+            self.assertIn('长度上限',client.seen[1][1]['error'])
             # 结果不明等暂停状态不进入重发。
             client=Client(0)
             def paused(record):raise Paused('unknown','synthetic unknown')

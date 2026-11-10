@@ -125,11 +125,18 @@ def resend(client, send, receipt, receive, check):
         path = receipt if not attempt else receipt.with_name(
             receipt.name.replace('.receipt.json', '.fix' + str(attempt) + '.receipt.json'))
         record = send(path, feedback)
-        value = receive(record)  # 结果不明、预算暂停等状态原样上抛，不进入重发。
+        response = record.get('response') or {}
         try:
+            if (record.get('status') == 'received' and response.get('status') == 'incomplete'
+                    and (response.get('incomplete_details') or {}).get('reason') == 'max_output_tokens'):
+                # 已收到终态但输出写满上限未完成：属于输出本身不合合同，同样带原因有界重发。
+                raise ValueError('输出达到长度上限仍未完成：human_quotes只摘取可唯一定位的简短本人原句，'
+                                 '不复制编码数据、日志或整段材料；reason与assignment_reason保持简短')
+            value = receive(record)
             return record, value, check(value)
         except (ValueError, KeyError, TypeError) as ex:
-            if attempt >= CONTRACT_RETRIES or not getattr(client, 'accepts_revision_feedback', False):
+            # 结果不明、预算暂停等执行状态（带state）原样上抛，不进入重发。
+            if hasattr(ex, 'state') or attempt >= CONTRACT_RETRIES or not getattr(client, 'accepts_revision_feedback', False):
                 raise
             feedback = dict(attempt=attempt + 1, error=(type(ex).__name__ + ': ' + str(ex))[:1000])
             note = path.with_name(path.name.replace('.receipt.json', '.contract-error.json'))
