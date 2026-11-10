@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "basis": "synthetic",
+  "assumptions": "仅两个合成用户示例，固定30秒延迟及60000保守token预留。无真实配额，不可直接用作生产配置；实际阶段须计入阅读、归属、目标归并、评分、复查、补读及重试。",
+  "window_hours": 54,
+  "workers": 4,
+  "limits": {
+    "max_concurrency": 4,
+    "requests_per_minute": 20,
+    "reserved_tokens_per_minute": 600000,
+    "max_requests": 20000,
+    "max_requests_per_job": 3000
+  },
+  "jobs": [
+    {
+      "key": "synthetic-short",
+      "stages": [
+        {"count": 150, "latency_seconds": 30, "reserved_tokens": 60000}
+      ]
+    },
+    {
+      "key": "synthetic-long",
+      "stages": [
+        {"count": 2204, "latency_seconds": 30, "reserved_tokens": 60000}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+# 本地与 docker-compose.dev.yml 组合；生产须保留原有组合并追加 zhiyongli.release.yml。
+# 只有显式启用 zhiyongli profile 才启动Worker。
+services:
+  sub2api:
+    environment:
+      ZHIYONGLI_WORKER_KEY_FILE: /run/zhiyongli/worker.key
+      ZHIYONGLI_SCHEDULE_CONFIG: /run/zhiyongli/schedule.json
+      ZHIYONGLI_EXCLUDED_USER_IDS: ${ZHIYONGLI_EXCLUDED_USER_IDS:-}
+    volumes:
+      - ${ZHIYONGLI_PRIVATE_DIR:?必须配置私有目录}/worker.key:/run/zhiyongli/worker.key:ro
+      - ${ZHIYONGLI_PRIVATE_DIR:?必须配置私有目录}/schedule.json:/run/zhiyongli/schedule.json:ro
+  zhiyongli-worker:
+    profiles: [zhiyongli]
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.zhiyongli
+    restart: unless-stopped
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    stop_grace_period: 31m
+    command:
+      - --state
+      - /state
+      - --backend-url
+      - http://sub2api:8080
+      - --company-api
+      - --exclude-api-key-id
+      - ${ZHIYONGLI_REVIEW_API_KEY_ID:?必须显式排除评审流量}
+      - --max-requests-per-job
+      - ${ZHIYONGLI_MAX_REQUESTS_PER_JOB:?必须根据容量测算明确每任务累计请求预算}
+      - --new-requests-per-turn
+      - ${ZHIYONGLI_NEW_REQUESTS_PER_TURN:-1}
+      - --flow-config
+      - /run/zhiyongli/flow.json
+      - --workers
+      - ${ZHIYONGLI_WORKERS:-1}
+      - --schedule-mode
+      - ${ZHIYONGLI_SCHEDULE_MODE:-disabled}
+    environment:
+      ZHIYONGLI_MODEL_CONFIG: /run/zhiyongli/model.json
+      ZHIYONGLI_WORKER_KEY_FILE: /run/zhiyongli/worker.key
+      ZHIYONGLI_DB_DSN_FILE: /run/zhiyongli/product.dsn
+      ZHIYONGLI_SOURCE_DSN_FILE: /run/zhiyongli/source.dsn
+      ZHIYONGLI_EXCLUDED_USER_IDS: ${ZHIYONGLI_EXCLUDED_USER_IDS:-}
+    volumes:
+      - ${ZHIYONGLI_PRIVATE_DIR:?必须配置私有目录}:/run/zhiyongli:ro
+      - ${ZHIYONGLI_STATE_DIR:?必须配置持久目录}:/state
+    depends_on:
+      sub2api:
+        condition: service_healthy
+    networks: [sub2api-network]
+    healthcheck:
+      test: [CMD, python, /app/tools/zhiyongli/worker.py, --state, /state, --healthcheck]
+      interval: 30s
+      timeout: 5s
+      retries: 3

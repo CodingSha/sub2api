@@ -41,6 +41,7 @@ RUN npm install --include=dev --package-lock=false --legacy-peer-deps --cache=/t
 # Copy only that subtree to keep the build dependency minimal.
 COPY frontend/ ./
 COPY docs/legal/ /app/docs/legal/
+COPY docs/ZHIYONGLI_SCORING_RULES_V1*.md /app/docs/
 RUN npm run build
 
 # -----------------------------------------------------------------------------

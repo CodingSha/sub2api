@@ -10,13 +10,21 @@
 # Documentation
 *.md
 !deploy/DOCKER.md
-docs/
+docs/*
 # admin-compliance gate (LegalDocumentView.vue) build-time imports
 # docs/legal/*.md?raw into the frontend bundle; keep that subtree in the
 # Docker build context even though docs/ is otherwise excluded.
-!docs/
 !docs/legal/
+docs/legal/*
 !docs/legal/*.md
+!docs/ZHIYONGLI_SCORING_RULES_V1*.md
+
+# 研究目录只保留运行时评分程序及等级合同，不传输原始材料和分析附件。
+research/*
+!research/ai-usage-assessment/
+research/ai-usage-assessment/*
+!research/ai-usage-assessment/scoring_pipeline/
+!research/ai-usage-assessment/score-levels-g2.json
 
 # IDE
 .idea/
@@ -62,6 +70,9 @@ config.local.yaml
 logs/
 
 # Temporary files
+/.dev/
+/outputs/
+/.tmp_review/
 tmp/
 temp/
 *.tmp

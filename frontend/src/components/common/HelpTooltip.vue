@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, useTemplateRef, nextTick } from 'vue'
+import { onBeforeUnmount, onMounted, ref, useTemplateRef, useId, nextTick } from 'vue'
 
 const props = withDefaults(defineProps<{
   content?: string
@@ -11,9 +11,11 @@ const props = withDefaults(defineProps<{
 })
 
 const show = ref(false)
+const tooltipId = useId()
 const triggerRef = useTemplateRef<HTMLElement>('trigger')
 const tooltipRef = useTemplateRef<HTMLElement>('tooltip')
 const tooltipStyle = ref({ top: '0px', left: '0px' })
+const arrowLeft = ref('50%')
 
 function openTooltip() {
   show.value = true
@@ -36,13 +38,20 @@ function isInside(container: HTMLElement | null, target: EventTarget | null): bo
 // 悬停模式下指针在触发图标与提示框之间往返时保持打开，便于选中提示里的文字。
 function onLeave(event: MouseEvent) {
   if (props.trigger !== 'hover') return
+  if (triggerRef.value?.contains(document.activeElement)) return
   if (isInside(tooltipRef.value, event.relatedTarget)) return
   closeTooltip()
 }
 
 function onTooltipLeave(event: MouseEvent) {
   if (props.trigger !== 'hover') return
+  if (triggerRef.value?.contains(document.activeElement)) return
   if (isInside(triggerRef.value, event.relatedTarget)) return
+  closeTooltip()
+}
+
+function onBlur(event: FocusEvent) {
+  if (props.trigger !== 'hover' || isInside(triggerRef.value, event.relatedTarget)) return
   closeTooltip()
 }
 
@@ -65,7 +74,6 @@ function onDocumentClick(event: MouseEvent) {
 }
 
 function onDocumentKeydown(event: KeyboardEvent) {
-  if (props.trigger !== 'click') return
   if (event.key === 'Escape') {
     closeTooltip()
   }
@@ -80,10 +88,15 @@ function updatePosition() {
   const el = triggerRef.value
   if (!el) return
   const rect = el.getBoundingClientRect()
+  const width = tooltipRef.value?.getBoundingClientRect().width ?? 0
+  const anchor = rect.left + rect.width / 2
+  // 浮层使用视口坐标，并在左右保留间距；边缘触发时箭头仍指向原按钮。
+  const left = Math.max(width / 2 + 12, Math.min(anchor, window.innerWidth - width / 2 - 12))
   tooltipStyle.value = {
-    top: `${rect.top + window.scrollY}px`,
-    left: `${rect.left + rect.width / 2 + window.scrollX}px`,
+    top: `${rect.top}px`,
+    left: `${left}px`,
   }
+  arrowLeft.value = `${anchor - left + width / 2}px`
 }
 
 onMounted(() => {
@@ -107,10 +120,12 @@ onBeforeUnmount(() => {
     class="group relative ml-1 inline-flex items-center align-middle"
     @mouseenter="onEnter"
     @mouseleave="onLeave"
+    @focusin="onEnter"
+    @focusout="onBlur"
     @click="onClick"
   >
     <!-- Trigger Icon -->
-    <slot name="trigger">
+    <slot name="trigger" :open="show" :tooltip-id="tooltipId">
       <svg
         class="h-4 w-4 cursor-help text-gray-400 transition-colors hover:text-primary-600 dark:text-gray-500 dark:hover:text-primary-400"
         fill="none"
@@ -131,13 +146,14 @@ onBeforeUnmount(() => {
       <!-- before: 伪元素向下延伸一段透明区域，盖住提示框与触发图标之间的空隙，让指针能连续移入提示框。 -->
       <div
         ref="tooltip"
+        :id="tooltipId"
         v-show="show"
         role="tooltip"
         :class="[
           'fixed z-[99999] -translate-x-1/2 -translate-y-full rounded-lg bg-gray-900 p-3 text-xs leading-relaxed text-white shadow-xl ring-1 ring-white/10 selection:bg-primary-200 selection:text-gray-900 before:absolute before:inset-x-0 before:top-full before:h-3 dark:bg-gray-800 dark:selection:bg-primary-200 dark:selection:text-gray-900',
           props.widthClass,
         ]"
-        :style="{ top: `calc(${tooltipStyle.top} - 8px)`, left: tooltipStyle.left }"
+        :style="{ top: `calc(${tooltipStyle.top} - 8px)`, left: tooltipStyle.left, maxWidth: 'calc(100vw - 24px)' }"
         @mouseleave="onTooltipLeave"
       >
         <button
@@ -152,7 +168,7 @@ onBeforeUnmount(() => {
           </svg>
         </button>
         <slot>{{ content }}</slot>
-        <div class="absolute -bottom-1 left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 bg-gray-900 dark:bg-gray-800"></div>
+        <div class="absolute -bottom-1 h-2 w-2 -translate-x-1/2 rotate-45 bg-gray-900 dark:bg-gray-800" :style="{ left: arrowLeft }"></div>
       </div>
     </Teleport>
   </div>

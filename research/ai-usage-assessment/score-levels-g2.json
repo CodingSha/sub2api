@@ -1,0 +1,43 @@
+{
+  "version": "G2-proposal28",
+  "score_basis": "unrounded_total",
+  "levels": [
+    {
+      "level": "L1",
+      "min": 0,
+      "max": 60,
+      "upper_inclusive": false
+    },
+    {
+      "level": "L2",
+      "min": 60,
+      "max": 70,
+      "upper_inclusive": false
+    },
+    {
+      "level": "L3",
+      "min": 70,
+      "max": 80,
+      "upper_inclusive": false
+    },
+    {
+      "level": "L4",
+      "min": 80,
+      "max": 90,
+      "upper_inclusive": false
+    },
+    {
+      "level": "L5",
+      "min": 90,
+      "max": 100,
+      "upper_inclusive": true
+    }
+  ],
+  "no_total": {
+    "level": null,
+    "status": "待评价"
+  },
+  "extra_level_conditions": false,
+  "publication": "周分数；周等级仅设计演示。月度证据综合后出评级候选；未授权真实整月或生产用途。",
+  "rounding": "依据精确总分定级；显示舍入跨界必须同时展示精确值和未达边界提示。"
+}

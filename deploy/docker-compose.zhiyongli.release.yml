@@ -1,0 +1,18 @@
+# 生产发布追加层；须先保留服务器原有的local和override组合。
+# 镜像须为已核验的仓库@sha256摘要；不使用开发镜像或latest。
+# Worker的build定义来自基础层，生产启动必须显式--no-build --no-deps。
+services:
+  sub2api:
+    image: ${ZHIYONGLI_APP_IMAGE_REPOSITORY:?必须填写已验收应用镜像仓库}@sha256:${ZHIYONGLI_APP_IMAGE_SHA256:?必须填写应用镜像的64位摘要}
+    platform: linux/amd64
+    pull_policy: never
+    environment:
+      ZHIYONGLI_EXCLUDED_USER_IDS: ${ZHIYONGLI_EXCLUDED_USER_IDS:?必须填写已确认的个人评分排除账户ID，当前生产为22}
+      DATABASE_MAX_OPEN_CONNS: ${ZHIYONGLI_APP_DB_MAX_OPEN_CONNS:?必须填写已核准的应用数据库最大连接数，不继承旧池上限}
+      DATABASE_MAX_IDLE_CONNS: ${ZHIYONGLI_APP_DB_MAX_IDLE_CONNS:?必须填写已核准的应用数据库空闲连接数}
+  zhiyongli-worker:
+    image: ${ZHIYONGLI_WORKER_IMAGE_REPOSITORY:?必须填写同版Worker镜像仓库}@sha256:${ZHIYONGLI_WORKER_IMAGE_SHA256:?必须填写Worker镜像的64位摘要}
+    platform: linux/amd64
+    pull_policy: never
+    environment:
+      ZHIYONGLI_EXCLUDED_USER_IDS: ${ZHIYONGLI_EXCLUDED_USER_IDS:?必须填写已确认的个人评分排除账户ID，当前生产为22}

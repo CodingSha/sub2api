@@ -128,6 +128,12 @@ scripts
 #openspec/
 code-reviews/
 AGENTS.md
+# 项目根协作约定随仓库保存，子目录的本地约定继续忽略
+!/AGENTS.md
+# Python 字节码缓存
+__pycache__/
+*.pyc
+.DS_Store
 backend/cmd/server/server
 deploy/docker-compose.override.yml
 .gocache/
@@ -138,6 +144,16 @@ docs/*
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
 !docs/ASYNC_IMAGE_TASKS.md
 !docs/BATCH_IMAGE_MVP.md
+!docs/ZHIYONGLI_V1.md
+!docs/ZHIYONGLI_SCORING_RULES_V1.md
+!docs/ZHIYONGLI_SCORING_RULES_V1_2.md
+!docs/ZHIYONGLI_SCORING_RULES_V1_3.md
+!docs/ZHIYONGLI_SCORING_RULES_V1_4.md
+!docs/ZHIYONGLI_SCORING_RULES_V1_5.md
+!docs/ZHIYONGLI_SCORING_RULES_V1_6.md
+!docs/ZHIYONGLI_AUTOMATION_V1.md
+!docs/ZHIYONGLI_AUTOMATION_DEPLOY.md
+!docs/ZHIYONGLI_AUTOMATION_SCALE.md
 !docs/COMPOSITE_GROUPS.md
 !docs/PLUGIN_DEVELOPMENT.md
 !docs/channel-monitor-v2-safe-defaults.md

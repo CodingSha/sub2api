@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "basis": "synthetic",
+  "notes": "仅展示任务/来源库共用PG实例的填法，未批准生产额度。PG数值取既有观察示例，其他服务和运维额度尚未核定，保留null；须核实真实实例归属及解析后Compose。",
+  "product_cluster": "synthetic-shared-pg",
+  "source_cluster": "synthetic-shared-pg",
+  "clusters": {
+    "synthetic-shared-pg": {
+      "max_connections": 100,
+      "superuser_reserved_connections": 3,
+      "reserved_connections": 0,
+      "other_services_connections": null,
+      "operations_connections": null
+    }
+  }
+}

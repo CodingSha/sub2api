@@ -229,6 +229,24 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/zhiyongli',
+    name: 'Zhiyongli',
+    component: () => import('@/features/zhiyongli/PersonalView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: false, title: '智用力' }
+  },
+  {
+    path: '/zhiyongli/rules',
+    name: 'ZhiyongliRules',
+    component: () => import('@/features/zhiyongli/RulesView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: false, title: '评分规则' }
+  },
+  {
+    path: '/admin/zhiyongli',
+    name: 'AdminZhiyongli',
+    component: () => import('@/features/zhiyongli/AdminView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true, title: '智用力' }
+  },
+  {
     path: '/usage',
     name: 'Usage',
     component: () => import('@/views/user/UsageView.vue'),

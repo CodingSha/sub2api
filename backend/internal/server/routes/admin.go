@@ -22,6 +22,10 @@ func RegisterAdminRoutes(
 ) {
 	// 插件 UI 使用短时能力 URL，仅提供经过安装校验的静态资源。
 	v1.GET("/plugin-ui/:token/*path", h.Admin.Plugin.ServeUIAsset)
+	if h.Zhiyongli != nil {
+		v1.POST("/internal/zhiyongli/jobs/:id/import", h.Zhiyongli.ImportJob)
+		v1.POST("/internal/zhiyongli/schedule", h.Zhiyongli.Schedule)
+	}
 
 	admin := v1.Group("/admin")
 	admin.Use(gin.HandlerFunc(adminAuth))
@@ -30,6 +34,16 @@ func RegisterAdminRoutes(
 	// 审计中间件挂在认证之后：所有管理面变更类操作 + 敏感读取入审计日志
 	admin.Use(gin.HandlerFunc(auditLog))
 	admin.Use(middleware.AdminComplianceGuard(settingService))
+	if h.Zhiyongli != nil {
+		admin.GET("/zhiyongli/reports", h.Zhiyongli.AdminReports)
+		admin.GET("/zhiyongli/reports/:id", h.Zhiyongli.AdminReport)
+		admin.POST("/zhiyongli/reports/:id/publish", h.Zhiyongli.Publish)
+		admin.POST("/zhiyongli/imports", h.Zhiyongli.Import)
+		admin.GET("/zhiyongli/runs", h.Zhiyongli.Runs)
+		admin.POST("/zhiyongli/jobs", h.Zhiyongli.StartJobs)
+		admin.GET("/zhiyongli/jobs", h.Zhiyongli.Jobs)
+		admin.POST("/zhiyongli/jobs/:id/resume", h.Zhiyongli.ResumeJob)
+	}
 	{
 		// 部署与运营合规确认
 		registerAdminComplianceRoutes(admin, h)
