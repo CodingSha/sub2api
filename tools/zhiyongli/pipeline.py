@@ -216,10 +216,11 @@ def assemble(packet, identified):
         sources.append(dict(key=packet['user_id']+':'+period['period_id']+':local',title='保留的局部本人表达',
             purpose='未关联完整目标的表达按上下文判断，不自动扣分',boundary='unresolved',source_kind='local_behavior',person_events=remaining,source_gaps=[],periods=[period]))
     if not sources: raise Paused('needs_review','本期没有已确认的本人输入；需核对非任务交流、归属未知和无来源状态')
-    critical=[m for m in checked['materials'] if m['classification']=='unresolved' and
-        next(e for e in packet['events'] if e['event']==m['event_id'])['actor_class']=='candidate_user' and
-        not next(e for e in packet['events'] if e['event']==m['event_id'])['timestamp_unknown']]
-    if critical: raise Paused('needs_review','存在本期本人归属未决；保留全部来源及局部判断，不自动生成正式分数')
+    by_id={e['event']:e for e in packet['events']}
+    # 手册1.6：归属未决与表现分开，已核可评范围照常评审，未决部分不计分、不补数，在报告中披露。
+    unresolved=[dict(event_id=m['event_id'],reason=m['reason']) for m in checked['materials']
+        if m['classification']=='unresolved' and by_id[m['event_id']]['actor_class']=='candidate_user'
+        and not by_id[m['event_id']]['timestamp_unknown'] and lo<=moment(by_id[m['event_id']]['at'])<hi]
     scope='person_week' if hi-lo==timedelta(days=7) and lo.weekday()==0 else 'person_week_fragment'
     if scope=='person_week_fragment': period['period_id']='fragment-'+lo.date().isoformat()
     result=dict(version=VERSION,key=packet['user_id']+':'+period['period_id'],user_id=packet['user_id'],
@@ -230,6 +231,7 @@ def assemble(packet, identified):
         reading_provenance=packet.get('reading_provenance'),
         identification_provenance=dict(packet_sha256=digest(packet),identified_sha256=digest(identified)))
     if packet.get('workday_scope') is not None:result['workday_scope']=copy.deepcopy(packet['workday_scope'])
+    if unresolved:result['attribution_unresolved']=unresolved
     if packet.get('candidate_segmentation') is not None:
         result['candidate_segmentation']=copy.deepcopy(packet['candidate_segmentation'])
     return result
@@ -458,6 +460,9 @@ def evaluate_unit(packet,unit,root,client,progress):
         if resolved else 'AI自动评审并经同模型另次语义检查'+('，此前'+str(revision_round(root))+'轮候选已按复查意见自动修订，各轮记录保留；'
             if revision_round(root) else '；'))+'未经独立真人校准，发布前由管理员核对。'
         +('复查另附'+str(len(audit['value']['remarks']))+'条不要求改动候选的说明，见复查记录。' if not resolved and audit['value'].get('remarks') else ''))
+    if unit.get('attribution_unresolved'):
+        report['limitations'].append('本期有'+str(len(unit['attribution_unresolved']))+'段以用户身份提交的输入未能确认是否为本人表达'
+            '（如打包材料、工具输出或编码数据），未计入评分、不补分；原文与判断理由保留，可在评审记录中核对。')
     atomic(root/'native-report.json',report)
     result=qualify_bundle(dict(schema_version=1,source_name='自动评审1.6:'+unit['key'],reports=[report]))
     atomic(root/'bundle.json',result)

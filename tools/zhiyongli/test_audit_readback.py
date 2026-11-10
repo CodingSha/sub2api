@@ -297,6 +297,23 @@ class AuditReadbackTests(unittest.TestCase):
             with self.assertRaises(Paused):checked(client,{},Path(d)/'3.receipt.json',paused,check)
             self.assertEqual(1,len(client.seen))
 
+    def test_unresolved_attribution_is_disclosed_without_blocking_the_week(self):
+        p=packet('2026-09-07T00:00:00+08:00','2026-09-14T00:00:00+08:00');first=p['events'][0]
+        extra=dict(first,event='test-unresolved',text='H4sIAAAAAAAA合成编码数据',at='2026-09-08T11:00:00+08:00')
+        p['events'].append(extra)
+        class Client(FixtureClient):
+            def identify(self,page,path):
+                value=json.loads(super().identify(page,path)['response']['output'][0]['content'][0]['text'])
+                value['materials']['test-unresolved']=dict(classification='unresolved',human_quotes=[],reason='合成：编码数据无法确认本人',
+                    duplicate_of=None,goal_id=None,step=None,assignment_reason='不归入目标')
+                return record(value,path)
+        with tempfile.TemporaryDirectory() as tmp:
+            result=evaluate_week(p,Path(tmp),Client())
+            unit=json.loads((Path(tmp)/'unit.json').read_text())
+            self.assertEqual([dict(event_id='test-unresolved',reason='合成：编码数据无法确认本人')],unit['attribution_unresolved'])
+            self.assertNotIn('test-unresolved',unit['person_events'])
+            self.assertTrue(any('未能确认是否为本人表达' in x for x in result['reports'][0]['limitations']))
+
     def test_identification_schema_forbids_goal_on_non_human_material(self):
         from task_identification import schema as task_schema
         events=[dict(event='synthetic-a',actor_class='candidate_user',timestamp_unknown=False),
