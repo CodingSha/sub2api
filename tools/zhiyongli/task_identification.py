@@ -100,11 +100,11 @@ timestamp_basis=audit_capture是审计采集定位，不是历史消息发送时
 查询、解释、学习可成立目标，不要求方法、验收或成果才识别；边界是否明确与目标是否完成分开。
 截断只限制对应已保存内容，不删除其他完整输入或后续轮次。unknown的来源时间与归属不补造。
 goals给title,purpose,boundary(confirmed/unresolved),boundary_reason,context_event_ids；输出不含评分。
-context_access存在时，当前批次只含完整来源的一部分，根节点概括仅作定位，不能把摘要当原文或因本批没出现就判没有。需要时输出materials:{}、goals:[]、needs_nodes:[{node_id,mode:inspect/raw}]，仅访问已展示节点，leaf_node_ids中的叶节点用raw，其余分支用inspect，已提供的节点不再请求，raw请求合计须小于context_access.remaining_bytes；请求补读的轮次只采用needs_nodes，同轮materials和goals不被采用，应留空；只有needs_nodes为空的最终一轮形成判断。补读得到的背景不能增加候选本人槽位。
+context_access存在时，当前批次只含完整来源的一部分，根节点概括仅作定位，不能把摘要当原文或因本批没出现就判没有。需要时在needs_nodes:[{node_id,mode:inspect/raw}]中请求，仅访问已展示节点，leaf_node_ids中的叶节点用raw，其余分支用inspect，已提供的节点不再请求，raw请求合计须小于context_access.remaining_bytes；请求补读的轮次仍输出完整materials和goals作为暂定判断，但只采用needs_nodes；只有needs_nodes为空的最终一轮形成判断。补读得到的背景不能增加候选本人槽位。
 """
 
 
-CONTRACT_RETRIES = 2
+CONTRACT_RETRIES = 3
 
 CORRECTION = """
 contract_feedback存在时，上一次对同一输入的输出没有通过程序的确定性校验，error是校验器给出的具体原因；它只说明输出格式或合同关系哪里不成立，不是证据，也不提示任何归属结论。重新完整阅读输入后按固定合同输出完整结果，并改正该问题。
@@ -166,7 +166,6 @@ def schema(packet):
         boundary=enum('confirmed', 'unresolved'), boundary_reason=text, context_event_ids=contexts)))))
     if packet.get('context_access'):
         from navigation_access import query_schema
-        result['properties']['materials']={'anyOf':[materials,obj({})]}
         result['properties']['needs_nodes']=query_schema(packet);result['required'].append('needs_nodes')
     from review_schema import compact
     return compact(result)
