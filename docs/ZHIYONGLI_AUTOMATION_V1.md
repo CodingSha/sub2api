@@ -62,7 +62,7 @@
 | 动作 | 接口 | 请求与响应 | 错误语义、消费位置及状态 |
 | --- | --- | --- | --- |
 | 启动 | POST `/api/v1/admin/zhiyongli/jobs` | `user_ids:number[]`（1至20）、`period_type:week/month`、`period_start:YYYY-MM-DD`；返回实际任务列表，同范围复用 | 周二400、有效周一200、重复复用ID、Chrome输入保留通过；本地合成月启动及原生结果接入200。完整真实月未验收 |
-| 全员周启动 | POST `/api/v1/admin/zhiyongli/jobs/last-week` | 无请求体（带参数400）；服务端取最近一个已封口工作周（工作日内为上一周，周六02:00封口后为刚结束的一周）和全部参评账户（未删除、非审计白名单、非`ZHIYONGLI_EXCLUDED_USER_IDS`）；按20人一批登记，返回实际任务列表，同范围复用；整周无工作日或未封口时400 | 2026-11-10新增。周期选择单元测试、101账户登记99个且重复触发复用的本地数据库集成测试、页面组件测试通过；本地真实HTTP与页面联调、生产名单规模未验证。状态：前端实现完成、接口未接通 |
+| 全员周启动 | POST `/api/v1/admin/zhiyongli/jobs/last-week` | 无请求体（带参数400）；服务端取最近一个已封口工作周（工作日内为上一周，周六02:00封口后为刚结束的一周）和全部参评账户（未删除、非审计白名单、非`ZHIYONGLI_EXCLUDED_USER_IDS`）；按20人一批登记，返回实际任务列表，同范围复用；整周无工作日或未封口时400 | 2026-11-10新增。周期选择单元测试、101账户登记99个且重复触发复用的本地数据库集成测试、页面组件测试通过。同日本地真实HTTP（feature构建后端，连接本机Docker库，10个账户）：带请求体400并返回“全员周评审不接受请求参数，周期和人员由服务端确定”；无参200返回10个任务（周期2026-11-02至2026-11-09，规则1.6，queued/no_activity）；重复触发返回相同任务；未登录401。本机库无ID 22，排除名单只由集成测试覆盖；页面点击联调与生产名单规模未验证。状态：前端实现完成、接口已接入待页面成功响应验证 |
 | 进度 | GET `/api/v1/admin/zhiyongli/jobs` | 标准分页；每项含`id,user_id,user_email,period_type,period_start,period_end,rules_version,state,phase,completed_units,total_units,message,created_at,updated_at,scope_key,workday_scope` | 真实200和页面5秒轮询已观察；等待执行→本期无记录已验证。本地空来源链联调通过 |
 | 恢复 | POST `/api/v1/admin/zhiyongli/jobs/:id/resume` | 不接受覆盖判断字段；返回实际任务 | 等待中409；本地故障注入后页面恢复200并再次消费完成；unknown的409经数据库集成验证。本地恢复联调通过 |
 | Worker接入 | POST `/api/v1/internal/zhiyongli/jobs/:id/import` | `X-Zhiyongli-Worker-Key`及现有结果包；返回原生接入记录 | 无Key401、状态冲突409、周/月合成包200、重复周导入200同run；Key不能访问管理员接口。真实员工候选未验收 |
