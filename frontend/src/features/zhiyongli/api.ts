@@ -105,6 +105,10 @@ export interface ReviewJob {
 export async function startJobs(input: {user_ids: number[]; period_type: 'week' | 'month'; period_start: string}) {
   return (await apiClient.post<ReviewJob[]>('/admin/zhiyongli/jobs', input)).data
 }
+// 全员周评审：周期（最近已封口工作周）和参评人员由服务端确定，不传参数。
+export async function startLastWeekJobs() {
+  return (await apiClient.post<ReviewJob[]>('/admin/zhiyongli/jobs/last-week')).data
+}
 export async function listJobs(page: number) {
   return (await apiClient.get<Page<ReviewJob>>('/admin/zhiyongli/jobs', {params:{page,page_size:20}})).data
 }

@@ -3,10 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ReviewJobs from './ReviewJobs.vue'
 import { createI18n } from 'vue-i18n'
 
-const api=vi.hoisted(()=>({listJobs:vi.fn(),startJobs:vi.fn(),resumeJob:vi.fn(),listUsers:vi.fn(),showError:vi.fn()}))
+const api=vi.hoisted(()=>({listJobs:vi.fn(),startJobs:vi.fn(),startLastWeekJobs:vi.fn(),resumeJob:vi.fn(),listUsers:vi.fn(),showError:vi.fn(),showSuccess:vi.fn()}))
 vi.mock('./api',()=>api)
 vi.mock('@/api/admin/users',()=>({list:api.listUsers}))
-vi.mock('@/stores/app',()=>({useAppStore:()=>({showError:api.showError})}))
+vi.mock('@/stores/app',()=>({useAppStore:()=>({showError:api.showError,showSuccess:api.showSuccess})}))
 const empty={items:[],total:0,page:1,page_size:20,pages:0}
 const mountView=(open=false)=>mount(ReviewJobs,{props:{startOpen:open},global:{plugins:[createI18n({legacy:false,locale:'zh',messages:{zh:{}}})],stubs:{
   BaseDialog:{props:['show'],template:'<div v-if="show"><slot/><slot name="footer"/></div>'},
@@ -15,14 +15,33 @@ const mountView=(open=false)=>mount(ReviewJobs,{props:{startOpen:open},global:{p
 beforeEach(()=>{vi.useFakeTimers();vi.clearAllMocks();api.listJobs.mockResolvedValue(empty);api.listUsers.mockResolvedValue({...empty,items:[{id:63,email:'person@example.test'}],total:1})})
 afterEach(()=>{vi.useRealTimers()})
 describe('管理员评审入口',()=>{
-  it('按实际账户ID与周期登记，失败保留输入，不伪造成功',async()=>{
-    api.startJobs.mockRejectedValue(new Error('周评分必须从周一开始'))
+  it('周评分一键登记全员上周，不选人不选日期；失败如实显示',async()=>{
+    api.startLastWeekJobs.mockRejectedValueOnce(new Error('工作日期间来源尚未封口'))
     const wrapper=mountView(true);await flushPromises()
+    expect(wrapper.find('input[type="date"]').exists()).toBe(false)
+    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false)
+    expect(api.listUsers).not.toHaveBeenCalled()
+    await wrapper.get('form').trigger('submit');await flushPromises()
+    expect(wrapper.text()).toContain('工作日期间来源尚未封口')
+    expect(wrapper.emitted('close')).toBeUndefined()
+    api.startLastWeekJobs.mockResolvedValueOnce([{id:1,period_start:'2026-11-02'},{id:2,period_start:'2026-11-02'}])
+    await wrapper.get('form').trigger('submit');await flushPromises()
+    expect(api.startLastWeekJobs).toHaveBeenCalledTimes(2)
+    expect(api.startJobs).not.toHaveBeenCalled()
+    expect(api.showSuccess).toHaveBeenCalledWith('已登记2个账户的周评审（2026-11-02起）')
+    expect(wrapper.emitted('close')).toHaveLength(1)
+    wrapper.unmount()
+  })
+  it('月评分按实际账户ID与月份登记，失败保留输入，不伪造成功',async()=>{
+    api.startJobs.mockRejectedValue(new Error('月评分必须从每月1日开始'))
+    const wrapper=mountView(true);await flushPromises()
+    await wrapper.get('select').setValue('month');await flushPromises()
     await wrapper.get('input[type="checkbox"]').setValue(true)
     await wrapper.get('input[type="date"]').setValue('2026-09-08')
     await wrapper.get('form').trigger('submit');await flushPromises()
-    expect(api.startJobs).toHaveBeenCalledWith({user_ids:[63],period_type:'week',period_start:'2026-09-08'})
-    expect(wrapper.text()).toContain('周评分必须从周一开始')
+    expect(api.startJobs).toHaveBeenCalledWith({user_ids:[63],period_type:'month',period_start:'2026-09-08'})
+    expect(api.startLastWeekJobs).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('月评分必须从每月1日开始')
     expect((wrapper.get('input[type="date"]').element as HTMLInputElement).value).toBe('2026-09-08')
     expect(wrapper.emitted('close')).toBeUndefined()
     wrapper.unmount()

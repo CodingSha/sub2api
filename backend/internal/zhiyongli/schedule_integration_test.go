@@ -45,6 +45,33 @@ func TestAutomaticScheduleClosesWorkweekIsIdempotentAndPreparesDaily(t *testing.
 	}
 }
 
+func TestStartLastWeekJobsCoversRosterExceptExcludedAndIsIdempotent(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	tz := time.FixedZone("CST", 8*3600)
+	t.Setenv("ZHIYONGLI_EXCLUDED_USER_IDS", "22")
+	if _, err := s.db.Exec("INSERT INTO users(id,email) SELECT n,'synthetic-'||n||'@example.test' FROM generate_series(4,101) n; INSERT INTO audit_whitelist_users VALUES(3)"); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 9, 10, 0, 0, 0, tz)
+	jobs, err := s.startLastWeekJobsAt(ctx, 1, now)
+	if err != nil || len(jobs) != 99 {
+		t.Fatal("101 accounts minus whitelist and excluded public account", len(jobs), err)
+	}
+	for _, j := range jobs {
+		if j.UserID == 3 || j.UserID == 22 || j.PeriodType != "week" || j.PeriodStart != "2026-11-02" || j.WorkdayScope == nil {
+			t.Fatalf("unexpected job %+v", j)
+		}
+	}
+	again, err := s.startLastWeekJobsAt(ctx, 1, now.Add(time.Hour))
+	if err != nil || len(again) != 99 || again[0].ID != jobs[0].ID || again[98].ID != jobs[98].ID {
+		t.Fatal("repeat click must reuse jobs", err)
+	}
+	if _, count, err := s.Jobs(ctx, 1, 20); err != nil || count != 99 {
+		t.Fatal("no duplicate jobs", count, err)
+	}
+}
+
 func TestAutomaticScheduleHundredRosterAndHolidayNoScore(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

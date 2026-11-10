@@ -41,6 +41,7 @@ func RegisterAdminRoutes(
 		admin.POST("/zhiyongli/imports", h.Zhiyongli.Import)
 		admin.GET("/zhiyongli/runs", h.Zhiyongli.Runs)
 		admin.POST("/zhiyongli/jobs", h.Zhiyongli.StartJobs)
+		admin.POST("/zhiyongli/jobs/last-week", h.Zhiyongli.StartLastWeekJobs)
 		admin.GET("/zhiyongli/jobs", h.Zhiyongli.Jobs)
 		admin.POST("/zhiyongli/jobs/:id/resume", h.Zhiyongli.ResumeJob)
 	}

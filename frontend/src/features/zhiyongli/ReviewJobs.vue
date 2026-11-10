@@ -33,9 +33,10 @@
       <form id="start-review" class="space-y-4" @submit.prevent="start">
         <div class="grid grid-cols-2 gap-4">
           <label class="text-sm">周期类型<Select v-model="kind" :options="periods" class="mt-2" aria-label="评审周期类型" /></label>
-          <label class="text-sm">开始日期<input v-model="startDate" type="date" class="input mt-2" aria-label="评审开始日期" required /></label>
+          <label v-if="kind === 'month'" class="text-sm">开始日期<input v-model="startDate" type="date" class="input mt-2" aria-label="评审开始日期" required /></label>
         </div>
-        <p class="text-xs text-gray-500">{{ kind === 'week' ? '选择已封口工作周的周一。' : '选择月份首日；最后相交工作周封口后可评审。' }}按法定节假日、调休及公司例外确定计分日期，候选生成后需确认发布。</p>
+        <p class="text-xs text-gray-500">{{ kind === 'week' ? '为全部参评账户评最近一个已封口工作周（通常为上一周）的工作日；公共或自动化账户、审计白名单账户不参评，已有任务会复用。' : '选择月份首日；最后相交工作周封口后可评审。' }}按法定节假日、调休及公司例外确定计分日期，候选生成后需确认发布。</p>
+        <template v-if="kind === 'month'">
         <div class="flex gap-2"><input v-model="userSearch" class="input" placeholder="查找账户邮箱" aria-label="查找评审账户" @keydown.enter.prevent="findUsers" /><button type="button" class="btn btn-secondary shrink-0" :disabled="finding" @click="findUsers">查询</button></div>
         <div v-if="selected.length" class="flex flex-wrap gap-2">
           <button v-for="user in selected" :key="user.id" type="button" class="text-xs text-primary-700 underline dark:text-primary-400" :aria-label="`取消选择${user.email}`" @click="toggle(user)">{{ user.email }} ×</button>
@@ -47,9 +48,10 @@
           <p v-if="!finding && !users.length" class="text-sm text-gray-500">暂无匹配账户</p>
         </fieldset>
         <p v-if="userTotal > 20" class="text-xs text-gray-500">匹配{{ userTotal }}个账户，显示前20个；可通过邮箱缩小范围。</p>
+        </template>
         <p v-if="startError" role="alert" class="text-sm text-red-600">{{ startError }}</p>
       </form>
-      <template #footer><div class="flex justify-end gap-3"><button class="btn btn-secondary" :disabled="starting" @click="$emit('close')">取消</button><button form="start-review" class="btn btn-primary" :disabled="starting || !selected.length || !startDate">{{ starting ? '登记中…' : '开始评审' }}</button></div></template>
+      <template #footer><div class="flex justify-end gap-3"><button class="btn btn-secondary" :disabled="starting" @click="$emit('close')">取消</button><button form="start-review" class="btn btn-primary" :disabled="starting || kind === 'month' && (!selected.length || !startDate)">{{ starting ? '登记中…' : '开始评审' }}</button></div></template>
     </BaseDialog>
   </div>
 </template>
@@ -61,7 +63,7 @@ import Select from '@/components/common/Select.vue'
 import WorkdayRange from './WorkdayRange.vue'
 import { list as listUsers } from '@/api/admin/users'
 import { useAppStore } from '@/stores/app'
-import { listJobs, startJobs, resumeJob, type ReviewJob } from './api'
+import { listJobs, startJobs, startLastWeekJobs, resumeJob, type ReviewJob } from './api'
 const props = defineProps<{startOpen:boolean}>()
 const emit = defineEmits<{close:[];reports:[email:string]}>()
 const app=useAppStore()
@@ -78,10 +80,21 @@ async function poll(){await load(true);if(alive)timer=setTimeout(poll,5000)}
 function changePage(delta:number){page.value+=delta;void load()}
 async function findUsers(){const current=++findRequest;finding.value=true;try{const result=await listUsers(1,20,{search:userSearch.value});if(alive&&current===findRequest){users.value=result.items;userTotal.value=result.total}}catch(e){if(alive&&current===findRequest)startError.value=(e as Error).message}finally{if(current===findRequest)finding.value=false}}
 function toggle(user:{id:number;email:string}){if(starting.value)return;const index=selected.value.findIndex(u=>u.id===user.id);if(index>=0)selected.value.splice(index,1);else if(selected.value.length<20)selected.value.push(user)}
-async function start(){if(starting.value||!selected.value.length)return;starting.value=true;startError.value='';try{await startJobs({user_ids:selected.value.map(u=>u.id),period_type:kind.value,period_start:startDate.value});emit('close');page.value=1;await load()}catch(e){startError.value=(e as Error).message}finally{starting.value=false}}
+async function start(){
+  const month=kind.value==='month'
+  if(starting.value||month&&!selected.value.length)return
+  starting.value=true;startError.value=''
+  try{
+    if(month)await startJobs({user_ids:selected.value.map(u=>u.id),period_type:'month',period_start:startDate.value})
+    else{const created=await startLastWeekJobs();app.showSuccess(`已登记${created.length}个账户的周评审（${created[0].period_start}起）`)}
+    emit('close');page.value=1;await load()
+  }catch(e){startError.value=(e as Error).message}finally{starting.value=false}
+}
 async function resume(job:ReviewJob){resuming.value=job.id;try{await resumeJob(job.id);await load()}catch(e){app.showError((e as Error).message)}finally{resuming.value=null}}
 const formatTime=(value:string)=>new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false})
-watch(()=>props.startOpen,open=>{if(open){startError.value='';void findUsers()}},{immediate:true})
+watch(()=>props.startOpen,open=>{if(open)startError.value=''},{immediate:true})
+// 仅月评分需要选人；周评分的人员范围由服务端确定。
+watch(()=>props.startOpen&&kind.value==='month',need=>{if(need)void findUsers()},{immediate:true})
 onMounted(()=>{void poll()})
 onUnmounted(()=>{alive=false;request++;findRequest++;if(timer)clearTimeout(timer)})
 </script>

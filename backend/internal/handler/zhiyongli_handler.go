@@ -189,6 +189,25 @@ func (h *ZhiyongliHandler) StartJobs(c *gin.Context) {
 	response.Success(c, jobs)
 }
 
+// StartLastWeekJobs 一键登记全员上周评审；周期和人员由服务端确定，不接受调用方参数。
+func (h *ZhiyongliHandler) StartLastWeekJobs(c *gin.Context) {
+	actor, ok := middleware.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "请先登录")
+		return
+	}
+	if c.Request.ContentLength != 0 {
+		response.BadRequest(c, "全员周评审不接受请求参数，周期和人员由服务端确定")
+		return
+	}
+	jobs, e := h.store.StartLastWeekJobs(c.Request.Context(), actor.UserID)
+	if e != nil {
+		zhiyongliError(c, e)
+		return
+	}
+	response.Success(c, jobs)
+}
+
 func (h *ZhiyongliHandler) Jobs(c *gin.Context) {
 	p, n, ok := zhiyongliPage(c)
 	if !ok {

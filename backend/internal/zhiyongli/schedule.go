@@ -46,53 +46,16 @@ func (s *Store) ScheduleDue(ctx context.Context, c ScheduleConfig, now time.Time
 	if !admin {
 		return result, invalid("自动评审的管理身份无效")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT u.id,u.email FROM users u WHERE u.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM audit_whitelist_users w WHERE w.user_id=u.id) ORDER BY u.id`)
-	if err != nil {
-		return result, err
-	}
-	users := []PreparationTarget{}
-	excluded, scopeErr := excludedPersonalUsers()
-	if scopeErr != nil {
-		rows.Close()
-		return result, scopeErr
-	}
-	for rows.Next() {
-		var u PreparationTarget
-		if err = rows.Scan(&u.UserID, &u.UserEmail); err != nil {
-			rows.Close()
-			return result, err
-		}
-		allowed := true
-		for _, id := range excluded {
-			if u.UserID == id {
-				allowed = false
-			}
-		}
-		if allowed {
-			users = append(users, u)
-		}
-	}
-	err = rows.Err()
-	rows.Close()
+	users, err := s.personalUsers(ctx)
 	if err != nil {
 		return result, err
 	}
 	queue := func(kind, start string) error {
-		for i := 0; i < len(users); i += 20 {
-			last := i + 20
-			if last > len(users) {
-				last = len(users)
-			}
-			ids := []int64{}
-			for _, u := range users[i:last] {
-				ids = append(ids, u.UserID)
-			}
-			jobs, e := s.startJobsAt(ctx, StartJobs{UserIDs: ids, PeriodType: kind, PeriodStart: start}, c.ActorID, now)
-			if e != nil {
-				return e
-			}
-			result.Jobs = append(result.Jobs, jobs...)
+		jobs, e := s.startJobsForUsers(ctx, users, kind, start, c.ActorID, now)
+		if e != nil {
+			return e
 		}
+		result.Jobs = append(result.Jobs, jobs...)
 		return nil
 	}
 	current := now.AddDate(0, 0, -(int(now.Weekday())+6)%7)

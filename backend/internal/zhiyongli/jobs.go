@@ -141,6 +141,85 @@ func (s *Store) startJobsAt(ctx context.Context, input StartJobs, actor int64, n
 	return result, tx.Commit()
 }
 
+// personalUsers 列出参与个人评分的账户：未删除、不在审计白名单、未被公共/自动化排除配置排除。
+func (s *Store) personalUsers(ctx context.Context) ([]PreparationTarget, error) {
+	excluded, err := excludedPersonalUsers()
+	if err != nil {
+		return nil, err
+	}
+	skip := map[int64]bool{}
+	for _, id := range excluded {
+		skip[id] = true
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT u.id,u.email FROM users u WHERE u.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM audit_whitelist_users w WHERE w.user_id=u.id) ORDER BY u.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	users := []PreparationTarget{}
+	for rows.Next() {
+		var u PreparationTarget
+		if err = rows.Scan(&u.UserID, &u.UserEmail); err != nil {
+			return nil, err
+		}
+		if !skip[u.UserID] {
+			users = append(users, u)
+		}
+	}
+	return users, rows.Err()
+}
+
+// startJobsForUsers 按单次20人上限分批登记；同范围任务复用，重复触发不新建。
+func (s *Store) startJobsForUsers(ctx context.Context, users []PreparationTarget, kind, start string, actor int64, now time.Time) ([]Job, error) {
+	result := []Job{}
+	for i := 0; i < len(users); i += 20 {
+		last := i + 20
+		if last > len(users) {
+			last = len(users)
+		}
+		ids := []int64{}
+		for _, u := range users[i:last] {
+			ids = append(ids, u.UserID)
+		}
+		jobs, err := s.startJobsAt(ctx, StartJobs{UserIDs: ids, PeriodType: kind, PeriodStart: start}, actor, now)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, jobs...)
+	}
+	return result, nil
+}
+
+// lastClosedWorkweek 返回最近一个已封口工作周的周一：本周工作日已封口（通常为周六02:00后）取本周，否则取上一自然周。
+func lastClosedWorkweek(now time.Time) string {
+	tz := time.FixedZone("CST", 8*3600)
+	now = now.In(tz)
+	monday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, tz).AddDate(0, 0, -(int(now.Weekday())+6)%7)
+	scope, err := workdayWindow(monday.Format("2006-01-02"), monday.AddDate(0, 0, 7).Format("2006-01-02"), "")
+	if err == nil && len(scope.WorkingDates) > 0 {
+		if freeze, e := time.Parse(time.RFC3339, scope.FreezeAt); e == nil && !freeze.After(now) {
+			return monday.Format("2006-01-02")
+		}
+	}
+	return monday.AddDate(0, 0, -7).Format("2006-01-02")
+}
+
+// StartLastWeekJobs 为全部参评账户登记最近一个已封口工作周的评审；周期和人员均由服务端确定。
+func (s *Store) StartLastWeekJobs(ctx context.Context, actor int64) ([]Job, error) {
+	return s.startLastWeekJobsAt(ctx, actor, time.Now())
+}
+
+func (s *Store) startLastWeekJobsAt(ctx context.Context, actor int64, now time.Time) ([]Job, error) {
+	users, err := s.personalUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(users) == 0 {
+		return nil, invalid("没有可参与个人评分的账户")
+	}
+	return s.startJobsForUsers(ctx, users, "week", lastClosedWorkweek(now), actor, now)
+}
+
 func (s *Store) Jobs(ctx context.Context, page, size int) ([]Job, int64, error) {
 	var total int64
 	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM zhiyongli_jobs`).Scan(&total); err != nil {
