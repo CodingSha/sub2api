@@ -85,6 +85,29 @@ docker compose -p deploy -f docker-compose.local.yml -f docker-compose.override.
 
 设置`ZHIYONGLI_EXCLUDED_USER_IDS=22`、`ZHIYONGLI_REVIEW_API_KEY_ID`与两个私有目录变量，并依据核准容量显式填写`ZHIYONGLI_MAX_REQUESTS_PER_JOB`；缺少预算时Compose拒绝启动，不再默认使用3次小样本预算。`ZHIYONGLI_WORKERS`默认1，不能只配置模型并发却忽略执行线程；线程数须在1至32之间且不超过已确认模型并发。组合文件使用现有`sub2api-network`，Worker不对外开放端口；后端需使用包含245/246迁移及新增接口的本次源码镜像。构建本身不等于数据库、模型或页面联调通过。
 
+### 主机就地构建方式（2026-11-10）
+
+生产只读核实的实际发布形态是“`/data/sub2api`为git检出，`docker-compose.override.yml`在主机上从仓库根构建`sub2api-local:latest`”，没有镜像仓库。与此一致的发布路径是切换分支后在主机构建，回退即还原旧镜像并切回`codex/shenji`。为此新增：
+
+- `docker-compose.zhiyongli.host.yml`：与local、override、zhiyongli三层合用；Worker镜像固定为`zhiyongli-worker-local:latest`，应用和Worker都必须显式给出`ZHIYONGLI_EXCLUDED_USER_IDS`。不改应用既有连接池设置，上文连接预算未闭环的结论不变。
+- `zhiyongli-host-deploy.sh`：`sudo bash zhiyongli-host-deploy.sh <阶段>`，各阶段可重复执行，任一步失败即停。
+
+| 阶段 | 做什么 | 是否写生产 |
+| --- | --- | --- |
+| `preflight` | 核对项目容器、库名、账户数、连接数、已有智用力迁移、评审Key状态、磁盘 | 只读 |
+| `prepare` | 建`/data/zhiyongli/{private,state,backup}`；生成`worker.key`；评审专用Key从本库直接写入私有文件，不经终端；写`model.json`（`http://sub2api:8080`）、`schedule.json`（disabled）、`flow.json`、`compose.env`；四层`config --quiet` | 只写新目录 |
+| `backup` | `pg_dump`（不含`llm_audit_logs`数据，三份迁移不改该表）压缩并校验 | 只写备份目录 |
+| `build` | 给当前运行镜像打`sub2api-local:rollback-pre-zhiyongli`，再构建应用与Worker镜像 | 新镜像，未替换容器 |
+| `app` | `up -d --no-build --no-deps sub2api`，启动时执行241/245/246迁移 | **替换应用、执行迁移** |
+| `grants` | 执行`zhiyongli-permissions.sql`，为两个角色生成口令并写DSN私有文件 | **新增角色与授权** |
+| `worker` | `--profile zhiyongli up -d --no-build --no-deps zhiyongli-worker` | 新增容器 |
+| `status` | 容器、任务状态分布、运行账目摘要（`status full`为完整输出） | 只读 |
+| `rollback` | 停Worker，旧镜像重新标为latest，按原两层重启应用；新增表、任务、回执、状态卷保留 | 还原应用 |
+
+须设置`ZHIYONGLI_REVIEW_API_KEY_ID`；`ZHIYONGLI_WORKERS`默认2，`ZHIYONGLI_ROOT`默认`/data/zhiyongli`。回退后再次发布须先重新`build`，`app`阶段会拒绝把旧镜像当新版本启动。回退后源码另行切回原分支。
+
+2026-11-10在本机用一次性Compose项目（独立空库、非生产）在Linux容器内以root逐阶段演练一遍：九个阶段全部按预期结束；`app`后登记到三份迁移；管理员经真实HTTP登记上周全员周评审，3个任务由Worker读取来源后落为`no_activity`；`rollback`后应用回到原镜像且任务记录保留；回退后直接`app`被拒绝，重新`build`后可再次发布，重复执行`grants`后Worker仍能领取并完成任务。**演练未覆盖**：生产数据量下的构建耗时与备份体积、从shenji镜像首次执行三份迁移（演练基线镜像已含）、Worker经`http://sub2api:8080`的真实模型请求、linux/amd64主机构建。这些只能在生产首次执行时逐阶段核对。
+
 组合文件没有默认任务请求预算，必须显式配置`ZHIYONGLI_MAX_REQUESTS_PER_JOB`。此前3次仅为小样本接入验收预算，不适用于完整周。全量运行预算需核对实际分段规模，不能用预算截断后宣称评审完成。独立CLI默认100份，可显式指定更低预算。每次发送前保存回执；超时、断流和结果不明默认不自动重发，仅在`flow.json`显式配置`max_interrupted_retries`后按上限续发（见下）。
 
 API执行器默认每轮最多1个新请求，可用`ZHIYONGLI_NEW_REQUESTS_PER_TURN`配置1至20。新发送先记任务账簿，预算跨轮及重启保留；旧任务保守继承既有回执。已存回执重验、跨任务共享阅读不计新发送；发送前账簿已有预留但回执缺失时保守视为unknown，不能换任务绕过。

@@ -1,0 +1,12 @@
+# 生产主机就地构建的追加层：沿用服务器现有“源码检出 + 本机构建 sub2api-local:latest”的发布方式。
+# 与 docker-compose.local.yml、docker-compose.override.yml、docker-compose.zhiyongli.yml 一起使用，
+# 由 zhiyongli-host-deploy.sh 分阶段调用；不改动 PostgreSQL、Redis 和应用既有连接池设置。
+# 需要不可变镜像摘要的发布方式见 docker-compose.zhiyongli.release.yml，两者二选一。
+services:
+  sub2api:
+    environment:
+      ZHIYONGLI_EXCLUDED_USER_IDS: ${ZHIYONGLI_EXCLUDED_USER_IDS:?必须填写已确认的个人评分排除账户ID，当前生产为22}
+  zhiyongli-worker:
+    image: zhiyongli-worker-local:latest
+    environment:
+      ZHIYONGLI_EXCLUDED_USER_IDS: ${ZHIYONGLI_EXCLUDED_USER_IDS:?必须填写已确认的个人评分排除账户ID，当前生产为22}
