@@ -83,6 +83,7 @@ class AccessTests(unittest.TestCase):
             self.assertTrue(all(nav.load(n)['kind']=='branch' for n in offered.get('inspect',())))
             self.assertFalse(set(access_state['inspected_node_ids'])&offered.get('inspect',set()))
             final=access.expand(current,[dict(node_id=key,mode='raw')],'raw')
+            self.assertLess(final['context_access']['remaining_bytes'],current['context_access']['remaining_bytes'])
             self.assertNotIn(key,{n for v in ([query_schema(final)['items']] if 'anyOf' not in query_schema(final)['items'] else query_schema(final)['items']['anyOf'])
                                   for n in v['properties']['node_id'].get('enum',[])})
 

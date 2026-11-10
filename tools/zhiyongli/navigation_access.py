@@ -54,6 +54,7 @@ class Access:
             limitation='摘要仅作导航；这里只统计实际补读原文范围，不代表全部原文已用于评分或语义核验通过')
         if raw_size(result)>UNIT_BYTES:
             raise ValueError('初始分层评审材料超过评分容量，须继续分层综合，本次不发送模型请求')
+        set_remaining(result)
         self.remember(result)
         return result
 
@@ -113,8 +114,9 @@ class Access:
         for query in queries:
             value=self.navigation.read([query['node_id']],raw=query['mode']=='raw')['nodes'][0]
             values.append(dict(mode=query['mode'],value=value))
+        sizes='；'.join(entry['value']['node_id'][:12]+'='+str(raw_size(entry['value']))+'字节' for entry in values)
         if raw_size(values)>INPUT_BYTES:
-            raise ValueError('分层补读合计超过单次容量，须减少节点，不截断')
+            raise ValueError('分层补读合计超过单次容量，须减少节点，不截断：单次上限'+str(INPUT_BYTES)+'字节，本次请求'+sizes)
         result=copy.deepcopy(unit);access=result['context_access'];available=set(access['available_node_ids'])
         leaves=set(access['leaf_node_ids'])
         for entry in values:
@@ -130,11 +132,19 @@ class Access:
                 access['observations'].append(dict(node_id=key,mode='inspect',node=value))
         access.update(available_node_ids=sorted(available),leaf_node_ids=sorted(leaves),raw_read_fragments=len(access['raw_node_ids']))
         if raw_size(result)>UNIT_BYTES:
-            raise ValueError('分层补读后的完整材料超过评分容量，须继续分层综合，不裁掉反证或原文：请求更少的原文节点，或基于已提供内容给出判断')
+            raise ValueError('分层补读后的完整材料超过评分容量，须继续分层综合，不裁掉反证或原文：补读前剩余约'
+                +str(unit['context_access'].get('remaining_bytes','未知'))+'字节，本次请求'+sizes+'；请求更少的原文节点，或基于已提供内容给出判断')
+        set_remaining(result)
         proof=dict(identity=self.identity,previous_unit_sha256=digest(unit),queries=queries,next_unit_sha256=digest(result))
         freeze(self.root/'queries'/(stage+'.json'),proof)
         self.remember(result)
         return result
+
+
+def set_remaining(unit):
+    """告知模型本材料还能再补入多少原文；按写入后的材料计算，不含模型请求开销。"""
+    access=unit['context_access'];access['remaining_bytes']=0
+    access['remaining_bytes']=max(0,UNIT_BYTES-raw_size(unit))
 
 
 def query_variants(unit):
