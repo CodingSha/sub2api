@@ -51,6 +51,8 @@ class AccessTests(unittest.TestCase):
             forged=copy.deepcopy(unit);forged['context_access']['available_node_ids'].append(hidden)
             with self.assertRaisesRegex(ValueError,'未绑定'):access.expand(forged,[dict(node_id=hidden,mode='inspect')],'forged')
             with self.assertRaisesRegex(ValueError,'先遍历到叶'):access.expand(unit,[dict(node_id=root,mode='raw')],'branch')
+            # 发送补读前的校验即可识别分支原文请求，识别流程据此带原因重发，不必等到读取时终止。
+            with self.assertRaisesRegex(ValueError,'是分支节点'):access.check(unit,[dict(node_id=root,mode='raw')])
             with self.assertRaisesRegex(ValueError,'重复'):access.expand(unit,[dict(node_id=root,mode='inspect')]*2,'duplicate')
             exposed=access.expand(unit,[dict(node_id=root,mode='inspect')],'inspect')
             with self.assertRaisesRegex(ValueError,'已经提供'):access.expand(exposed,[dict(node_id=root,mode='inspect')],'repeat')

@@ -80,6 +80,8 @@ class Access:
             seen.add(key)
             if key in access['raw_node_ids'] or mode=='inspect' and key in access['inspected_node_ids']:
                 raise ValueError('该节点内容已经提供，禁止循环补读：'+key+'（已提供内容见context_access.observations）')
+            if mode=='raw' and self.navigation.load(key)['kind']!='leaf':
+                raise ValueError('原文补读须先遍历到叶节点，不能把摘要冒充原文：'+key+'是分支节点，先用inspect展开，再对其叶节点用raw')
 
     def raw_event(self, unit, value):
         original=self.navigation.events[value['event_id']]
