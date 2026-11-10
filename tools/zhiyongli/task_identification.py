@@ -94,7 +94,7 @@ INSTRUCTIONS = PRINCIPLES + """
 source_segment标明同一原消息的连续执行片段；切口不是目标或缺陷，须结合全部片段及相关上下文。片段不能作为额外消息或任务计数，其他片段尚不清楚时保留未决，不能猜测本人或系统边界。
 已知时间的真实提交即使同文也不判duplicate。历史副本可作背景，不补造本期发送时间。
 timestamp_basis=audit_capture是审计采集定位，不是历史消息发送时刻。展示顺序或同一采集时间不能证明实际发送先后、响应耗时或缓存/预取。结合同一来源的非空request_id核对输入与返回，先检查已提供的前后配对内容，再提出补读。编号大小或相邻、参数相似不能证明同一任务或业务分组；参数JSON可能就是所求成果，不能默认还应有后续业务查询。
-每个候选必须有唯一materials槽位；确有目标则goal_id关联，纯寒暄等可为null并说明，目标不明保留局部表达及未决原因。只有classification为human的槽位可以关联goal_id；判为system、auxiliary、duplicate或unresolved的槽位goal_id必须为null，若认为该输入是某个目标内的本人表达就应判为human。
+每个候选必须有唯一materials槽位；确有目标则goal_id关联，纯寒暄等可为null并说明，目标不明保留局部表达及未决原因。只有classification为human的槽位可以关联goal_id并填写human_quotes；判为system、auxiliary、duplicate或unresolved的槽位goal_id必须为null、human_quotes必须为空数组，若认为该输入是某个目标内的本人表达就应判为human。
 每个materials槽位须给非空assignment_reason，说明为何归入该goal_id或为何不归入目标；reason解释本人归属，不能替代assignment_reason。step表示目标内本次动作，无法确认时用null，不填空字符串。
 同一目标的追问、方法设计、纠错和交付归为连续过程；独立目标按语义拆分，片段、页、会话、调用次数不是目标边界。
 查询、解释、学习可成立目标，不要求方法、验收或成果才识别；边界是否明确与目标是否完成分开。
@@ -146,12 +146,13 @@ def schema(packet):
     for event in candidates:
         known = not event['timestamp_unknown']
         others = ('system', 'auxiliary', 'unresolved') if known else ('system', 'auxiliary', 'duplicate', 'unresolved')
-        def slot(classification, goal_id):
-            return obj(dict(classification=classification, human_quotes=array(text), reason=text,
+        def slot(classification, goal_id, quotes):
+            return obj(dict(classification=classification, human_quotes=quotes, reason=text,
                 duplicate_of=dict(type='null') if known else dict(type=['string', 'null'], enum=ids+[None]),
                 goal_id=goal_id, step=nullable, assignment_reason=dict(type='string',minLength=1)))
-        # 非本人材料不能挂目标：写进结构合同，不等整批输出到程序校验时才失败。
-        slots[event['event']] = {'anyOf': [slot(enum('human'), nullable), slot(enum(*others), dict(type='null'))]}
+        # 非本人材料不能挂目标、不能带本人片段：写进结构合同，不等整批输出到程序校验时才失败。
+        slots[event['event']] = {'anyOf': [slot(enum('human'), nullable, dict(array(text), minItems=1)),
+                                           slot(enum(*others), dict(type='null'), dict(array(text), maxItems=0))]}
     materials = obj(slots)
     contexts = array(dict(type='string', enum=context_ids)) if context_ids else dict(type='array', items=text, maxItems=0)
     result=obj(dict(materials=materials, goals=array(obj(dict(goal_id=text, title=text, purpose=text,

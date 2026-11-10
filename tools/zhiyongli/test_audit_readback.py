@@ -317,6 +317,8 @@ class AuditReadbackTests(unittest.TestCase):
             self.assertEqual(others,other['properties']['classification']['enum'])
             # 非本人材料的目标字段只能为空，模型无法再输出会被程序整批拒绝的组合。
             self.assertEqual(dict(type='null'),other['properties']['goal_id'])
+            self.assertEqual(0,other['properties']['human_quotes']['maxItems'])
+            self.assertEqual(1,human['properties']['human_quotes']['minItems'])
 
 
 class NodeAuditor(Auditor):
