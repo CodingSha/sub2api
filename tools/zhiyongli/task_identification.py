@@ -113,13 +113,18 @@ contract_feedback存在时，上一次对同一输入的输出没有通过程序
 
 def checked(client, packet, receipt, receive, check):
     """识别输出未过确定性校验时，带校验原因有界重发；每次请求回执独立保留，程序不代改归属结论。"""
+    return resend(client, lambda path, feedback: client.identify(packet, path) if feedback is None
+                  else client.identify(packet, path, feedback), receipt, receive, check)
+
+
+def resend(client, send, receipt, receive, check):
     import json
     from pathlib import Path
     receipt = Path(receipt); feedback = None
     for attempt in range(CONTRACT_RETRIES + 1):
         path = receipt if not attempt else receipt.with_name(
             receipt.name.replace('.receipt.json', '.fix' + str(attempt) + '.receipt.json'))
-        record = client.identify(packet, path) if feedback is None else client.identify(packet, path, feedback)
+        record = send(path, feedback)
         value = receive(record)  # 结果不明、预算暂停等状态原样上抛，不进入重发。
         try:
             return record, value, check(value)

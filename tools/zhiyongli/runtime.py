@@ -324,9 +324,11 @@ class CompanyClient:
             text=dict(format=dict(type='json_schema',name='zhiyongli_month_status',strict=True,schema=month_schema(periods))))
         return self._call(payload,receipt)
 
-    def merge_goals(self,data,schema,receipt):
+    def merge_goals(self,data,schema,receipt,feedback=None):
         from goal_batches import MERGE_INSTRUCTIONS
-        return self._call(dict(model=self.config.model,instructions=MERGE_INSTRUCTIONS,
+        from task_identification import CORRECTION
+        if feedback is not None:data=dict(data,contract_feedback=feedback)
+        return self._call(dict(model=self.config.model,instructions=MERGE_INSTRUCTIONS+(CORRECTION if feedback is not None else ''),
             input=json.dumps(data,ensure_ascii=False,separators=(',',':')),stream=True,store=False,max_output_tokens=24000,
             text=dict(format=dict(type='json_schema',name='zhiyongli_goal_merge',strict=True,schema=schema))),receipt)
 

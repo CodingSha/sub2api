@@ -5,7 +5,7 @@ from pathlib import Path
 
 from runtime import atomic,digest,moment
 from bounded_read import raw_size
-from task_identification import canonical,checked,validate
+from task_identification import canonical,checked,resend,validate
 from review_schema import obj,array,enum
 
 MERGE_INSTRUCTIONS = '''这是跨分段目标归并，不评分。局部目标只是候选边界，不能以页、会话、次数或标题相同替代语义判断。
@@ -130,5 +130,8 @@ def merge_identified(packet,graphs,root,client,receive,progress):
         from goal_reconciliation import reconcile as bounded_reconcile
         merged=bounded_reconcile(data,root/'global-comparisons',client,receive,progress)
     else:
-        merged=receive(client.merge_goals(data,merge_schema(data,packet),root/'merge.receipt.json'))
+        schema=merge_schema(data,packet)
+        def send(path,feedback):
+            return client.merge_goals(data,schema,path) if feedback is None else client.merge_goals(data,schema,path,feedback)
+        return resend(client,send,root/'merge.receipt.json',receive,lambda merged:reconcile(packet,graphs,merged))[2]
     return reconcile(packet,graphs,merged)

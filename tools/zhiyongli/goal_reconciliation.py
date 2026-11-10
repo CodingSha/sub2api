@@ -6,6 +6,7 @@ from pathlib import Path
 from bounded_read import raw_size
 from runtime import atomic, digest
 from review_schema import obj, array, enum
+from task_identification import resend
 
 INPUT_BYTES = 85_000
 
@@ -150,8 +151,12 @@ def reconcile(data, directory, client, receive, progress=lambda *args:None, max_
             pair = groups[left] + (groups[right] if left != right else [])
             request = dict(base,local_goals=pair)
             if raw_size(request) > max_bytes:raise ValueError('目标比较装配超过容量，不发送')
-            value = receive(client.merge_goals(request, comparison_schema(request), root/(digest(request)+'.receipt.json')))
-            decisions.append(checked(request,value))
+            schema = comparison_schema(request)
+            def send(path, feedback, request=request, schema=schema):
+                return (client.merge_goals(request, schema, path) if feedback is None
+                        else client.merge_goals(request, schema, path, feedback))
+            decisions.append(resend(client, send, root/(digest(request)+'.receipt.json'), receive,
+                                    lambda value, request=request: checked(request, value))[2])
             completed += 1
             progress('identifying',completed,stamp['comparisons'],'有界比较跨批目标，完整表达及边界冲突均保留')
     merged = combine(data, decisions)

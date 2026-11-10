@@ -75,6 +75,29 @@ class GoalReconciliationTests(unittest.TestCase):
                        dict(context_event_ids=['other-user']),dict(boundary='guess')):
             with self.subTest(change=change),self.assertRaises(ValueError):checked(data,dict(goals=[dict(goal,**change)]))
 
+    def test_comparison_contract_failure_is_resent_with_reason(self):
+        data=self.data();limit=self.limit(data)
+        class Flaky(Comparator):
+            accepts_revision_feedback=True
+            def __init__(self):super().__init__();self.feedback=[]
+            def merge_goals(self,data,schema,path,feedback=None):
+                self.feedback.append(feedback)
+                value=super().merge_goals(data,schema,path)
+                if feedback is None and len(data['local_goals'])>1:
+                    goals=json.loads(value['response']['output'][0]['content'][0]['text'])['goals']
+                    for goal in goals:goal['goal_id']='dup'
+                    value=record(dict(goals=goals),path)
+                return value
+        client=Flaky()
+        with tempfile.TemporaryDirectory() as tmp:
+            result=reconcile(data,tmp,client,received,max_bytes=limit)
+            self.assertEqual(['a','b','c'],sorted(i for g in result['goals'] for i in g['local_goal_ids']))
+            # 首次输出目标标识重复被拒；重发带上校验原因，原回执与校验记录都保留。
+            reasons=[f for f in client.feedback if f]
+            self.assertTrue(reasons and all('标识重复' in f['error'] for f in reasons))
+            self.assertTrue(list(Path(tmp).glob('*.contract-error.json')))
+            self.assertTrue(list(Path(tmp).glob('*.fix1.receipt.json')))
+
     def test_navigation_or_single_goal_capacity_fails_before_any_model(self):
         data=self.data();client=Comparator()
         for changed in (dict(data,reading_notes=[dict(summary='不可删的导航'*10000)]),
