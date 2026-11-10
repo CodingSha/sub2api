@@ -48,6 +48,7 @@ class Access:
         result=copy.deepcopy(unit)
         result['context_access']=dict(version=VERSION,scope=self.navigation.scope,
             root=self.navigation.descriptor(self.tree['root']),available_node_ids=[self.tree['root']],
+            leaf_node_ids=[self.tree['root']] if self.navigation.load(self.tree['root'])['kind']=='leaf' else [],
             inspected_node_ids=[],raw_node_ids=[],observations=[],raw_read_fragments=0,
             total_indexed_fragments=self.leaf_count,
             limitation='摘要仅作导航；这里只统计实际补读原文范围，不代表全部原文已用于评分或语义核验通过')
@@ -115,6 +116,7 @@ class Access:
         if raw_size(values)>INPUT_BYTES:
             raise ValueError('分层补读合计超过单次容量，须减少节点，不截断')
         result=copy.deepcopy(unit);access=result['context_access'];available=set(access['available_node_ids'])
+        leaves=set(access['leaf_node_ids'])
         for entry in values:
             value=entry['value'];key=value['node_id']
             if entry['mode']=='raw':
@@ -123,17 +125,30 @@ class Access:
                     source_event=value['event_id'],source_span=[value['start'],value['end']],source_event_sha256=value['source_event_sha256']))
             else:
                 available.update(value.get('children',[]));access['inspected_node_ids'].append(key)
+                # 标出已展示节点中的叶节点，模型据此只对叶节点请求原文。
+                leaves.update(c for c in value.get('children',[]) if self.navigation.load(c)['kind']=='leaf')
                 access['observations'].append(dict(node_id=key,mode='inspect',node=value))
-        access.update(available_node_ids=sorted(available),raw_read_fragments=len(access['raw_node_ids']))
+        access.update(available_node_ids=sorted(available),leaf_node_ids=sorted(leaves),raw_read_fragments=len(access['raw_node_ids']))
         if raw_size(result)>UNIT_BYTES:
-            raise ValueError('分层补读后的完整材料超过评分容量，须继续分层综合，不裁掉反证或原文')
+            raise ValueError('分层补读后的完整材料超过评分容量，须继续分层综合，不裁掉反证或原文：请求更少的原文节点，或基于已提供内容给出判断')
         proof=dict(identity=self.identity,previous_unit_sha256=digest(unit),queries=queries,next_unit_sha256=digest(result))
         freeze(self.root/'queries'/(stage+'.json'),proof)
         self.remember(result)
         return result
 
 
+def query_variants(unit):
+    """可请求的节点按模式分开：未展开的分支只能inspect，未读的叶节点只能raw；已提供的不再出现。"""
+    from review_schema import obj, enum
+    access=unit['context_access'];leaves=set(access.get('leaf_node_ids',[]))
+    inspect=[n for n in access['available_node_ids'] if n not in leaves and n not in access['inspected_node_ids']]
+    raw=[n for n in access['available_node_ids'] if n in leaves and n not in access['raw_node_ids']]
+    return [obj(dict(node_id=enum(*ids),mode=enum(mode))) for mode,ids in (('inspect',inspect),('raw',raw)) if ids]
+
+
 def query_schema(unit):
-    from review_schema import obj, array, enum
-    return dict(array(obj(dict(node_id=enum(*unit['context_access']['available_node_ids']),
-        mode=enum('inspect','raw')))),maxItems=24)
+    from review_schema import obj, array
+    variants=query_variants(unit)
+    if not variants:
+        return dict(array(obj(dict(node_id=dict(type='string'),mode=dict(type='string')))),maxItems=0)
+    return dict(array(variants[0] if len(variants)==1 else {'anyOf':variants}),maxItems=24)

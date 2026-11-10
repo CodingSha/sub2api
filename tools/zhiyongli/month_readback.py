@@ -5,7 +5,7 @@ from pathlib import Path
 
 from bounded_read import raw_size
 from context_navigation import Navigation
-from navigation_access import Access,freeze,query_schema
+from navigation_access import Access,freeze,query_variants
 from month_evidence import slots,validate,schema as status_schema
 from review_schema import obj,array,enum
 from runtime import digest,moment
@@ -53,8 +53,7 @@ def schema(key,periods,views):
     queries=[]
     for view in views:
         if view.get('context_access'):
-            q=query_schema(view)['items']
-            queries.append(obj(dict(period_id=enum(view['period_id']),**q['properties'])))
+            queries+=[obj(dict(period_id=enum(view['period_id']),**q['properties'])) for q in query_variants(view)]
     result['properties']['needs_period_nodes']=dict(array({'anyOf':queries}),maxItems=24) if queries else dict(array(dict(type='string')),maxItems=0)
     result['required'].append('needs_period_nodes');return result
 

@@ -73,6 +73,18 @@ class AccessTests(unittest.TestCase):
             with patch('navigation_access.UNIT_BYTES',100):
                 with self.assertRaisesRegex(ValueError,'超过评分容量'):access.expand(current,[dict(node_id=key,mode='raw')],'oversized')
             self.assertEqual(before,current);self.assertFalse((access.root/'queries/oversized.json').exists())
+            # 分支只能inspect、叶节点只能raw，已提供的节点不再可选。
+            variants=query_schema(current)['items']
+            variants=variants['anyOf'] if 'anyOf' in variants else [variants]
+            offered={v['properties']['mode']['enum'][0]:set(v['properties']['node_id']['enum']) for v in variants}
+            access_state=current['context_access']
+            self.assertIn(key,offered['raw'])
+            self.assertTrue(all(nav.load(n)['kind']=='leaf' for n in offered['raw']))
+            self.assertTrue(all(nav.load(n)['kind']=='branch' for n in offered.get('inspect',())))
+            self.assertFalse(set(access_state['inspected_node_ids'])&offered.get('inspect',set()))
+            final=access.expand(current,[dict(node_id=key,mode='raw')],'raw')
+            self.assertNotIn(key,{n for v in ([query_schema(final)['items']] if 'anyOf' not in query_schema(final)['items'] else query_schema(final)['items']['anyOf'])
+                                  for n in v['properties']['node_id'].get('enum',[])})
 
     def test_month_fragment_drops_whole_week_navigation(self):
         with tempfile.TemporaryDirectory() as tmp:
