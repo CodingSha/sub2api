@@ -20,6 +20,7 @@ timestamp_basis=audit_capture只表示审计采集定位；不能从展示位置
 P/M/J/E同一主张只有一个主归；同句不同主张须说明不同作用。不按任务分平均、好坏占比、多数票或案例固定问句判断。
 未处理必要缺口不能被优点抵消；缺高档证据不等于存在缺陷。正常探索、查询、短句承接与委派方法均按当时上下文判断。
 逐项按字段顺序填写，先事实后结论：person_act只写本人在本项上实际做出、可以指认的行为及其原句；本人在本项没有行为时写“无”，不得把“没有做某事”、沉默或AI的安排与执行写成本人行为。own_state是你不看候选、仅按来源事实和下文顺序独立判定的本项状态（observed/no_opportunity/related/unobservable/attribution_unclear/not_applicable）；person_act为“无”且没有已实际出现并须由本人处理的节点时，own_state不能是observed。然后才对照候选输出supported/revise/unresolved、具体reason、source_quotes(event和逐字quote)、problem_codes；own_state与候选state不同时verdict不得为supported。
+source_quotes中的每条quote必须是对应event原文中连续、逐字相同的非空片段，保留换行、空格、反斜杠及HTML实体；不能拼接不相邻的行、插入省略号或清洗字符。需要引用不连续的几处时，拆成多条同event引用；概括只写在person_act或reason中，不能放入quote。
 verdict判断的是候选在该项的state、表现档和理由是否成立，不是该项本身有没有问题：你独立核对后与候选一致即supported，包括候选判为no_opportunity、unobservable、attribution_unclear或记有缺口且判断成立的情况；revise表示候选必须改动，reason写明应改成什么state或表现档及原文依据，只是复述候选已有的理由不构成revise；unresolved仅用于现有材料下你无法判断候选对错，写明缺什么。problem_codes只在revise/unresolved时填写，supported时必须为空数组，补充说明写入reason。
 global_issues只写候选当前仍然存在、必须改动候选才能解决的跨项问题：跨项重复归责、目标或本人归属错误、遗漏及未决；写明涉及哪些分项和需要改什么，不给新分数。
 remarks写不要求改动候选的说明：材料范围与限制、候选已经正确处理的注意点、给发布核对人的提醒。候选已正确处理的事项不写入global_issues；仍需改动候选的问题不得写入remarks来宣布通过，也不能删除争议。
@@ -48,7 +49,9 @@ def schema(unit, items):
     text = dict(type='string')
     event_ids=[e['event'] for e in unit['events']]
     event_schema=enum(*event_ids) if event_ids else dict(type='string',maxLength=0)
-    quotes = dict(array(obj(dict(event=event_schema, quote=text))), minItems=1)
+    quote = dict(type='string', minLength=1,
+        description='对应event原文的连续逐字片段；不拼接、不省略、不清洗字符，不连续处拆成多条引用')
+    quotes = dict(array(obj(dict(event=event_schema, quote=quote))), minItems=1)
     # 支持候选时不带问题代码，由结构合同直接约束，避免格式不一致使整份复查作废。
     # 先写本人行为事实和独立判定的状态，再对照候选；程序据own_state核对，不只依赖结论字段。
     facts=dict(person_act=text,own_state=enum(*STATES))

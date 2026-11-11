@@ -26,6 +26,33 @@ def fixture():
 
 
 class BudgetTests(unittest.TestCase):
+    def test_host_app_budget_failure_prevents_container_replacement(self):
+        plan, compose = fixture()
+        compose['services']['sub2api']['environment']['DATABASE_MAX_OPEN_CONNS'] = '256'
+        with tempfile.TemporaryDirectory(prefix='zy-host-budget-') as directory:
+            root = Path(directory)
+            (root/'private').mkdir(); (root/'backup').mkdir()
+            (root/'private/db-budget.json').write_text(json.dumps(plan))
+            (root/'compose.json').write_text(json.dumps(compose))
+            (root/'bin').mkdir()
+            docker = root/'bin/docker'
+            docker.write_text('#!'+sys.executable+'\n'+'''import json, os, sys
+from pathlib import Path
+root = Path(os.environ['ZHIYONGLI_ROOT'])
+with (root/'docker-calls.jsonl').open('a') as f:
+    f.write(json.dumps(sys.argv[1:])+'\\n')
+if sys.argv[1] == 'ps': print('synthetic-pg')
+elif 'config' in sys.argv: print((root/'compose.json').read_text())
+else: sys.exit(99)
+''')
+            docker.chmod(0o700)
+            result = subprocess.run(['bash',str(Path(__file__).with_name('zhiyongli-host-deploy.sh')),'app'],
+                env=dict(os.environ,ZHIYONGLI_ROOT=str(root),PATH=str(root/'bin')+os.pathsep+os.environ['PATH']),
+                capture_output=True,text=True,timeout=10)
+            self.assertEqual(2,result.returncode)
+            calls=[json.loads(line) for line in (root/'docker-calls.jsonl').read_text().splitlines()]
+            self.assertFalse(any('up' in call or 'inspect' in call for call in calls))
+
     def run_cli(self, plan, compose):
         with tempfile.TemporaryDirectory(prefix='zy-budget-test-') as directory:
             root = Path(directory)
@@ -122,6 +149,7 @@ class BudgetTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which('docker'), '需要Docker Compose配置解析器，不启动容器')
 class ReleaseComposeBudgetTests(unittest.TestCase):
+    layer = 'release'
     def setUp(self):
         self.temporary=tempfile.TemporaryDirectory(prefix='zy-release-pool-')
         self.addCleanup(self.temporary.cleanup)
@@ -146,7 +174,7 @@ class ReleaseComposeBudgetTests(unittest.TestCase):
     def render(self,env=None,release=True):
         deploy=Path(__file__).resolve().parent
         files=[deploy/'docker-compose.local.yml',self.override]
-        if release:files += [deploy/'docker-compose.zhiyongli.yml',deploy/'docker-compose.zhiyongli.release.yml']
+        if release:files += [deploy/'docker-compose.zhiyongli.yml',deploy/('docker-compose.zhiyongli.'+self.layer+'.yml')]
         command=['docker','compose','--env-file',str(self.env_file),'-p','zy-budget-test']
         for path in files:command += ['-f',str(path)]
         command += ['--profile','zhiyongli','config','--format','json']
@@ -195,6 +223,10 @@ class ReleaseComposeBudgetTests(unittest.TestCase):
         result=module.assess(plan,self.resolved())
         self.assertFalse(result['database_budget_fits'])
         self.assertEqual('unknown',result['clusters'][0]['status'])
+
+
+class HostComposeBudgetTests(ReleaseComposeBudgetTests):
+    layer = 'host'
 
 
 if __name__ == '__main__':unittest.main()

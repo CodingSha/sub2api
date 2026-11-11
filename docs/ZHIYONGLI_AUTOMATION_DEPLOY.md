@@ -1,5 +1,9 @@
 # 智用力后台评审部署准备
 
+2026-11-11续接以[生产发布检查](ZHIYONGLI_PRODUCTION_RELEASE_20261111.md)为准：已补验管理员全员周启动页面、重新只读核对生产，并修复主机构建路径遗漏的连接预算门槛。主机路径同样必须明确应用连接池并提供已核准的实例预算，不得继承256/128；备份改为包括审计正文的全库备份。生产尚未迁移或替换容器，以下旧演练不自动升级为本轮放行证据。
+
+同日用户已批准应用最大/空闲连接64/16、Worker2线程、其他服务16、运维8；共用PG普通上限97，总预算92。实际Compose仍须逐阶段核验。长周r2导航通过后，复查拼接不连续引文而被拦截；明确逐字连续引用合同后r3新增5请求形成候选，但J1原始复查意见不一致，语义稳定性未放行。新Worker镜像已从冻结源码重建核对，最终应用构建受Alpine源TLS失败阻断，GitHub也未连通；不以旧镜像或本地检查代替最终发布核对。
+
 2026-11-10发布阻断更新：来源顺序修复后的48片段原反例回归通过，24片段请求出现输出失败；完整周候选还暴露主体、机会和归责判断错误，四页长请求并发测试均未收到终态，正在定位。详见[完整周期验收进展](../outputs/zhiyongli-bounded-pipeline-offline-20261109/real-cycle-acceptance-report.md)。用户已授权全员评分流程所需模型请求，无需逐批申请次数；旧七次限制仅保留历史。**以下前序归档和Worker镜像未包含最新修复，不能作为当前代码的待上线版本。** 最终仍须完整真实周期、百人实际吞吐、来源负载与对应源码/镜像恢复验收，当前不执行生产发布。
 
 2026-11-10当前发布候选以[源码归档与镜像核对](../outputs/zhiyongli-bounded-pipeline-offline-20261109/source-candidate-report.md)及恢复r6为准；两镜像均由同一归档构建。原归档不因后续证据文档更新而改写，最终发布须复核清单；本次未执行生产命令或新增真实模型调用。
@@ -89,14 +93,14 @@ docker compose -p deploy -f docker-compose.local.yml -f docker-compose.override.
 
 生产只读核实的实际发布形态是“`/data/sub2api`为git检出，`docker-compose.override.yml`在主机上从仓库根构建`sub2api-local:latest`”，没有镜像仓库。与此一致的发布路径是切换分支后在主机构建，回退即还原旧镜像并切回`codex/shenji`。为此新增：
 
-- `docker-compose.zhiyongli.host.yml`：与local、override、zhiyongli三层合用；Worker镜像固定为`zhiyongli-worker-local:latest`，应用和Worker都必须显式给出`ZHIYONGLI_EXCLUDED_USER_IDS`。不改应用既有连接池设置，上文连接预算未闭环的结论不变。
+- `docker-compose.zhiyongli.host.yml`：与local、override、zhiyongli三层合用；Worker镜像固定为`zhiyongli-worker-local:latest`，应用和Worker都必须显式给出`ZHIYONGLI_EXCLUDED_USER_IDS`。2026-11-11起同样要求显式填写`ZHIYONGLI_APP_DB_MAX_OPEN_CONNS`和`ZHIYONGLI_APP_DB_MAX_IDLE_CONNS`，不再继承旧池上限。
 - `zhiyongli-host-deploy.sh`：`sudo bash zhiyongli-host-deploy.sh <阶段>`，各阶段可重复执行，任一步失败即停。
 
 | 阶段 | 做什么 | 是否写生产 |
 | --- | --- | --- |
 | `preflight` | 核对项目容器、库名、账户数、连接数、已有智用力迁移、评审Key状态、磁盘 | 只读 |
-| `prepare` | 建`/data/zhiyongli/{private,state,backup}`；生成`worker.key`；评审专用Key从本库直接写入私有文件，不经终端；写`model.json`（`http://sub2api:8080`）、`schedule.json`（disabled）、`flow.json`、`compose.env`；四层`config --quiet` | 只写新目录 |
-| `backup` | `pg_dump`（不含`llm_audit_logs`数据，三份迁移不改该表）压缩并校验 | 只写备份目录 |
+| `prepare` | 先要求显式连接池和`ZHIYONGLI_DB_BUDGET_PLAN`；建私有、状态、备份目录；生成Worker Key及其他私有配置，复制实例预算；四层配置解析并核对连接预算 | 只写新目录 |
+| `backup` | 完整`pg_dump`（包括`llm_audit_logs`数据）压缩并校验；压缩校验不等于恢复演练 | 只写备份目录 |
 | `build` | 给当前运行镜像打`sub2api-local:rollback-pre-zhiyongli`，再构建应用与Worker镜像 | 新镜像，未替换容器 |
 | `app` | `up -d --no-build --no-deps sub2api`，启动时执行241/245/246迁移 | **替换应用、执行迁移** |
 | `grants` | 执行`zhiyongli-permissions.sql`，为两个角色生成口令并写DSN私有文件 | **新增角色与授权** |
@@ -105,6 +109,8 @@ docker compose -p deploy -f docker-compose.local.yml -f docker-compose.override.
 | `rollback` | 停Worker，旧镜像重新标为latest，按原两层重启应用；新增表、任务、回执、状态卷保留 | 还原应用 |
 
 须设置`ZHIYONGLI_REVIEW_API_KEY_ID`；`ZHIYONGLI_WORKERS`默认2，`ZHIYONGLI_ROOT`默认`/data/zhiyongli`。回退后再次发布须先重新`build`，`app`阶段会拒绝把旧镜像当新版本启动。回退后源码另行切回原分支。
+
+2026-11-11：`prepare`需额外提供两个连接池变量和`ZHIYONGLI_DB_BUDGET_PLAN`（格式见`zhiyongli-db-budget.example.json`；示例未核定额度不能直接放行）。脚本将计划存为私有`db-budget.json`，在`prepare/build/app/worker`阶段将实际四层Compose通过标准输入交给现有预算检查器；未知、超额或结构非法均非零退出，完整配置不落盘、不回显。检查结果仅保存计数，符合预算仍不表示生产验收通过。生产旧Git不支持`-C`，预检改为目录内执行只读命令，不配置通配目录信任。
 
 2026-11-10在本机用一次性Compose项目（独立空库、非生产）在Linux容器内以root逐阶段演练一遍：九个阶段全部按预期结束；`app`后登记到三份迁移；管理员经真实HTTP登记上周全员周评审，3个任务由Worker读取来源后落为`no_activity`；`rollback`后应用回到原镜像且任务记录保留；回退后直接`app`被拒绝，重新`build`后可再次发布，重复执行`grants`后Worker仍能领取并完成任务。**演练未覆盖**：生产数据量下的构建耗时与备份体积、从shenji镜像首次执行三份迁移（演练基线镜像已含）、Worker经`http://sub2api:8080`的真实模型请求、linux/amd64主机构建。这些只能在生产首次执行时逐阶段核对。
 

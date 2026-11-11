@@ -14,6 +14,10 @@ EXCLUDED=${ZHIYONGLI_EXCLUDED_USER_IDS:-22}
 KEY_ID=${ZHIYONGLI_REVIEW_API_KEY_ID:-}
 WORKERS=${ZHIYONGLI_WORKERS:-2}
 ROLLBACK_TAG=sub2api-local:rollback-pre-zhiyongli
+if [[ -n "$KEY_ID" && ! "$KEY_ID" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ZHIYONGLI_REVIEW_API_KEY_ID 须为正整数"; exit 1
+fi
+[[ "$WORKERS" =~ ^([1-9]|[12][0-9]|3[0-2])$ ]] || { echo "Worker线程须为1至32"; exit 1; }
 
 BASE=(-p "$PROJECT" -f docker-compose.local.yml -f docker-compose.override.yml)
 FULL=(-p "$PROJECT" --env-file .env --env-file "$PRIV/compose.env" -f docker-compose.local.yml
@@ -26,6 +30,12 @@ PG=$(container postgres)
 sql() { docker exec -i "$PG" sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -F" | "'; }
 secret() { openssl rand -hex "$1"; }
 private_file() { install -m 0400 -o 1000 -g 1000 /dev/stdin "$1"; }
+check_db_budget() {
+  [ -s "$PRIV/db-budget.json" ] || { echo "缺少已核准的 db-budget.json，停止"; exit 1; }
+  docker compose "${FULL[@]}" --profile zhiyongli config --format json |
+    python3 check_zhiyongli_db_budget.py --plan "$PRIV/db-budget.json" --compose-json - \
+      --output "$BACKUP/db-budget-$(date +%Y%m%d-%H%M%S)-$$.json"
+}
 wait_healthy() {
   local id=$1 i
   for i in $(seq 1 60); do
@@ -37,8 +47,8 @@ wait_healthy() {
 
 case "${1:-}" in
 preflight)
-  # 以root执行时仓库属主不同，git可能拒绝读取；此处只作提示，不因此中止。
-  echo "分支: $(git -C .. -c safe.directory='*' log -1 --format='%D %h' 2>/dev/null || echo 未能读取)"
+  # 生产旧版Git不支持-C；只读提示不因此中止，也不放宽目录信任范围。
+  echo "分支: $(cd .. && git log -1 --format='%h %s' 2>/dev/null || echo 未能读取)"
   docker ps --filter "label=com.docker.compose.project=$PROJECT" --format '{{.Names}} | {{.Image}} | {{.Status}}'
   echo "库 | 未删除账户 | 连接数 | 已有智用力迁移数"
   echo "select current_database(), (select count(*) from users where deleted_at is null), (select count(*) from pg_stat_activity),
@@ -53,9 +63,15 @@ preflight)
   [ -f .env ] && echo ".env 存在" || echo ".env 缺失"
   ;;
 prepare)
-  [ -n "$KEY_ID" ] || { echo "须设置 ZHIYONGLI_REVIEW_API_KEY_ID"; exit 1; }
+  [[ "$KEY_ID" =~ ^[1-9][0-9]*$ ]] || { echo "须设置正整数 ZHIYONGLI_REVIEW_API_KEY_ID"; exit 1; }
+  : "${ZHIYONGLI_APP_DB_MAX_OPEN_CONNS:?须明确已核准的应用最大连接数}"
+  : "${ZHIYONGLI_APP_DB_MAX_IDLE_CONNS:?须明确已核准的应用空闲连接数}"
+  [[ "$ZHIYONGLI_APP_DB_MAX_OPEN_CONNS" =~ ^[1-9][0-9]*$ && "$ZHIYONGLI_APP_DB_MAX_IDLE_CONNS" =~ ^[0-9]+$ ]] \
+    || { echo "应用最大连接须为正整数，空闲连接须为非负整数"; exit 1; }
+  [ -s "${ZHIYONGLI_DB_BUDGET_PLAN:-}" ] || { echo "须提供已核准的 ZHIYONGLI_DB_BUDGET_PLAN 文件"; exit 1; }
   install -d -m 0700 -o 1000 -g 1000 "$PRIV" "$STATE"
   install -d -m 0700 "$BACKUP"
+  private_file "$PRIV/db-budget.json" < "$ZHIYONGLI_DB_BUDGET_PLAN"
   [ -s "$PRIV/worker.key" ] || secret 32 | private_file "$PRIV/worker.key"
   # 评审专用Key直接从本库读入私有文件，不经过终端。
   echo "select key from api_keys where id=$KEY_ID and deleted_at is null and status='active'" | sql | private_file "$PRIV/model.key"
@@ -80,24 +96,29 @@ ZHIYONGLI_REVIEW_API_KEY_ID=$KEY_ID
 ZHIYONGLI_MAX_REQUESTS_PER_JOB=3000
 ZHIYONGLI_NEW_REQUESTS_PER_TURN=20
 ZHIYONGLI_WORKERS=$WORKERS
+ZHIYONGLI_APP_DB_MAX_OPEN_CONNS=$ZHIYONGLI_APP_DB_MAX_OPEN_CONNS
+ZHIYONGLI_APP_DB_MAX_IDLE_CONNS=$ZHIYONGLI_APP_DB_MAX_IDLE_CONNS
 ZHIYONGLI_SCHEDULE_MODE=disabled
 ENV
   docker compose "${FULL[@]}" --profile zhiyongli config --quiet
+  check_db_budget
   ls -l "$PRIV" | awk '{print $1, $3, $4, $NF}'
   ;;
 backup)
-  # 三份迁移只新增表；审计正文表体量大且不被改动，备份其结构、不含其数据。
+  # 保留完整产品库和审计正文；不能把排除来源数据的备份当作完整恢复点。
   out=$BACKUP/pre-zhiyongli-$(date +%Y%m%d-%H%M%S).sql.gz
-  docker exec "$PG" sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --exclude-table-data=llm_audit_logs' | gzip > "$out"
+  docker exec "$PG" sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB"' | gzip > "$out"
   gzip -t "$out"; ls -lh "$out" | awk '{print $5, $NF}'
   ;;
 build)
   [ -f "$PRIV/compose.env" ] || { echo "先执行 prepare"; exit 1; }
+  check_db_budget
   docker image inspect "$ROLLBACK_TAG" >/dev/null 2>&1 || docker tag "$(docker inspect -f '{{.Image}}' "$(container sub2api)")" "$ROLLBACK_TAG"
   docker compose "${FULL[@]}" --profile zhiyongli build sub2api zhiyongli-worker
   docker images --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.CreatedSince}}' | grep -E '^(sub2api-local|zhiyongli-worker-local):'
   ;;
 app)
+  check_db_budget
   # 回退后 latest 指回旧镜像；此时须重新 build，不能把旧镜像当新版本启动。
   [ "$(docker image inspect -f '{{.Id}}' sub2api-local:latest)" != "$(docker image inspect -f '{{.Id}}' "$ROLLBACK_TAG")" ] \
     || { echo "sub2api-local:latest 仍是发布前镜像，先执行 build"; exit 1; }
@@ -119,6 +140,7 @@ grants)
   ;;
 worker)
   [ -s "$PRIV/product.dsn" ] && [ -s "$PRIV/source.dsn" ] || { echo "先执行 grants"; exit 1; }
+  check_db_budget
   docker compose "${FULL[@]}" --profile zhiyongli up -d --no-build --no-deps zhiyongli-worker
   wait_healthy "$(container zhiyongli-worker)"
   docker logs --tail 10 "$(container zhiyongli-worker)" 2>&1 | cut -c1-300
