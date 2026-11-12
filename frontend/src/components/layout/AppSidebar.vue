@@ -96,7 +96,7 @@
             >
               <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
               <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
-              <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
+              <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}<sup v-if="item.path === '/admin/zhiyongli'" class="zhiyongli-beta">Beta</sup></span>
             </router-link>
           </template>
         </div>
@@ -121,7 +121,7 @@
           >
             <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
             <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
-            <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
+            <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}<sup v-if="item.path === '/zhiyongli'" class="zhiyongli-beta">Beta</sup></span>
           </router-link>
         </div>
       </template>
@@ -141,7 +141,7 @@
           >
             <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
             <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
-            <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
+            <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}<sup v-if="item.path === '/zhiyongli'" class="zhiyongli-beta">Beta</sup></span>
           </router-link>
         </div>
       </template>
@@ -265,6 +265,10 @@ const siteName = computed(() => appStore.siteName)
 const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
 const siteVersion = computed(() => appStore.siteVersion)
 const settingsLoaded = computed(() => appStore.publicSettingsLoaded)
+
+// 智用力个人入口突出洞察，管理入口使用评审记录图标。
+const ZhiyongliPersonalIcon = { render: () => h(Icon, { name: 'lightbulb', size: 'md' }) }
+const ZhiyongliAdminIcon = { render: () => h(Icon, { name: 'clipboard', size: 'md' }) }
 
 // SVG Icon Components
 const DashboardIcon = {
@@ -741,7 +745,7 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
     { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon },
     { path: '/batch-image', label: t('nav.batchImage'), icon: BatchImageIcon, hideInSimpleMode: true, featureFlag: flagBatchImageAccess },
     { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: true },
-    ...(withDashboard ? [{ path: '/zhiyongli', label: '智用力', icon: ChartIcon }] : []),
+    { path: '/zhiyongli', label: '智用力', icon: ZhiyongliPersonalIcon },
     { path: '/available-channels', label: t('nav.availableChannels'), icon: ChannelIcon, hideInSimpleMode: true, featureFlag: flagAvailableChannels },
     { path: '/monitor', label: t('nav.channelStatus'), icon: SignalIcon, featureFlag: flagChannelMonitor },
     { path: '/subscriptions', label: t('nav.mySubscriptions'), icon: CreditCardIcon, hideInSimpleMode: true, featureFlag: flagSubscription },
@@ -824,7 +828,7 @@ const adminNavItems = computed((): NavItem[] => {
       ],
     },
     { path: '/admin/audit', label: t('nav.audit'), icon: ClipboardIcon },
-    { path: '/admin/zhiyongli', label: '智用力', icon: ChartIcon },
+    { path: '/admin/zhiyongli', label: '智用力管理', icon: ZhiyongliAdminIcon },
     { path: '/admin/redeem', label: t('nav.redeemCodes'), icon: TicketIcon, hideInSimpleMode: true },
     { path: '/admin/promo-codes', label: t('nav.promoCodes'), icon: GiftIcon, hideInSimpleMode: true },
     {
@@ -1094,6 +1098,17 @@ onBeforeUnmount(() => {
     opacity 0.12s ease,
     transform 0.12s ease;
   max-width: 12rem;
+}
+
+.zhiyongli-beta {
+  margin-left: 4px;
+  padding: 1px 3px;
+  border-radius: 3px;
+  background: rgb(13 148 136 / 10%);
+  color: #0d9488;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
 }
 
 .sidebar-label-flex {

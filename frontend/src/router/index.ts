@@ -244,7 +244,7 @@ const routes: RouteRecordRaw[] = [
     path: '/admin/zhiyongli',
     name: 'AdminZhiyongli',
     component: () => import('@/features/zhiyongli/AdminView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, title: '智用力' }
+    meta: { requiresAuth: true, requiresAdmin: true, title: '智用力管理' }
   },
   {
     path: '/usage',
