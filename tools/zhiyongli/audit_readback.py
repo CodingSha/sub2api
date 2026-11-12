@@ -10,6 +10,57 @@ from runtime import digest, RUBRIC, moment
 from semantic_audit import validate, ContractError
 
 INPUT_BYTES=120_000
+CONTRACT_RETRIES=2
+
+
+def preserve_judgments(previous,value):
+    """格式修复不能撤销既有判断或异议；需要改判断时须走有效复查后的评分修订。"""
+    if not isinstance(previous,dict):return
+    items=previous.get('items')
+    for item,judgment in (items.items() if isinstance(items,dict) else []):
+        if not isinstance(judgment,dict):continue
+        for key in ('verdict','own_state','person_act','reason','problem_codes'):
+            old=judgment.get(key)
+            if key=='verdict':valid=isinstance(old,str) and old in {'supported','revise','unresolved'}
+            elif key=='own_state':
+                from semantic_audit import STATES
+                valid=isinstance(old,str) and old in STATES
+            elif key=='problem_codes':valid=isinstance(old,list) and all(isinstance(v,str) for v in old)
+            else:valid=isinstance(old,str) and bool(old)
+            if valid and value.get('items',{}).get(item,{}).get(key)!=old:
+                raise ValueError('复查格式修复改变原有判断或异议：'+item+'.'+key)
+    issues=previous.get('global_issues')
+    if isinstance(issues,list) and all(isinstance(v,str) for v in issues) and value.get('global_issues')!=issues:
+        raise ValueError('复查格式修复改变原有跨项异议')
+
+
+def checked(unit,current,review,receipt,client,receive):
+    """只重试已知无效的复查输出；候选、原复查、异议和每次修复回执均保留。"""
+    feedback=None;previous=None
+    for attempt in range(CONTRACT_RETRIES+1):
+        path=receipt if not attempt else receipt.with_name('audit.fix'+str(attempt)+'.receipt.json')
+        if raw_size(dict(unit=current,review=review,contract_feedback=feedback))>INPUT_BYTES:
+            raise ValueError('复查材料连同候选及格式修复反馈超过容量，本轮不发送，保留待核')
+        record=(client.audit_review(current,review,path) if feedback is None
+            else client.audit_review(current,review,path,feedback))
+        value=None
+        try:
+            value=receive(record)
+            if not isinstance(value,dict):raise ValueError('复查输出须为对象')
+            if feedback is not None:preserve_judgments(previous,value)
+            if value.get('needs_events') or value.get('needs_nodes'):
+                if feedback is not None:raise ValueError('复查格式修复须保留原逐项结论，不改为补读请求')
+                return record,value,None,path
+            result=validate(unit,review,value,RUBRIC['items'],context=current)
+            return record,value,result,path
+        except (ValueError,KeyError,TypeError) as ex:
+            if hasattr(ex,'state'):raise
+            if attempt>=CONTRACT_RETRIES or not getattr(client,'accepts_revision_feedback',False):
+                raise ContractError(str(ex)) from None
+            if previous is None and isinstance(value,dict):previous=copy.deepcopy(value)
+            feedback=dict(attempt=attempt+1,error=(type(ex).__name__+': '+str(ex))[:2000],previous_audit=previous)
+            freeze(path.with_name(path.name.replace('.receipt.json','.contract-error.json')),
+                dict(feedback=feedback,unit_sha256=digest(unit),review_sha256=digest(review),response_sha256=digest(record)))
 
 
 def complete(unit, review, packet, directory, client, receive, progress=lambda *args:None, access=None, model_context=None):
@@ -27,15 +78,11 @@ def complete(unit, review, packet, directory, client, receive, progress=lambda *
     freeze(root/'audit-readback/input.json',dict(unit_sha256=digest(unit),review_sha256=digest(review),packet_sha256=digest(packet)))
     receipt=root/'audit.receipt.json';event_rounds=node_rounds=0
     while True:
-        if raw_size(dict(unit=current,review=review))>INPUT_BYTES:
-            raise ValueError('复查材料连同候选超过容量，本轮不发送；原评分与反证保留待分层综合')
-        record=client.audit_review(current,review,receipt);value=receive(record)
+        record,value,result,final_receipt=checked(unit,current,review,receipt,client,receive)
         events=value.get('needs_events',[]);nodes=value.get('needs_nodes',[])
         if not isinstance(events,list) or not isinstance(nodes,list):raise ValueError('复查补读请求须为明确列表')
         if not events and not nodes:
-            try:result=validate(unit,review,value,RUBRIC['items'],context=current)
-            except ValueError as ex:raise ContractError(str(ex)) from None
-            save(root,unit,review,packet,current,receipt)
+            save(root,unit,review,packet,current,final_receipt)
             return result
         if value.get('items') or value.get('global_issues') or value.get('remarks'):
             raise ValueError('复查补读不能同时提交逐项结论或跨项结论；原回执保留')
@@ -119,6 +166,7 @@ def receipt(root,unit):
 def files(root):
     root=Path(root)
     paths=sorted((root/'audit-readback').rglob('*.json'))
-    if (root/'audit.receipt.json').exists():paths.append(root/'audit.receipt.json')
+    paths.extend(sorted(root.glob('audit*.receipt.json')))
+    paths.extend(sorted(root.glob('audit*.contract-error.json')))
     if (root/'current-model-audit.json').exists():paths.append(root/'current-model-audit.json')
     return paths

@@ -90,9 +90,12 @@ def validate(unit, review, value, items, context=None):
         quotes=judgment.get('source_quotes')
         if not isinstance(quotes,list) or not quotes:
             raise ValueError('语义检查缺实际来源')
-        for ref in quotes:
+        for index,ref in enumerate(quotes):
             if ref.get('event') not in events or not ref.get('quote') or ref['quote'] not in events[ref['event']]['text']:
-                raise ValueError('语义复查引文非实际来源')
+                location=item+'.source_quotes['+str(index)+']'
+                if ref.get('event') in events:location+=', event='+ref['event']
+                raise ValueError('语义复查引文非实际来源：'+location+
+                    '；须逐字保留反斜杠、空格、换行及HTML实体，不拼接或省略；只修正此引文，不改变原有判断或异议')
         if not isinstance(judgment.get('problem_codes'),list) or (judgment['verdict']=='supported' and judgment['problem_codes']):
             raise ValueError('语义问题状态不一致')
     if not isinstance(value.get('global_issues'),list):

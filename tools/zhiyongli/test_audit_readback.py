@@ -49,6 +49,109 @@ def view(p,*args):
 
 
 class AuditReadbackTests(unittest.TestCase):
+    def test_identification_quote_error_locates_exact_slot_without_cleaning_source(self):
+        from task_identification import validate
+        for text,quote,count in [('1\\. 原样保留','1.',0),('[https://example.test](https://example.test)','https://example.test',2)]:
+            p=packet('2026-09-07T00:00:00+08:00','2026-09-14T00:00:00+08:00');e=p['events'][0];e['text']=text
+            value=dict(materials=[dict(event_id=e['event'],classification='human',reason='合成归属',human_quotes=[quote])])
+            with self.assertRaises(ValueError) as caught:validate(p,value)
+            message=str(caught.exception)
+            self.assertIn(e['event'],message);self.assertIn('human_quotes[0]',message)
+            self.assertIn('原文匹配次数='+str(count),message)
+            self.assertEqual(text,e['text'])
+
+    def test_repaired_audit_chain_is_signed_and_runtime_receives_frozen_feedback(self):
+        from runtime import CompanyClient
+        client=CompanyClient.__new__(CompanyClient)
+        client.config=type('Config',(),dict(model='synthetic'))()
+        client._call=lambda payload,path:payload
+        feedback=dict(attempt=1,error='合成引文错误',previous_audit=dict(items={}))
+        payload=client.audit_review(dict(events=[]),{},Path('unused'),feedback)
+        self.assertEqual(feedback,json.loads(payload['input'])['contract_feedback'])
+        self.assertIn('不得重新评分',payload['instructions'])
+        class Repair(FixtureClient):
+            accepts_revision_feedback=True
+            def audit_review(self,u,r,path,feedback=None):
+                if path.exists():return json.loads(path.read_text())
+                value=received(super().audit_review(u,r,path))
+                if feedback is None:value['items']['J1']['source_quotes'][0]['quote']='合成无效引文'
+                return record(value,path)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);p=packet('2026-09-07T00:00:00+08:00','2026-09-14T00:00:00+08:00')
+            evaluate_week(p,root,Repair())
+            unit=json.loads((root/'unit.json').read_text());proof=parent_proof(root,unit)
+            self.assertEqual('audit.fix1.receipt.json',Path(proof['model_audit_receipt']['path']).name)
+            paths={Path(ref['path']).name for ref in proof['model_audit_chain']}
+            self.assertTrue({'audit.receipt.json','audit.fix1.receipt.json','audit.contract-error.json'}<=paths)
+
+    def test_invalid_audit_repairs_only_quotes_and_preserves_candidate_and_disagreement(self):
+        from audit_readback import checked
+        class Repair(FixtureClient):
+            accepts_revision_feedback=True
+            def __init__(self):super().__init__();self.inputs=[]
+            def audit_review(self,u,r,path,feedback=None):
+                self.inputs.append((digest(r),path,feedback))
+                if path.exists():return json.loads(path.read_text())
+                value=received(super().audit_review(u,r,path))
+                value['items']['J1'].update(verdict='revise',reason='按原句应降低表现档',problem_codes=['unsupported-tier'])
+                if feedback is None:value['items']['J1']['source_quotes'][0]['quote']='拼接的无效原句'
+                return record(value,path)
+        from pipeline import assemble
+        from task_identification import canonical
+        p=packet('2026-09-07T00:00:00+08:00','2026-09-14T00:00:00+08:00');fixture=FixtureClient()
+        unit=assemble(p,canonical(p,received(fixture.identify(p,None))));review=received(fixture.call(unit,None))
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);client=Repair();path=root/'audit.receipt.json'
+            _,_,result,final=checked(unit,unit,review,path,client,received)
+            self.assertFalse(result['supported']);self.assertEqual('audit.fix1.receipt.json',final.name)
+            self.assertEqual(1,len({sig for sig,_,_ in client.inputs}))
+            self.assertEqual('revise',client.inputs[1][2]['previous_audit']['items']['J1']['verdict'])
+            self.assertIn('J1.source_quotes[0]',client.inputs[1][2]['error'])
+            original=path.read_bytes();calls=client.calls
+            self.assertEqual(result,checked(unit,unit,review,path,client,received)[2])
+            self.assertEqual(original,path.read_bytes());self.assertEqual(calls,client.calls)
+
+    def test_invalid_audit_cannot_erase_disagreement_or_trigger_new_score(self):
+        class Eraser(FixtureClient):
+            accepts_revision_feedback=True
+            def __init__(self):super().__init__();self.scores=0
+            def identify(self,p,path):return json.loads(path.read_text()) if path.exists() else super().identify(p,path)
+            def call(self,u,path,feedback=None):
+                if path.exists():return json.loads(path.read_text())
+                self.scores+=1;return super().call(u,path)
+            def audit_review(self,u,r,path,feedback=None):
+                if path.exists():return json.loads(path.read_text())
+                value=received(super().audit_review(u,r,path))
+                if feedback is None:
+                    value['items']['J1'].update(verdict='revise',problem_codes=['unsupported-tier'])
+                    value['items']['J1']['source_quotes'][0]['quote']='原文不存在'
+                return record(value,path)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);client=Eraser();p=packet('2026-09-07T00:00:00+08:00','2026-09-14T00:00:00+08:00')
+            for _ in range(2):
+                with self.assertRaisesRegex(Paused,'不自动重新评分'):evaluate_week(p,root,client)
+            self.assertEqual(1,client.scores);self.assertFalse((root/'revisions').exists())
+            self.assertFalse((root/'bundle.json').exists());self.assertEqual(3,len(list(root.glob('audit*.receipt.json'))))
+
+    def test_audit_repair_feedback_binds_unknown_pause_and_capacity_before_resend(self):
+        from audit_readback import checked
+        class Broken:
+            accepts_revision_feedback=True
+            def __init__(self,unknown=False):self.calls=0;self.unknown=unknown
+            def audit_review(self,u,r,path,feedback=None):
+                self.calls+=1
+                if feedback and self.unknown:return dict(status='unknown')
+                return record(dict(items={},global_issues=[]),path)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);client=Broken(True)
+            with self.assertRaises(Paused) as caught:checked({},dict(events=[]),{},root/'audit.receipt.json',client,received)
+            self.assertEqual('unknown',caught.exception.state);self.assertEqual(2,client.calls)
+        with tempfile.TemporaryDirectory() as tmp,patch('audit_readback.INPUT_BYTES',100):
+            client=Broken()
+            with self.assertRaisesRegex(ValueError,'本轮不发送'):
+                checked({},dict(events=[]),{},Path(tmp)/'audit.receipt.json',client,received)
+            self.assertEqual(1,client.calls)
+
     def test_review_stays_frozen_auditor_adds_raw_and_replay_does_not_resend(self):
         with tempfile.TemporaryDirectory() as tmp,patch('pipeline.reading_view',side_effect=view):
             root=Path(tmp);p=source();client=Auditor();result=evaluate_week(p,root,client)

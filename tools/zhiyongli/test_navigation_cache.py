@@ -98,3 +98,39 @@ class NavigationCacheTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'本次未发送新请求'):
                 nav.build(navtests.NavigationTests().notes(p),client,received)
         self.assertEqual(1,self.calls)
+
+    def broken_first(self,client):
+        original=client.navigate_context
+        def navigate(data,schema,receipt):
+            record=original(data,schema,receipt)
+            if not data.get('navigation_feedback'):
+                value=json.loads(record['response']['output'][0]['content'][0]['text'])
+                value['covered_child_ids']=value['covered_child_ids'][:1]*2
+                record['response']['output'][0]['content'][0]['text']=json.dumps(value)
+                atomic(receipt,record)
+            return record
+        return navigate
+
+    def test_repair_replays_and_shares_original_failure_without_new_send(self):
+        p=navtests.NavigationTests().packet(2);client=self.client('daily')
+        client.navigation_cache_root=self.root/'branches';nav=Navigation(client.root/'navigation',p)
+        with patch.object(client,'navigate_context',side_effect=self.broken_first(client)):
+            tree=nav.build(navtests.NavigationTests().notes(p),client,received)
+        self.assertEqual(2,self.calls)
+        self.assertEqual(2,len(list(nav.root.glob('*.cache.json'))))
+        for proof in nav.root.glob('*.cache.json'):check_cached_receipt(proof)
+        p['source_snapshot']='later';_,shared,other=self.build('frozen',p)
+        self.assertEqual(tree['root'],shared['root']);self.assertEqual((2,0),(self.calls,other.budget.used()))
+
+    def test_unknown_repair_blocks_new_snapshot_without_replaying_original(self):
+        p=navtests.NavigationTests().packet(2);client=self.client('daily')
+        client.navigation_cache_root=self.root/'branches';nav=Navigation(client.root/'navigation',p)
+        with patch.object(client,'navigate_context',side_effect=self.broken_first(client)):
+            nav.build(navtests.NavigationTests().notes(p),client,received)
+        refs=list(nav.root.glob('*.cache.json'))
+        # 最后一个新回执即修复请求；unknown必须保留，不能改合同绕过。
+        repair=max((Path(json.loads(ref.read_text())['receipt']) for ref in refs),key=lambda path:path.stat().st_mtime_ns)
+        value=json.loads(repair.read_text());value['status']='unknown';atomic(repair,value)
+        p['source_snapshot']='later'
+        with self.assertRaises(Paused) as caught:self.build('frozen',p)
+        self.assertEqual('unknown',caught.exception.state);self.assertEqual(2,self.calls)

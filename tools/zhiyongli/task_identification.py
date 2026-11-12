@@ -27,9 +27,12 @@ def validate(packet, value):
         if state == 'human':
             if not quotes:
                 raise ValueError('本人材料缺实际表达片段')
-            for quote in quotes:
+            for index,quote in enumerate(quotes):
                 if not isinstance(quote, str) or not quote.strip() or text.count(quote) != 1:
-                    raise ValueError('本人片段非逐字或多处同文，须缩小到可唯一定位的原句')
+                    count=text.count(quote) if isinstance(quote,str) and quote else 0
+                    raise ValueError('本人片段非逐字或多处同文：event='+eid+', human_quotes['+str(index)+
+                        ']，原文匹配次数='+str(count)+'（必须为1）。保留原文反斜杠、空格、换行及HTML实体；'
+                        '0次须重新逐字摘录，重复时须包含相邻原文以唯一定位，不自动认领重复位置')
                 start = text.index(quote)
                 spans.append([start, start + len(quote)])
             spans.sort()
@@ -108,6 +111,7 @@ CONTRACT_RETRIES = 3
 
 CORRECTION = """
 contract_feedback存在时，上一次对同一输入的输出没有通过程序的确定性校验，error是校验器给出的具体原因；它只说明输出格式或合同关系哪里不成立，不是证据，也不提示任何归属结论。重新完整阅读输入后按固定合同输出完整结果，并改正该问题。
+error给出event与human_quotes序号时，逐字核对该处原文，不能清洗反斜杠、HTML实体、空格或换行。相同URL在Markdown链接中可能出现两次，须连同相邻括号或文字引用以唯一定位。不要为了通过引用校验把真实本人表达改为system、duplicate或unresolved；图像占位符不提供可补造的本人文字。
 """
 
 

@@ -40,6 +40,96 @@ class Cached(FixtureClient):
 
 
 class ModelViewTests(unittest.TestCase):
+    def test_repeated_expression_does_not_hide_later_distinct_action_or_goal(self):
+        from bounded_read import raw_size
+        p,unit,_=self.paired();first=next(e for e in unit['events'] if e['event'] in unit['person_events'])
+        repeated=[dict(first,event='repeat-'+str(i)) for i in range(8)]
+        later=dict(first,event='later-person',text='没有出现弹窗，请改用输入页。')
+        unit['events']=[first]+repeated+[later]
+        unit['person_events']=[e['event'] for e in unit['events']]
+        unit['source_units'][0]['person_events']=unit['person_events'][:-1]
+        unit['source_units'].append(dict(key='second-goal',title='合成后续目标',person_events=[later['event']]))
+        unit['source_keys'].append('second-goal');before=digest(unit)
+        with patch('model_view.SEED_BYTES',2*max(raw_size(first),raw_size(later))):view=create(unit)
+        self.assertIn(later,view['events']);self.assertIn(first,view['events'])
+        self.assertLess(len(view['person_events']),len(unit['person_events']))
+        self.assertEqual(unit['source_keys'],view['source_keys']);verify(unit,view,p)
+        self.assertEqual(before,digest(unit))
+
+    def test_unread_goal_remains_visible_without_claiming_personal_raw_was_read(self):
+        p,unit=fixture();view=create(unit,seeds=[])
+        self.assertEqual(unit['source_keys'],view['source_keys'])
+        self.assertEqual([],view['person_events'])
+        self.assertEqual([],view['source_units'][0]['person_events'])
+        self.assertEqual(len(unit['source_units'][0]['person_events']),view['source_units'][0]['full_membership']['count'])
+        verify(unit,view,p)
+
+    def test_oversized_personal_event_does_not_prevent_smaller_later_event(self):
+        from bounded_read import raw_size
+        p,unit,_=self.paired();first=next(e for e in unit['events'] if e['event'] in unit['person_events'])
+        large=dict(first,event='large-person',text='不能裁掉的本人原文'*1000)
+        unit['events']=[large,first];unit['person_events']=[large['event'],first['event']]
+        unit['source_units'][0]['person_events']=unit['person_events']
+        with patch('model_view.SEED_BYTES',raw_size(first)):view=create(unit)
+        self.assertIn(first,view['events']);self.assertNotIn(large,view['events']);verify(unit,view,p)
+
+    def paired(self):
+        p,unit=fixture();own=next(e for e in unit['events'] if e['event'] in unit['person_events'])
+        own.update(source_user_id=unit['user_id'],request_id='paired-request',session_id='paired-session')
+        reply=dict(event='paired-reply',text='已收到质疑，核对发现还有五个接口。',
+            source_user_id=unit['user_id'],request_id='paired-request',session_id='paired-session',
+            actor_class='context',protocol_role='assistant',timestamp_unknown=False,at=own['at'])
+        unit['events'].append(reply)
+        return p,unit,reply
+
+    def test_same_request_reply_is_provided_as_context_without_personal_credit(self):
+        p,unit,reply=self.paired();before=digest(unit);view=create(unit)
+        self.assertIn(reply,view['events']);self.assertNotIn(reply['event'],view['person_events'])
+        verify(unit,view,p);self.assertEqual(before,digest(unit))
+        # 复查沿用评分实际提供的完整原句，重放验签不变。
+        self.assertEqual(view,create(unit,seeds=view['events']))
+        changed=copy.deepcopy(view);changed['events'][-1]['actor_class']='human'
+        with self.assertRaises(ValueError):verify(unit,changed,p)
+
+    def test_request_pairing_rejects_other_user_session_unknown_history_or_missing_identity(self):
+        for changes in (dict(source_user_id='other'),dict(session_id='other'),
+                        dict(timestamp_unknown=True),dict(protocol_role='user'),dict(actor_class='human'),
+                        dict(source_user_id=None),dict(session_id='')):
+            with self.subTest(changes=changes):
+                _,unit,reply=self.paired();reply.update(changes)
+                self.assertNotIn(reply,create(unit)['events'])
+        _,unit,reply=self.paired();next(e for e in unit['events'] if e['event'] in unit['person_events']).pop('source_user_id')
+        reply.pop('source_user_id')
+        self.assertNotIn(reply,create(unit)['events'])
+
+    def test_later_session_feedback_is_context_without_inventing_request_causality(self):
+        p,unit,reply=self.paired();later=dict(reply,event='later-delivery',request_id='different-request',text='已交付修订文件。')
+        tool=dict(later,event='other-request-tool',protocol_role='tool')
+        unit['events'].extend([later,tool]);view=create(unit)
+        self.assertIn(later,view['events']);self.assertNotIn(tool,view['events'])
+        self.assertNotIn(later['event'],view['person_events']);verify(unit,view,p)
+        self.assertIn('不独立证明时序因果',view['model_view']['limitation'])
+
+    def test_session_delivery_context_precedes_bulk_progress_when_capacity_is_limited(self):
+        p,unit,reply=self.paired();own=next(e for e in unit['events'] if e['event'] in unit['person_events'])
+        own['at']='2026-09-07T12:00:00+08:00'
+        bulk=[dict(reply,event='progress-'+str(i),request_id='progress-'+str(i),text='合成过程背景'*600,
+            at='2026-09-07T10:00:00+08:00') for i in range(20)]
+        before=dict(reply,event='previous-delivery',request_id='previous',at='2026-09-07T11:00:00+08:00')
+        final=dict(reply,event='final-delivery',request_id='final',at='2026-09-07T13:00:00+08:00')
+        unit['events'].extend(bulk+[before,final]);view=create(unit)
+        self.assertIn(before,view['events']);self.assertIn(final,view['events'])
+        self.assertLess(len(view['events']),len(unit['events']));verify(unit,view,p)
+
+    def test_context_capacity_keeps_complete_smaller_reply_and_full_denominator(self):
+        from bounded_read import raw_size
+        p,unit,reply=self.paired();huge=dict(reply,event='large-reply',text='超长原文'*20_000)
+        unit['events'].insert(-1,huge);view=create(unit)
+        self.assertNotIn(huge,view['events']);self.assertIn(reply,view['events'])
+        self.assertLess(raw_size(view),120_000)
+        self.assertEqual(len(unit['events']),view['model_view']['collections']['events']['count'])
+        verify(unit,view,p)
+
     def test_empty_initial_view_has_valid_readback_schema_without_empty_enumerations(self):
         from review_schema import schema
         from semantic_audit import schema as audit_schema

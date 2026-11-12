@@ -4,7 +4,7 @@ import copy
 from bounded_read import raw_size
 from runtime import digest, moment
 
-VERSION = 'model-view-20261109.1'
+VERSION = 'model-view-20261111.4'
 INPUT_BYTES = 120_000
 SEED_BYTES = 30_000
 FIELDS = ('version', 'key', 'user_id', 'title', 'evaluation_scope', 'periods', 'workday_scope')
@@ -14,7 +14,7 @@ def manifest(unit):
     return dict(version=VERSION, native_sha256=digest(unit),
         collections={name: dict(count=len(unit.get(name, [])), sha256=digest(unit.get(name, [])))
                      for name in ('events', 'person_events', 'source_keys', 'source_units', 'source_gaps', 'source_issues')},
-        limitation='完整分母保存在原生材料；当前原文仅为已提供范围。导航摘要不作逐字证据，不能从局部已读推断全周没有反证。')
+        limitation='完整分母保存在原生材料；当前原文仅为已提供范围。同会话背景不独立证明时序因果或本人执行。导航摘要不作逐字证据，不能从局部已读推断全周没有反证。')
 
 
 def create(unit, seeds=None):
@@ -23,14 +23,52 @@ def create(unit, seeds=None):
         source_keys=[], reading_notes=[], source_gaps_summary=dict(
             count=len(unit.get('source_gaps', [])), sha256=digest(unit.get('source_gaps', []))))
     if seeds is None:
-        # 仅提供能完整装入的初始原句，不裁单条；其余通过导航补读。
+        # 相同来源人员、会话与原句仅延后展示，避免重复采集挤掉其他表达。
+        # 不删除原生事件，也不据此认定重复人工发起；其余仍通过导航补读。
         seeds=[]
-        size=0;own=set(unit['person_events'])
+        size=0;own=set(unit['person_events']);distinct=[];deferred=[];seen=set()
         for event in unit['events']:
             if event['event'] not in own:continue
+            identity=(event.get('source_user_id'),event.get('session_id'),event['text'])
+            (deferred if identity in seen else distinct).append(event);seen.add(identity)
+        for event in distinct+deferred:
             cost=raw_size(event)
-            if size+cost>SEED_BYTES:break
+            if size+cost>SEED_BYTES:continue
             seeds.append(event);size+=cost
+        # 同一人员、会话和非空请求标识才能配对当次回复；不按相邻时间猜因果，
+        # 不把随请求携带的时间未知历史当作该次回复，也不将AI行为认领为本人。
+        requests={(e.get('source_user_id'),e.get('session_id'),e['request_id'])
+                  for e in seeds if e.get('source_user_id') is not None
+                  and str(e['source_user_id'])==str(unit['user_id'])
+                  and e.get('request_id') and e.get('session_id')}
+        sessions={(user,session) for user,session,_ in requests}
+        replies={session:sorted([e for e in unit['events']
+            if (e.get('source_user_id'),e.get('session_id'))==session
+            and e.get('actor_class')=='context' and e.get('protocol_role')=='assistant'
+            and e.get('timestamp_unknown') is False and e['text']],key=lambda e:moment(e['at']))
+            for session in sessions}
+        anchors=[]
+        for event in seeds:
+            # 采集位置仅用于选择先展示的背景，不作为实际发送顺序或因果证明。
+            before=[e for e in replies.get((event.get('source_user_id'),event.get('session_id')),[])
+                if moment(e['at'])<=moment(event['at'])]
+            if before:anchors.append(before[-1])
+        anchors.extend(events[-1] for events in replies.values() if events)
+        context_size=0;included={e['event'] for e in seeds}
+        # 先配对当次回复，再提供同一会话后续AI反馈，避免仅见开工承诺而漏交付。
+        # 同会话只确定背景范围，不据相邻时间或不同请求标识推定业务因果。
+        for paired,candidates in ((True,unit['events']),(False,anchors),(False,unit['events'])):
+            for event in candidates:
+                request=(event.get('source_user_id'),event.get('session_id'),event.get('request_id'))
+                eligible=(request in requests if paired else request[:2] in sessions
+                    and event.get('protocol_role')=='assistant')
+                if (not eligible or event['event'] in included or event.get('actor_class')!='context'
+                        or event.get('protocol_role') not in {'assistant','tool'}
+                        or event.get('timestamp_unknown') is not False or not event['text']):continue
+                cost=raw_size(event)
+                # 整条装不下仍保留在完整来源及导航中，不裁正文、不宣称会话背景已读全。
+                if context_size+cost>SEED_BYTES:continue
+                seeds.append(event);included.add(event['event']);context_size+=cost
     result['events']=copy.deepcopy(seeds)
     refresh(unit,result)
     if raw_size(result)>INPUT_BYTES:raise ValueError('初始模型视图超出容量，不能裁掉原文后继续')
@@ -43,7 +81,6 @@ def refresh(unit, view):
     sources=[]
     for source in unit.get('source_units', []):
         members=[eid for eid in source['person_events'] if eid in ids]
-        if not members:continue
         value={k:copy.deepcopy(source[k]) for k in (
             'key','title','purpose','boundary','boundary_reason','source_kind') if k in source}
         value.update(person_events=members, full_membership=dict(

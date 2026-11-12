@@ -25,23 +25,33 @@ covered_child_ids必须恰好覆盖每个孩子一次。节点是导航，原始
 FIELDS = ('summary', 'requirements', 'actions_and_results', 'counterevidence', 'unresolved')
 
 
+class ContractError(ValueError):
+    """已收到的导航输出不合合同；不包含传输、预算或签名错误。"""
+
+
 def schema(data):
     return obj(dict({k: dict(type='string', minLength=1) for k in FIELDS},
         covered_child_ids=array(enum(*(c['node_id'] for c in data['children'])))))
 
 
 def checked(data, value):
+    if not isinstance(value,dict):raise ContractError('导航输出须为JSON对象')
     ids = [c['node_id'] for c in data['children']]
     covered = value.get('covered_child_ids')
     if (not isinstance(covered, list) or any(not isinstance(v, str) for v in covered)
             or len(covered) != len(set(covered)) or set(covered) != set(ids)):
-        raise ValueError('分层导航未恰好覆盖全部下层节点')
+        if isinstance(covered,list) and all(isinstance(v,str) for v in covered):
+            detail=dict(missing=[v for v in ids if v not in covered],
+                duplicate=sorted({v for v in covered if covered.count(v)>1}),
+                unexpected=sorted(set(covered)-set(ids)))
+        else:detail=dict(error='covered_child_ids须为字符串数组')
+        raise ContractError('分层导航未恰好覆盖全部下层节点：'+json.dumps(detail,ensure_ascii=False))
     if set(value) != set(FIELDS) | {'covered_child_ids'}:
-        raise ValueError('导航输出字段与固定合同不符')
+        raise ContractError('导航输出字段与固定合同不符')
     if any(not isinstance(value.get(k), str) or not value[k].strip() for k in FIELDS):
-        raise ValueError('导航须显式记录要求、行为、反证与未决；没有时说明未观察到，不留空')
+        raise ContractError('导航须显式记录要求、行为、反证与未决；没有时说明未观察到，不留空')
     if raw_size(value) > SUMMARY_BYTES:
-        raise ValueError('导航摘要超过节点容量；保留原回执待核，不裁掉失败或未决')
+        raise ContractError('导航摘要超过节点容量；保留原回执待核，不裁掉失败或未决')
     return copy.deepcopy(value)
 
 
@@ -133,10 +143,25 @@ class Navigation:
         return dict(node_id=key, **{k: node['value'][k] for k in FIELDS})
 
     def summarize(self,data,client,receive):
+        request=data
+        for attempt in range(3):
+            value=self.summarize_once(request,client,receive)
+            try:return checked(data,value)
+            except ContractError as ex:
+                atomic(self.root/(digest(request)+'.contract-error.json'),dict(
+                    input_sha256=digest(request),output_sha256=digest(value),error=str(ex)))
+                if attempt==2:raise
+                # 完整原输出留在回执；反馈仅携带签名及精确错误，避免重复正文挤占来源容量。
+                request=dict(data,navigation_feedback=dict(previous_output_sha256=digest(value),error=str(ex)))
+                # 来源仍限64KB；修复元数据另占至多一个节点摘要的空间。
+                if raw_size(request)>INPUT_BYTES+SUMMARY_BYTES:
+                    raise ContractError('导航修复输入超出容量，保留原回执待核，不裁掉来源') from None
+
+    def summarize_once(self,data,client,receive):
         receipt=self.root/(digest(data)+'.receipt.json')
         cache_root=getattr(client,'navigation_cache_root',None)
         if cache_root is None:
-            return checked(data,receive(client.navigate_context(data,schema(data),receipt)))
+            return receive(client.navigate_context(data,schema(data),receipt))
         from reading_cache import ReadingCache
         from request_retry import read_receipt
         cache=ReadingCache(cache_root,self.local_identity,client)
@@ -150,7 +175,7 @@ class Navigation:
                 raise ValueError('既有导航请求合同变化，须显式修订；本次未发送新请求')
         with cache.request(data,payload) as shared:
             record=client.navigate_context(data,schema(data),shared)
-            value=checked(data,receive(record))
+            value=receive(record)
             proof=dict(receipt=str(shared.resolve()),receipt_sha256=digest(read_receipt(shared)),
                 request_sha256=request,input_sha256=digest(data))
             if reference.exists() and json.loads(reference.read_text())!=proof:

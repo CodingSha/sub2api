@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from context_navigation import Navigation, FIELDS, checked
+from context_navigation import Navigation, FIELDS, checked, ContractError
 from pipeline import received
 from runtime import atomic
 
@@ -67,6 +67,54 @@ class NavigationTests(unittest.TestCase):
         for ids in (['a'],['a','a'],['a','b','c']):
             with self.assertRaises(ValueError):checked(data,dict(value,covered_child_ids=ids))
         with self.assertRaises(ValueError):checked(data,dict(value,summary='不能截断'*5000))
+
+    def test_coverage_error_identifies_missing_duplicate_and_unexpected_ids(self):
+        data=dict(children=[dict(node_id='a'),dict(node_id='b')])
+        with self.assertRaises(ContractError) as caught:
+            checked(data,dict({k:'原失败与未决' for k in FIELDS},covered_child_ids=['a','a','c']))
+        for detail in ('"missing": ["b"]','"duplicate": ["a"]','"unexpected": ["c"]'):
+            self.assertIn(detail,str(caught.exception))
+
+    def test_failed_navigation_has_only_two_repairs_and_preserves_all_receipts(self):
+        class Broken(Reader):
+            def navigate_context(self,data,schema,receipt):
+                if receipt.exists():return json.loads(receipt.read_text())
+                record=super().navigate_context(data,schema,receipt)
+                value=json.loads(record['response']['output'][0]['content'][0]['text'])
+                value['covered_child_ids']=[];value['summary']='合成原失败'+str(self.calls)
+                record['response']['output'][0]['content'][0]['text']=json.dumps(value)
+                atomic(receipt,record);return record
+        with tempfile.TemporaryDirectory() as tmp:
+            packet=self.packet(2);nav=Navigation(tmp,packet);client=Broken()
+            with self.assertRaises(ContractError):nav.build(self.notes(packet),client,received)
+            self.assertEqual(3,client.calls)
+            self.assertEqual(3,len(list(Path(tmp).glob('*.receipt.json'))))
+            self.assertEqual(3,len(list(Path(tmp).glob('*.contract-error.json'))))
+            self.assertFalse((Path(tmp)/'tree.json').exists())
+            self.assertIn('previous_output_sha256',client.inputs[1]['navigation_feedback'])
+            with self.assertRaises(ContractError):nav.build(self.notes(packet),client,received)
+            self.assertEqual(3,client.calls)
+
+    def test_near_capacity_source_repairs_with_metadata_without_copying_failed_body(self):
+        from bounded_read import raw_size
+        from context_navigation import INPUT_BYTES
+        class OnceBroken(Reader):
+            def navigate_context(self,data,schema,receipt):
+                record=super().navigate_context(data,schema,receipt)
+                if not data.get('navigation_feedback'):
+                    value=json.loads(record['response']['output'][0]['content'][0]['text'])
+                    value.update(covered_child_ids=[],summary='原失败不能当新事实'*300)
+                    record['response']['output'][0]['content'][0]['text']=json.dumps(value)
+                    atomic(receipt,record)
+                return record
+        with tempfile.TemporaryDirectory() as tmp:
+            nav=Navigation(tmp,self.packet(2));client=OnceBroken()
+            data=dict(children=[dict(node_id='a',note=''),dict(node_id='b')])
+            data['children'][0]['note']='x'*(INPUT_BYTES-raw_size(data))
+            result=nav.summarize(data,client,received)
+            self.assertEqual(['a','b'],result['covered_child_ids']);self.assertEqual(2,client.calls)
+            self.assertEqual(data['children'],client.inputs[1]['children'])
+            self.assertNotIn('previous',client.inputs[1]['navigation_feedback'])
 
     def test_cross_identity_tampering_and_path_read_are_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:

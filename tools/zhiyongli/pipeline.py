@@ -445,7 +445,10 @@ def evaluate_unit(packet,unit,root,client,progress):
     if not resolved:
         from semantic_audit import ContractError
         try:audit=audit_materials(packet,unit,view,review,root,client,progress,projected,access)
-        except ContractError as ex:contract_failure(root,'audit',ex,client)
+        except ContractError as ex:
+            # 复查格式失败不能触发重新评分，否则会丢失尚未形成有效回执的异议。
+            atomic(root/'contract-error.json',dict(stage='audit',error=str(ex)[:2000]))
+            raise Paused('needs_review','语义复查格式修复未通过；评分候选及全部异议保留，不自动重新评分：'+str(ex)[:300]) from None
         atomic(root/'model-audit.json',audit)
     atomic(root/'audit.json',audit)
     if not audit['supported']:
