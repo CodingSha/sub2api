@@ -106,9 +106,13 @@ ENV
   ;;
 backup)
   # 保留完整产品库和审计正文；不能把排除来源数据的备份当作完整恢复点。
+  # 单库 pg_dump 不包含集群角色，须同时保存角色和权限依赖；角色文件含凭证，仅限私有目录。
+  umask 077
   out=$BACKUP/pre-zhiyongli-$(date +%Y%m%d-%H%M%S).sql.gz
+  globals=$out.globals.sql
+  docker exec "$PG" sh -c 'pg_dumpall -U "$POSTGRES_USER" --globals-only' > "$globals"
   docker exec "$PG" sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB"' | gzip > "$out"
-  gzip -t "$out"; ls -lh "$out" | awk '{print $5, $NF}'
+  gzip -t "$out"; ls -lh "$out" "$globals" | awk '{print $5, $NF}'
   ;;
 build)
   [ -f "$PRIV/compose.env" ] || { echo "先执行 prepare"; exit 1; }
