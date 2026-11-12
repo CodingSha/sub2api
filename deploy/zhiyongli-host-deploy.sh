@@ -118,7 +118,7 @@ build)
   [ -f "$PRIV/compose.env" ] || { echo "先执行 prepare"; exit 1; }
   check_db_budget
   docker image inspect "$ROLLBACK_TAG" >/dev/null 2>&1 || docker tag "$(docker inspect -f '{{.Image}}' "$(container sub2api)")" "$ROLLBACK_TAG"
-  docker compose "${FULL[@]}" --profile zhiyongli build sub2api zhiyongli-worker
+  docker compose "${FULL[@]}" --profile zhiyongli build --build-arg "COMMIT=$(cd .. && git rev-parse HEAD)" sub2api zhiyongli-worker
   docker images --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.CreatedSince}}' | grep -E '^(sub2api-local|zhiyongli-worker-local):'
   ;;
 app)
