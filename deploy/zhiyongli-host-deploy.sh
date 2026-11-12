@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 智用力在生产主机上的分阶段发布脚本（就地构建方式）。
-# 用法：sudo bash zhiyongli-host-deploy.sh <preflight|prepare|backup|build|app|grants|worker|status|rollback>
+# 用法：sudo bash zhiyongli-host-deploy.sh <preflight|prepare|backup|build|app|grants|worker resume-existing|pause|status|rollback>
 # 每个阶段可重复执行；密钥只写入私有目录，不回显。回退不删除新增表、任务、回执和状态卷。
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -123,6 +123,8 @@ build)
   ;;
 app)
   check_db_budget
+  # 更新页面不等于恢复评审；有积压时必须先停止Worker再替换应用。
+  [ -z "$(container zhiyongli-worker)" ] || { echo "Worker仍在运行，先安全停止再更新应用"; exit 1; }
   # 回退后 latest 指回旧镜像；此时须重新 build，不能把旧镜像当新版本启动。
   [ "$(docker image inspect -f '{{.Id}}' sub2api-local:latest)" != "$(docker image inspect -f '{{.Id}}' "$ROLLBACK_TAG")" ] \
     || { echo "sub2api-local:latest 仍是发布前镜像，先执行 build"; exit 1; }
@@ -143,11 +145,19 @@ grants)
   echo "select rolname, rolcanlogin, rolsuper from pg_roles where rolname like 'zhiyongli_%' order by 1" | sql
   ;;
 worker)
+  # 启动会直接消费旧队列，不能作为发布健康检查的附带步骤。
+  [ "${2:-}" = resume-existing ] || { echo "恢复会直接消费已有队列；明确执行 worker resume-existing"; exit 1; }
   [ -s "$PRIV/product.dsn" ] && [ -s "$PRIV/source.dsn" ] || { echo "先执行 grants"; exit 1; }
   check_db_budget
+  rm -f "$STATE/pause-new-requests"
   docker compose "${FULL[@]}" --profile zhiyongli up -d --no-build --no-deps zhiyongli-worker
   wait_healthy "$(container zhiyongli-worker)"
   docker logs --tail 10 "$(container zhiyongli-worker)" 2>&1 | cut -c1-300
+  ;;
+pause)
+  # 不强杀当前请求；Worker在下一次发送前检查，避免等待整轮20次请求才降载。
+  install -m 0644 /dev/null "$STATE/pause-new-requests"
+  echo "已阻止评审新请求；已发送请求继续落盘。确认落盘后可单独停止Worker。"
   ;;
 status)
   docker ps --filter "label=com.docker.compose.project=$PROJECT" --format '{{.Names}} | {{.Image}} | {{.Status}}'

@@ -26,6 +26,15 @@ GRANT SELECT (user_id) ON audit_whitelist_users TO zhiyongli_source;
 GRANT SELECT (id,request_id,session_id,request_count,user_id,api_key_id,platform,endpoint,method,model,status_code,
   request_body,response_body,request_truncated,response_truncated,created_at,updated_at) ON llm_audit_logs TO zhiyongli_source;
 ALTER ROLE zhiyongli_source SET default_transaction_read_only=on;
+-- 仅约束评审角色的新连接，不改变主应用会话或全库默认值。
+ALTER ROLE zhiyongli_source CONNECTION LIMIT 2;
+ALTER ROLE zhiyongli_source SET statement_timeout='120s';
+ALTER ROLE zhiyongli_source SET lock_timeout='3s';
+ALTER ROLE zhiyongli_source SET idle_in_transaction_session_timeout='120s';
+ALTER ROLE zhiyongli_source SET temp_file_limit='256MB';
+ALTER ROLE zhiyongli_worker CONNECTION LIMIT 2;
+ALTER ROLE zhiyongli_worker SET statement_timeout='30s';
+ALTER ROLE zhiyongli_worker SET lock_timeout='3s';
 DO $$ BEGIN
   IF has_any_column_privilege('zhiyongli_worker','public.zhiyongli_reports','INSERT')
       OR has_any_column_privilege('zhiyongli_worker','public.zhiyongli_reports','UPDATE')

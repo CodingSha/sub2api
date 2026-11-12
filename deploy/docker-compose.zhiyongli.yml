@@ -15,6 +15,11 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.zhiyongli
     restart: unless-stopped
+    # 首轮保护同机API资源；仅限制Worker，不改变主应用或数据库容器。
+    cpus: "${ZHIYONGLI_WORKER_CPUS:-1.0}"
+    mem_limit: ${ZHIYONGLI_WORKER_MEMORY:-2g}
+    memswap_limit: ${ZHIYONGLI_WORKER_MEMORY:-2g}
+    pids_limit: 128
     read_only: true
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
@@ -42,6 +47,8 @@ services:
       ZHIYONGLI_WORKER_KEY_FILE: /run/zhiyongli/worker.key
       ZHIYONGLI_DB_DSN_FILE: /run/zhiyongli/product.dsn
       ZHIYONGLI_SOURCE_DSN_FILE: /run/zhiyongli/source.dsn
+      ZHIYONGLI_MIN_FREE_GIB: ${ZHIYONGLI_MIN_FREE_GIB:-20}
+      ZHIYONGLI_MIN_FREE_PERCENT: ${ZHIYONGLI_MIN_FREE_PERCENT:-15}
       ZHIYONGLI_EXCLUDED_USER_IDS: ${ZHIYONGLI_EXCLUDED_USER_IDS:-}
     volumes:
       - ${ZHIYONGLI_PRIVATE_DIR:?必须配置私有目录}:/run/zhiyongli:ro

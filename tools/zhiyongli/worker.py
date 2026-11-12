@@ -41,11 +41,16 @@ class JobClient(CompanyClient):
         if not used and count>self.limit:
             raise Paused('needs_review','完整处理的最低请求量已超过本任务预算；未发送模型请求，保留全部来源，待调整执行预算')
     def _call(self,payload,receipt):
+        from disk_guard import require_space
+        require_space(self.root)
         if not receipt.exists():self.budget.check(receipt)
         from request_retry import call
         return call(self,payload,receipt,super()._call)
     @contextmanager
     def send_slot(self,payload,receipt,request_hash,body):
+        # 运维暂停只阻止新请求，已发送请求仍按原账簿落盘，避免强杀制造unknown。
+        if (self.root.parent/'pause-new-requests').exists():
+            raise Paused('queued','评审新请求已暂停，已有回执保留，等待明确恢复')
         slot=self.flow.slot(request_hash,receipt,body,payload.get('max_output_tokens',0)) if self.flow else nullcontext()
         with slot:
             self.budget.reserve(receipt,request_hash)
@@ -94,6 +99,8 @@ def process(db,job,state,source,client,send,excluded_keys,max_requests=100,new_r
     root=Path(state)/str(job['id']);root.mkdir(parents=True,exist_ok=True,mode=0o700)
     last=['collecting',0,1]
     def progress(phase,done,total,message):
+        from disk_guard import require_space
+        require_space(root)
         last[:]=[phase,done,total];update(db,job['id'],'running',phase,done,total,message)
     try:
         from personal_scope import require_personal_user

@@ -32,6 +32,8 @@ def save(path, value):
 
 def save_bytes(path, raw):
     """原子写入已经序列化的正文，避免长记录重复生成同一份JSON。"""
+    from disk_guard import require_space
+    require_space(path.parent, len(raw))
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     tmp = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
