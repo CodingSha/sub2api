@@ -64,5 +64,41 @@ class CheckpointTests(unittest.TestCase):
         self.assertEqual(1,client.budget.used())
         self.assertEqual(original,{str(p):p.read_bytes() for p in self.root.rglob('*.receipt.json')})
 
+    def test_nonempty_fragment_requires_facts_and_invalid_receipt_is_not_resent(self):
+        from unittest.mock import Mock
+        def reply(request,**kwargs):
+            body=json.loads(request.data)
+            slots=body['text']['format']['schema']['properties']['notes']['properties']
+            for slot in slots.values():
+                self.assertEqual(1,slot['properties']['facts']['minItems'])
+            page=json.loads(body['input'])
+            notes={f['fragment_id']:dict(summary='合成非空来源',facts=[],limitations=[],open_questions=[])
+                for f in page['fragments']}
+            response=dict(status='completed',output=[dict(content=[dict(type='output_text',text=json.dumps(dict(notes=notes)))])])
+            return io.BytesIO(('data: '+json.dumps(dict(type='response.completed',response=response))+'\n\n').encode())
+        opener=Mock();opener.open.side_effect=reply
+        client=self.client('empty-facts');packet=self.packet(1)
+        with patch.object(ModelConfig,'opener',return_value=opener):
+            first=self.read(packet,client)
+            original={str(p):p.read_bytes() for p in self.root.rglob('*.receipt.json')}
+            second=self.read(packet,client)
+        self.assertEqual('reading_blocked',first['state'])
+        self.assertEqual('非空来源片段缺逐字阅读依据',first['blocked'][0]['error'])
+        self.assertEqual(first,second)
+        self.assertEqual(1,opener.open.call_count)
+        self.assertEqual(1,client.budget.used())
+        self.assertEqual(original,{str(p):p.read_bytes() for p in self.root.rglob('*.receipt.json')})
+
+    def test_empty_or_whitespace_fragment_keeps_empty_facts_valid(self):
+        from bounded_read import checked,schema
+        for text in ('',' \n\t'):
+            with self.subTest(text=text):
+                page=dict(fragments=[dict(fragment_id='empty',text=text,start=0)])
+                facts=schema(page)['properties']['notes']['properties']['empty']['properties']['facts']
+                self.assertEqual(0,facts['maxItems'])
+                self.assertNotIn('minItems',facts)
+                value=dict(notes=dict(empty=dict(summary='合成空白来源',facts=[],limitations=[],open_questions=[])))
+                self.assertEqual(value,checked(page,value))
+
 
 if __name__=='__main__':unittest.main()

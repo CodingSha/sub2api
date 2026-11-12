@@ -93,7 +93,7 @@ def schema(page):
     properties={}
     for f in page['fragments']:
         ids=[a['anchor_id'] for a in anchors(f) if a['text'].strip()]
-        facts=array(obj(dict(anchor_id=dict(type='string',enum=ids),fact=text))) if ids else dict(type='array',items=text,maxItems=0)
+        facts=dict(array(obj(dict(anchor_id=dict(type='string',enum=ids),fact=text))),minItems=1) if ids else dict(type='array',items=text,maxItems=0)
         properties[f['fragment_id']]=obj(dict(summary=text,facts=facts,limitations=array(text),open_questions=array(text)))
     return obj(dict(notes=obj(properties)))
 
