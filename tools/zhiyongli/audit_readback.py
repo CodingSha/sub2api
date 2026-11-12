@@ -7,7 +7,7 @@ from bounded_read import raw_size
 from context_readback import expand, MAX_ROUNDS, MAX_NODE_ROUNDS
 from navigation_access import freeze
 from runtime import digest, RUBRIC, moment
-from semantic_audit import validate, ContractError
+from semantic_audit import validate, ContractError, QuoteError
 
 INPUT_BYTES=120_000
 CONTRACT_RETRIES=2
@@ -38,7 +38,8 @@ def checked(unit,current,review,receipt,client,receive):
     """只重试已知无效的复查输出；候选、原复查、异议和每次修复回执均保留。"""
     feedback=None;previous=None
     for attempt in range(CONTRACT_RETRIES+1):
-        path=receipt if not attempt else receipt.with_name('audit.fix'+str(attempt)+'.receipt.json')
+        quote_fix=feedback is not None and 'quote_slot' in feedback
+        path=receipt if not attempt else receipt.with_name('audit.'+('quote' if quote_fix else 'fix')+str(attempt)+'.receipt.json')
         if raw_size(dict(unit=current,review=review,contract_feedback=feedback))>INPUT_BYTES:
             raise ValueError('复查材料连同候选及格式修复反馈超过容量，本轮不发送，保留待核')
         record=(client.audit_review(current,review,path) if feedback is None
@@ -47,6 +48,12 @@ def checked(unit,current,review,receipt,client,receive):
         try:
             value=receive(record)
             if not isinstance(value,dict):raise ValueError('复查输出须为对象')
+            if quote_fix:
+                # 只应用模型选择的新引文；所有分项判断、异议和其他引用均从原复查复制。
+                if set(value)!={'event','quote'}:raise ValueError('引用修正只接受event与quote')
+                corrected=copy.deepcopy(previous);slot=feedback['quote_slot']
+                corrected['items'][slot['item']]['source_quotes'][slot['index']]=value
+                value=corrected
             if feedback is not None:preserve_judgments(previous,value)
             if value.get('needs_events') or value.get('needs_nodes'):
                 if feedback is not None:raise ValueError('复查格式修复须保留原逐项结论，不改为补读请求')
@@ -57,9 +64,12 @@ def checked(unit,current,review,receipt,client,receive):
             if hasattr(ex,'state'):raise
             if attempt>=CONTRACT_RETRIES or not getattr(client,'accepts_revision_feedback',False):
                 raise ContractError(str(ex)) from None
-            if previous is None and isinstance(value,dict):previous=copy.deepcopy(value)
+            if isinstance(ex,QuoteError):previous=copy.deepcopy(value)
+            elif previous is None and isinstance(value,dict):previous=copy.deepcopy(value)
             feedback=dict(attempt=attempt+1,error=(type(ex).__name__+': '+str(ex))[:2000],previous_audit=previous)
-            freeze(path.with_name(path.name.replace('.receipt.json','.contract-error.json')),
+            if isinstance(ex,QuoteError):feedback['quote_slot']=ex.slot
+            error_suffix='.quote.contract-error.json' if isinstance(ex,QuoteError) else '.contract-error.json'
+            freeze(path.with_name(path.name.replace('.receipt.json',error_suffix)),
                 dict(feedback=feedback,unit_sha256=digest(unit),review_sha256=digest(review),response_sha256=digest(record)))
 
 

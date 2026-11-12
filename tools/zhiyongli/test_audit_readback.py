@@ -74,15 +74,18 @@ class AuditReadbackTests(unittest.TestCase):
             def audit_review(self,u,r,path,feedback=None):
                 if path.exists():return json.loads(path.read_text())
                 value=received(super().audit_review(u,r,path))
+                if feedback and 'quote_slot' in feedback:
+                    slot=feedback['quote_slot']
+                    return record(value['items'][slot['item']]['source_quotes'][slot['index']],path)
                 if feedback is None:value['items']['J1']['source_quotes'][0]['quote']='合成无效引文'
                 return record(value,path)
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);p=packet('2026-09-07T00:00:00+08:00','2026-09-14T00:00:00+08:00')
             evaluate_week(p,root,Repair())
             unit=json.loads((root/'unit.json').read_text());proof=parent_proof(root,unit)
-            self.assertEqual('audit.fix1.receipt.json',Path(proof['model_audit_receipt']['path']).name)
+            self.assertEqual('audit.quote1.receipt.json',Path(proof['model_audit_receipt']['path']).name)
             paths={Path(ref['path']).name for ref in proof['model_audit_chain']}
-            self.assertTrue({'audit.receipt.json','audit.fix1.receipt.json','audit.contract-error.json'}<=paths)
+            self.assertTrue({'audit.receipt.json','audit.quote1.receipt.json','audit.quote.contract-error.json'}<=paths)
 
     def test_invalid_audit_repairs_only_quotes_and_preserves_candidate_and_disagreement(self):
         from audit_readback import checked
@@ -94,6 +97,9 @@ class AuditReadbackTests(unittest.TestCase):
                 if path.exists():return json.loads(path.read_text())
                 value=received(super().audit_review(u,r,path))
                 value['items']['J1'].update(verdict='revise',reason='按原句应降低表现档',problem_codes=['unsupported-tier'])
+                if feedback and 'quote_slot' in feedback:
+                    slot=feedback['quote_slot']
+                    return record(value['items'][slot['item']]['source_quotes'][slot['index']],path)
                 if feedback is None:value['items']['J1']['source_quotes'][0]['quote']='拼接的无效原句'
                 return record(value,path)
         from pipeline import assemble
@@ -103,10 +109,14 @@ class AuditReadbackTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);client=Repair();path=root/'audit.receipt.json'
             _,_,result,final=checked(unit,unit,review,path,client,received)
-            self.assertFalse(result['supported']);self.assertEqual('audit.fix1.receipt.json',final.name)
+            self.assertFalse(result['supported']);self.assertEqual('audit.quote1.receipt.json',final.name)
             self.assertEqual(1,len({sig for sig,_,_ in client.inputs}))
             self.assertEqual('revise',client.inputs[1][2]['previous_audit']['items']['J1']['verdict'])
             self.assertIn('J1.source_quotes[0]',client.inputs[1][2]['error'])
+            before=copy.deepcopy(client.inputs[1][2]['previous_audit'])
+            after=copy.deepcopy(result['value'])
+            before['items']['J1'].pop('source_quotes');after['items']['J1'].pop('source_quotes')
+            self.assertEqual(before,after)
             original=path.read_bytes();calls=client.calls
             self.assertEqual(result,checked(unit,unit,review,path,client,received)[2])
             self.assertEqual(original,path.read_bytes());self.assertEqual(calls,client.calls)

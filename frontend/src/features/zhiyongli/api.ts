@@ -119,7 +119,7 @@ export const statusText = { draft: '待发布', published: '已发布', supersed
 export const stateText: Record<string, string> = {
   observed: '已评分', no_opportunity: '无处理机会', unobservable: '不可观察',
   attribution_unclear: '归属未明', pending: '待复核', no_activity: '本期无可评记录', insufficient_evidence: '证据不足',
-  related: '关联其他维度', not_applicable: '不适用', mixed_unscored: '本月无可评数值',
+  related: '关联其他分项', not_applicable: '不适用', mixed_unscored: '本月无可评数值',
   observation_only: '观察不足，保留分维评价', data_pending: '数据或评测待完成',
   excluded_week: '未计入月分（无正式周评）'
 }

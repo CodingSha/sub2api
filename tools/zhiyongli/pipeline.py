@@ -267,7 +267,7 @@ def revision_feedback(root):
         previous_review=dict(evidence=review['value'].get('evidence',[]),period_reviews=review['value'].get('period_reviews',[])) if review else None,
         audit=dict(items={k:v for k,v in audit['value']['items'].items()
                 if v['verdict']!='supported' or k in audit.get('state_mismatches',[])},
-            global_issues=audit['value']['global_issues']) if audit else None,
+            global_issues=audit['value']['global_issues']+audit.get('claim_conflicts',[])) if audit else None,
         contract_error=error)
 
 

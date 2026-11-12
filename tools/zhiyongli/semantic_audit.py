@@ -1,4 +1,6 @@
 """候选的第二次模型检查；同模型复查不等于独立人评。"""
+import re
+from itertools import combinations
 from review_schema import obj, array, enum, compact
 
 OPPORTUNITY_CHECK = '''
@@ -18,6 +20,8 @@ INSTRUCTIONS = '''只返回严格JSON。输入unit为冻结来源，review为待
 核对机会是否已在评价截止前实际出现；评审未看到某材料不等于用户没有提供，尚未到达的阶段不产生提前归责，尚无结果不产生虚构的结果处理行为。资料未知与真实表现不足必须分开。
 timestamp_basis=audit_capture只表示审计采集定位；不能从展示位置或同采集时间推断实际发送先后、耗时或缓存/预取。先结合已提供的同来源非空request_id配对内容，不把本片段没有误认完整来源缺失。编号大小或相邻不证明业务关系；参数JSON可能是所求成果，不默认必须有下游查询。
 P/M/J/E同一主张只有一个主归；同句不同主张须说明不同作用。不按任务分平均、好坏占比、多数票或案例固定问句判断。
+shared_claim_candidates列出候选中共用或包含同一段本人引文的分项对，仅提示核查，不证明重复计分。逐对比较本人动作、判据侧面和实际作用：只是把同一要求改写成“说明清楚”“安排合理”“节省沟通”不构成三个独立事实。属于同一判定点时，指出唯一主归项，其他项改related；一句话确含目标、约束或核验等独立主张时，分别指明原句中的不同内容与本项作用，允许共引。不按引文相同或引文次数直接判低分，也不为了避免重复虚构本人行为。各项person_act写本项独立行为，reason解释与共引项的区别；存在语义重复但引文不同也须在global_issues指出。
+同一纠偏要求及其自然作用不是多个独立行为。例如发现覆盖不足后要求补测，不能把“调整执行”“停止沿用不足覆盖”“避免无效工作”分别包装成M3与E2的独立支持；没有另外可定位的失效路径、停止决定及其时机时，E2应关联纠偏主归。具体检查组别与判别方法可独立支持J2，明确比较依据可支持J1，必须指明原文中独立的内容；仅说“评价角度不同”不算区别。逐对检查后仍重复的，必须在global_issues列出分项对及主归建议，不得只写支持。
 未处理必要缺口不能被优点抵消；缺高档证据不等于存在缺陷。正常探索、查询、短句承接与委派方法均按当时上下文判断。
 逐项按字段顺序填写，先事实后结论：person_act只写本人在本项上实际做出、可以指认的行为及其原句；本人在本项没有行为时写“无”，不得把“没有做某事”、沉默或AI的安排与执行写成本人行为。own_state是你不看候选、仅按来源事实和下文顺序独立判定的本项状态（observed/no_opportunity/related/unobservable/attribution_unclear/not_applicable）；person_act为“无”且没有已实际出现并须由本人处理的节点时，own_state不能是observed。然后才对照候选输出supported/revise/unresolved、具体reason、source_quotes(event和逐字quote)、problem_codes；own_state与候选state不同时verdict不得为supported。
 source_quotes中的每条quote必须是对应event原文中连续、逐字相同的非空片段，保留换行、空格、反斜杠及HTML实体；不能拼接不相邻的行、插入省略号或清洗字符。需要引用不连续的几处时，拆成多条同event引用；概括只写在person_act或reason中，不能放入quote。
@@ -34,6 +38,34 @@ model_view存在时，当前原文和目标映射仅是已提供范围，完整�
 STATES=('observed','no_opportunity','related','unobservable','attribution_unclear','not_applicable')
 
 
+def shared_claim_candidates(review):
+    """按实际引文找待核分项对；不把来源共用本身判作语义重复。"""
+    evidence={e['id']:e for e in review.get('evidence',[]) if isinstance(e,dict) and e.get('id')}
+    pairs=[]
+    for part in review.get('period_reviews',[]):
+        cells=[c for c in part.get('cells',[]) if c.get('state')=='observed']
+        for left,right in combinations(cells,2):
+            a=[evidence[r] for r in left.get('action',{}).get('refs',[]) if r in evidence]
+            b=[evidence[r] for r in right.get('action',{}).get('refs',[]) if r in evidence]
+            if any(x.get('event')==y.get('event') and x.get('quote') and y.get('quote')
+                    and (x['quote'] in y['quote'] or y['quote'] in x['quote']) for x in a for y in b):
+                pairs.append(dict(items=[left['item'],right['item']],period_ids=part.get('period_ids',[])))
+    return pairs
+
+
+def repeated_claims(review,judgments):
+    """复查自己写出同一行为仍双重支持时，不允许宣布通过；不同表述交给语义复查。"""
+    def normalized(text):return re.sub(r'[\s，。；：、,.!！?？;:]', '',text)
+    conflicts=[]
+    for pair in shared_claim_candidates(review):
+        left,right=(judgments.get(i,{}) for i in pair['items'])
+        a,b=(normalized(c.get('person_act','')) for c in (left,right))
+        if (a and a==b and a not in {'无','无本人行为'}
+                and all(c.get('verdict')=='supported' and c.get('own_state')=='observed' for c in (left,right))):
+            conflicts.append('/'.join(pair['items'])+'：复查将同一本人行为同时支持为两项表现，须说明独立判定点或保留一个主归')
+    return conflicts
+
+
 def candidate_states(review):
     """单期间候选的逐项状态；多期间或缺失时不核对。"""
     periods=review.get('period_reviews') if isinstance(review,dict) else None
@@ -43,6 +75,13 @@ def candidate_states(review):
 
 class ContractError(ValueError):
     """模型输出未通过程序的确定性校验；与来源、预算或签名问题分开，可进入有界自动修订。"""
+
+
+class QuoteError(ValueError):
+    """已定位的引用格式错误；只允许修正这一槽位，原判断保留。"""
+    def __init__(self,message,item,index,event):
+        super().__init__(message)
+        self.slot=dict(item=item,index=index,event=event)
 
 
 def schema(unit, items):
@@ -94,15 +133,17 @@ def validate(unit, review, value, items, context=None):
             if ref.get('event') not in events or not ref.get('quote') or ref['quote'] not in events[ref['event']]['text']:
                 location=item+'.source_quotes['+str(index)+']'
                 if ref.get('event') in events:location+=', event='+ref['event']
-                raise ValueError('语义复查引文非实际来源：'+location+
-                    '；须逐字保留反斜杠、空格、换行及HTML实体，不拼接或省略；只修正此引文，不改变原有判断或异议')
+                raise QuoteError('语义复查引文非实际来源：'+location+
+                    '；须逐字保留反斜杠、空格、换行及HTML实体，不拼接或省略；只修正此引文，不改变原有判断或异议',item,index,ref.get('event'))
         if not isinstance(judgment.get('problem_codes'),list) or (judgment['verdict']=='supported' and judgment['problem_codes']):
             raise ValueError('语义问题状态不一致')
     if not isinstance(value.get('global_issues'),list):
         raise ValueError('跨项问题须显式列表')
+    conflicts=repeated_claims(review,value['items'])
     result=dict(unit_sha256=digest(unit),review_sha256=digest(review),value=value,
-        supported=all(v['verdict']=='supported' for v in value['items'].values()) and not value['global_issues'] and not mismatches,
+        supported=all(v['verdict']=='supported' for v in value['items'].values()) and not value['global_issues'] and not mismatches and not conflicts,
         independent_human_review=False)
+    if conflicts:result['claim_conflicts']=conflicts
     if mismatches:result['state_mismatches']=mismatches
     if context is not None and context!=unit:result['context_sha256']=digest(context)
     return result

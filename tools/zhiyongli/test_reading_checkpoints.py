@@ -64,7 +64,7 @@ class CheckpointTests(unittest.TestCase):
         self.assertEqual(1,client.budget.used())
         self.assertEqual(original,{str(p):p.read_bytes() for p in self.root.rglob('*.receipt.json')})
 
-    def test_nonempty_fragment_requires_facts_and_invalid_receipt_is_not_resent(self):
+    def test_nonempty_fragment_repairs_are_bounded_and_not_resent_on_resume(self):
         from unittest.mock import Mock
         def reply(request,**kwargs):
             body=json.loads(request.data)
@@ -85,8 +85,8 @@ class CheckpointTests(unittest.TestCase):
         self.assertEqual('reading_blocked',first['state'])
         self.assertEqual('非空来源片段缺逐字阅读依据',first['blocked'][0]['error'])
         self.assertEqual(first,second)
-        self.assertEqual(1,opener.open.call_count)
-        self.assertEqual(1,client.budget.used())
+        self.assertEqual(3,opener.open.call_count)
+        self.assertEqual(3,client.budget.used())
         self.assertEqual(original,{str(p):p.read_bytes() for p in self.root.rglob('*.receipt.json')})
 
     def test_empty_or_whitespace_fragment_keeps_empty_facts_valid(self):

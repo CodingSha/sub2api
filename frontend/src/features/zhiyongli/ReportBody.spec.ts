@@ -26,12 +26,22 @@ const report: Report = {
 }
 
 describe('报告的用户依据与管理员评审记录', () => {
+  it('关联分项明确说明不单独计分', () => {
+    const wrapper = mount(ReportBody, { props: { report: { ...report,
+      items: [{ ...report.items![0], state: 'related', score: null, exact: null, evidence: [] }]
+    } } })
+    expect(wrapper.text()).toContain('关联其他分项')
+    expect(wrapper.text()).toContain('本项仅作关联说明，不单独计分。')
+    wrapper.unmount()
+  })
+
   it('用户只见可展示引用，不暴露受限案例及其综合归纳，分数仍为真实原值', () => {
     const wrapper = mount(ReportBody, { props: { report } })
     expect(wrapper.text()).toContain('智用力评分')
     expect(wrapper.text()).toContain('周评')
     expect(wrapper.text()).toContain('80.0')
     expect(wrapper.text()).toContain(record.quote)
+    expect(wrapper.text()).toContain('本项判定说明未在个人报告中展示，可联系管理员核对。')
     for (const hidden of ['待核汇报稿', '受限的引用。', '来源事件存在截断', record.supports, '整项原始评审理由。', '内部采集审查记录。']) {
       expect(wrapper.text()).not.toContain(hidden)
     }
@@ -43,6 +53,7 @@ describe('报告的用户依据与管理员评审记录', () => {
     for (const visible of ['智用力评分', '月评', record.quote, '受限的引用。', '来源事件存在截断', record.supports, '整项原始评审理由。', '内部采集审查记录。']) {
       expect(wrapper.text()).toContain(visible)
     }
+    expect(wrapper.text()).not.toContain('本项判定说明未在个人报告中展示')
     wrapper.unmount()
   })
 })

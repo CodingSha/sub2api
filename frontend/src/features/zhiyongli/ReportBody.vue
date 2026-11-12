@@ -62,6 +62,8 @@
           <Icon name="chevronDown" size="sm" aria-hidden="true" class="expand-arrow shrink-0 text-gray-500 dark:text-gray-400" />
         </summary>
         <div class="item-content pb-6 pr-8 text-sm leading-7 text-gray-700 dark:text-gray-300">
+          <p v-if="item.state === 'related'" class="mb-5 text-gray-500 dark:text-gray-400">本项仅作关联说明，不单独计分。</p>
+          <p v-if="!reviewDetails && item.state === 'observed' && !item.explanations.length" class="mb-5 text-gray-500 dark:text-gray-400">本项判定说明未在个人报告中展示，可联系管理员核对。</p>
           <div v-if="item.observations.length" class="mb-5">
             <h3 class="explanation-label">本期表现</h3>
             <ul class="explanation-list"><li v-for="observation in item.observations" :key="observation">{{ observation }}</li></ul>

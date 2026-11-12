@@ -32,14 +32,14 @@
     <BaseDialog :show="startOpen" title="开始评审" width="normal" :close-on-escape="!starting" :show-close-button="!starting" @close="$emit('close')">
       <form id="start-review" class="space-y-4" @submit.prevent="start">
         <div class="grid grid-cols-2 gap-4">
-          <label class="text-sm">周期类型<Select v-model="kind" :options="periods" class="mt-2" aria-label="评审周期类型" /></label>
-          <label v-if="kind === 'month'" class="text-sm">开始日期<input v-model="startDate" type="date" class="input mt-2" aria-label="评审开始日期" required /></label>
+          <label class="text-sm">周期类型<Select v-model="kind" :options="periods" :disabled="starting" class="mt-2" aria-label="评审周期类型" /></label>
+          <label v-if="kind === 'month'" class="text-sm">开始日期<input v-model="startDate" type="date" class="input mt-2" aria-label="评审开始日期" :disabled="starting" required /></label>
         </div>
         <p class="text-xs text-gray-500">{{ kind === 'week' ? '为全部参评账户评最近一个已封口工作周（通常为上一周）的工作日；公共或自动化账户、审计白名单账户不参评，已有任务会复用。' : '选择月份首日；最后相交工作周封口后可评审。' }}按法定节假日、调休及公司例外确定计分日期，候选生成后需确认发布。</p>
         <template v-if="kind === 'month'">
-        <div class="flex gap-2"><input v-model="userSearch" class="input" placeholder="查找账户邮箱" aria-label="查找评审账户" @keydown.enter.prevent="findUsers" /><button type="button" class="btn btn-secondary shrink-0" :disabled="finding" @click="findUsers">查询</button></div>
+        <div class="flex gap-2"><input v-model="userSearch" class="input" placeholder="查找账户邮箱" aria-label="查找评审账户" :disabled="starting" @keydown.enter.prevent="findUsers" /><button type="button" class="btn btn-secondary shrink-0" :disabled="finding || starting" @click="findUsers">查询</button></div>
         <div v-if="selected.length" class="flex flex-wrap gap-2">
-          <button v-for="user in selected" :key="user.id" type="button" class="text-xs text-primary-700 underline dark:text-primary-400" :aria-label="`取消选择${user.email}`" @click="toggle(user)">{{ user.email }} ×</button>
+          <button v-for="user in selected" :key="user.id" type="button" class="text-xs text-primary-700 underline dark:text-primary-400" :aria-label="`取消选择${user.email}`" :disabled="starting" @click="toggle(user)">{{ user.email }} ×</button>
         </div>
         <fieldset class="max-h-52 space-y-2 overflow-y-auto border-y border-gray-200 py-3 dark:border-dark-700">
           <legend class="text-sm">评审人员（{{ selected.length }}/20）</legend>
