@@ -5,7 +5,7 @@ from pathlib import Path
 
 from bounded_read import raw_size
 from context_readback import expand, MAX_ROUNDS, MAX_NODE_ROUNDS
-from navigation_access import freeze
+from navigation_access import freeze,ReadbackCapacity
 from runtime import digest, RUBRIC, moment
 from semantic_audit import validate, ContractError, QuoteError
 
@@ -34,7 +34,7 @@ def preserve_judgments(previous,value):
         raise ValueError('复查格式修复改变原有跨项异议')
 
 
-def checked(unit,current,review,receipt,client,receive):
+def checked(unit,current,review,receipt,client,receive,check_request=None):
     """只重试已知无效的复查输出；候选、原复查、异议和每次修复回执均保留。"""
     feedback=None;previous=None
     for attempt in range(CONTRACT_RETRIES+1):
@@ -56,21 +56,37 @@ def checked(unit,current,review,receipt,client,receive):
                 value=corrected
             if feedback is not None:preserve_judgments(previous,value)
             if value.get('needs_events') or value.get('needs_nodes'):
-                if feedback is not None:raise ValueError('复查格式修复须保留原逐项结论，不改为补读请求')
-                return record,value,None,path
-            result=validate(unit,review,value,RUBRIC['items'],context=current)
-            return record,value,result,path
+                if feedback is not None and not feedback.get('readback_request'):
+                    raise ValueError('复查格式修复须保留原逐项结论，不改为补读请求')
+            else:
+                if feedback and feedback.get('readback_request'):raise ValueError('超容量补读修正须返回合法补读请求，不能跳过所需原文直接提交结论')
+                result=validate(unit,review,value,RUBRIC['items'],context=current)
+                return record,value,result,path
         except (ValueError,KeyError,TypeError) as ex:
             if hasattr(ex,'state'):raise
             if attempt>=CONTRACT_RETRIES or not getattr(client,'accepts_revision_feedback',False):
                 raise ContractError(str(ex)) from None
             if isinstance(ex,QuoteError):previous=copy.deepcopy(value)
             elif previous is None and isinstance(value,dict):previous=copy.deepcopy(value)
+            request_repair=bool(feedback and feedback.get('readback_request'))
             feedback=dict(attempt=attempt+1,error=(type(ex).__name__+': '+str(ex))[:2000],previous_audit=previous)
+            if request_repair:feedback['readback_request']=True
             if isinstance(ex,QuoteError):feedback['quote_slot']=ex.slot
             error_suffix='.quote.contract-error.json' if isinstance(ex,QuoteError) else '.contract-error.json'
             freeze(path.with_name(path.name.replace('.receipt.json',error_suffix)),
                 dict(feedback=feedback,unit_sha256=digest(unit),review_sha256=digest(review),response_sha256=digest(record)))
+            continue
+        # 访问证明/来源校验在格式修复捕获范围之外；只接管明确的节点容量错误。
+        if check_request is not None:
+            try:check_request(value)
+            except ReadbackCapacity as ex:
+                if attempt>=CONTRACT_RETRIES or not getattr(client,'accepts_revision_feedback',False):raise ContractError(str(ex)) from None
+                previous=copy.deepcopy(value)
+                feedback=dict(attempt=attempt+1,error=str(ex)[:2000],previous_audit=previous,readback_request=True)
+                freeze(path.with_name(path.name.replace('.receipt.json','.request.contract-error.json')),
+                    dict(feedback=feedback,unit_sha256=digest(unit),review_sha256=digest(review),response_sha256=digest(record)))
+                continue
+        return record,value,None,path
 
 
 def complete(unit, review, packet, directory, client, receive, progress=lambda *args:None, access=None, model_context=None):
@@ -88,25 +104,31 @@ def complete(unit, review, packet, directory, client, receive, progress=lambda *
     freeze(root/'audit-readback/input.json',dict(unit_sha256=digest(unit),review_sha256=digest(review),packet_sha256=digest(packet)))
     receipt=root/'audit.receipt.json';event_rounds=node_rounds=0
     while True:
-        record,value,result,final_receipt=checked(unit,current,review,receipt,client,receive)
+        stage=str(event_rounds+node_rounds+1)
+        prepared=[]
+        def check_request(value):
+            events=value.get('needs_events',[]);nodes=value.get('needs_nodes',[])
+            if not isinstance(events,list) or not isinstance(nodes,list):raise ValueError('复查补读请求须为明确列表')
+            if value.get('items') or value.get('global_issues') or value.get('remarks'):
+                raise ValueError('复查补读不能同时提交逐项结论或跨项结论；原回执保留')
+            fields={'items','global_issues','needs_events'} | ({'needs_nodes'} if access is not None else set())
+            if set(value)-{'remarks'}!=fields or value['items']!={} or value['global_issues']!=[] or events and nodes:
+                raise ValueError('复查补读字段不符或混合事件与节点请求')
+            if nodes:
+                if access is None or node_rounds>=MAX_NODE_ROUNDS:raise ValueError('复查节点补读不可用或达到执行上限')
+                prepared.append(access.expand(current,nodes,'audit-'+stage))
+            else:
+                if event_rounds>=MAX_ROUNDS:raise ValueError('复查原文补读达到执行上限，保留待核')
+                prepared.append(expand(current,packet,events))
+                if access is not None:access.remember(prepared[-1])
+        record,value,result,final_receipt=checked(unit,current,review,receipt,client,receive,check_request)
         events=value.get('needs_events',[]);nodes=value.get('needs_nodes',[])
-        if not isinstance(events,list) or not isinstance(nodes,list):raise ValueError('复查补读请求须为明确列表')
         if not events and not nodes:
             save(root,unit,review,packet,current,final_receipt)
             return result
-        if value.get('items') or value.get('global_issues') or value.get('remarks'):
-            raise ValueError('复查补读不能同时提交逐项结论或跨项结论；原回执保留')
-        fields={'items','global_issues','needs_events'} | ({'needs_nodes'} if access is not None else set())
-        if set(value)-{'remarks'}!=fields or value['items']!={} or value['global_issues']!=[] or events and nodes:
-            raise ValueError('复查补读字段不符或混合事件与节点请求')
-        stage=str(event_rounds+node_rounds+1)
-        if nodes:
-            if access is None or node_rounds>=MAX_NODE_ROUNDS:raise ValueError('复查节点补读不可用或达到执行上限')
-            next_unit=access.expand(current,nodes,'audit-'+stage);node_rounds+=1
-        else:
-            if event_rounds>=MAX_ROUNDS:raise ValueError('复查原文补读达到执行上限，保留待核')
-            next_unit=expand(current,packet,events);event_rounds+=1
-            if access is not None:access.remember(next_unit)
+        next_unit=prepared[0]
+        if nodes:node_rounds+=1
+        else:event_rounds+=1
         freeze(root/'audit-readback'/stage/'unit.json',next_unit)
         freeze(root/'audit-readback'/stage/'request.json',dict(previous_unit_sha256=digest(current),
             previous_response_sha256=digest(record),requested_events=events,requested_nodes=nodes,next_unit_sha256=digest(next_unit)))

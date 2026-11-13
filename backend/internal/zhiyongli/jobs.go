@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"time"
 )
@@ -21,6 +22,7 @@ type Job struct {
 	ScopeKey       string        `json:"scope_key"`
 	WorkdayScope   *WorkdayScope `json:"workday_scope,omitempty"`
 	State          string        `json:"state"`
+	Active         bool          `json:"active"`
 	Phase          string        `json:"phase"`
 	CompletedUnits int           `json:"completed_units"`
 	TotalUnits     int           `json:"total_units"`
@@ -77,12 +79,14 @@ func readyWorkdayWindow(kind, start string, now time.Time) (*WorkdayScope, error
 	return scope, nil
 }
 
-const jobFields = `j.id,j.user_id,u.email,j.period_type,j.period_start::text,j.period_end::text,j.rules_version,j.state,j.phase,j.completed_units,j.total_units,j.message,j.created_at,j.updated_at,j.scope_key,j.workday_scope`
+// Worker在执行任务期间持有(245,任务ID)会话锁；历史running标记不能代表实际活动。
+const jobActive = `(j.state='running' AND EXISTS(SELECT 1 FROM pg_locks l WHERE l.locktype='advisory' AND l.database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND l.classid=245 AND l.objid=j.id::oid AND l.objsubid=2 AND l.mode='ExclusiveLock' AND l.granted))`
+const jobFields = `j.id,j.user_id,u.email,j.period_type,j.period_start::text,j.period_end::text,j.rules_version,j.state,j.phase,j.completed_units,j.total_units,j.message,j.created_at,j.updated_at,j.scope_key,j.workday_scope,` + jobActive
 
 func scanJob(row interface{ Scan(...any) error }) (Job, error) {
 	var j Job
 	var raw []byte
-	err := row.Scan(&j.ID, &j.UserID, &j.UserEmail, &j.PeriodType, &j.PeriodStart, &j.PeriodEnd, &j.RulesVersion, &j.State, &j.Phase, &j.CompletedUnits, &j.TotalUnits, &j.Message, &j.CreatedAt, &j.UpdatedAt, &j.ScopeKey, &raw)
+	err := row.Scan(&j.ID, &j.UserID, &j.UserEmail, &j.PeriodType, &j.PeriodStart, &j.PeriodEnd, &j.RulesVersion, &j.State, &j.Phase, &j.CompletedUnits, &j.TotalUnits, &j.Message, &j.CreatedAt, &j.UpdatedAt, &j.ScopeKey, &raw, &j.Active)
 	if err == nil && len(raw) > 0 {
 		err = json.Unmarshal(raw, &j.WorkdayScope)
 	}
@@ -220,12 +224,48 @@ func (s *Store) startLastWeekJobsAt(ctx context.Context, actor int64, now time.T
 	return s.startJobsForUsers(ctx, users, "week", lastClosedWorkweek(now), actor, now)
 }
 
-func (s *Store) Jobs(ctx context.Context, page, size int) ([]Job, int64, error) {
-	var total int64
-	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM zhiyongli_jobs`).Scan(&total); err != nil {
+type JobFilter struct {
+	State  string
+	Search string
+}
+
+func (f JobFilter) Validate() error {
+	if len(f.Search) > 200 {
+		return invalid("账户搜索不能超过200个字符")
+	}
+	switch f.State {
+	case "", "queued", "running", "needs_review", "unknown", "failed", "completed", "no_activity":
+		return nil
+	default:
+		return invalid("评审状态无效")
+	}
+}
+
+func (s *Store) Jobs(ctx context.Context, page, size int, filters ...JobFilter) ([]Job, int64, error) {
+	f := JobFilter{}
+	if len(filters) > 0 {
+		f = filters[0]
+	}
+	if err := f.Validate(); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT `+jobFields+` FROM zhiyongli_jobs j JOIN users u ON u.id=j.user_id ORDER BY j.id DESC LIMIT $1 OFFSET $2`, size, (page-1)*size)
+	where, args := " WHERE true", []any{}
+	if f.State != "" {
+		args = append(args, f.State)
+		where += fmt.Sprintf(" AND j.state=$%d", len(args))
+	}
+	if f.Search != "" {
+		args = append(args, "%"+f.Search+"%")
+		where += fmt.Sprintf(" AND u.email ILIKE $%d", len(args))
+	}
+	from := ` FROM zhiyongli_jobs j JOIN users u ON u.id=j.user_id`
+	var total int64
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*)`+from+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	args = append(args, size, (page-1)*size)
+	order := ` ORDER BY ` + jobActive + ` DESC, CASE j.state WHEN 'running' THEN 0 WHEN 'needs_review' THEN 1 WHEN 'unknown' THEN 1 WHEN 'failed' THEN 1 WHEN 'queued' THEN 2 WHEN 'completed' THEN 3 ELSE 4 END, j.id DESC`
+	rows, err := s.db.QueryContext(ctx, `SELECT `+jobFields+from+where+order+fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)-1, len(args)), args...)
 	if err != nil {
 		return nil, 0, err
 	}

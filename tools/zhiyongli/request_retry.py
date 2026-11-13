@@ -24,8 +24,7 @@ def retry_kind(record,version=VERSION):
     if (version==VERSION and record.get('status')=='unknown'
             and (record.get('error_code') in INTERRUPTED_CODES or record.get('error') in INTERRUPTED_ERRORS)):
         return 'interrupted'
-    # 回执路径由任务锁、共享页锁和Worker独占锁保护：持锁方读到requesting，只能是已退出进程留下的
-    # 未完成发送，客户端同样没有终态。
+    # 仅供核验旧续发链；新发送入口及扫描会单独阻断无终态的requesting。
     if version==VERSION and record.get('status')=='requesting':return 'interrupted'
     return None
 
@@ -92,6 +91,7 @@ def blocking_status(path):
     path=Path(path);raw=json.loads(path.read_text())
     if raw.get('transport_version') in VERSIONS:
         record=read_receipt(path)
+        if record.get('status')=='requesting':return 'requesting'
         if raw['status']=='retry_wait' and record.get('error')!='missing_retry_receipt':
             return 'retry_wait'
         return record.get('status')
@@ -103,6 +103,7 @@ def blocking_status(path):
                 or (chain.get('pending') or {}).get('index')==int(match.group(2))):
             return 'chained'
     # 尚未入链的传输中断是已确定没有终态的失败，由同一回执路径按配置原位续发；未配置续发时调用处仍得到unknown。
+    if raw.get('status')=='requesting':return 'requesting'
     if retry_kind(raw)=='interrupted':return 'interrupted'
     return raw.get('status')
 
@@ -127,6 +128,7 @@ def call(client,payload,receipt,send):
         prior=read_receipt(receipt)
         if chain['request_sha256']!=digest(dict(endpoint=client.config.responses_url,payload=payload)):
             raise ValueError('API请求签名漂移')
+        if prior.get('status')=='requesting':return prior
         if chain['status']!='retry_wait':return prior
         if chain.get('pending'):
             pending=pending_record(receipt,chain)
@@ -138,6 +140,8 @@ def call(client,payload,receipt,send):
         prior=json.loads(attempt_path(receipt,len(chain['attempts'])-1).read_text())
     else:
         prior=send(payload,receipt)
+        # 崩溃留下的发送意图不能证明传输失败，开启中断重试也不得重发。
+        if prior.get('status')=='requesting':return prior
         kind=retry_kind(prior)
         if not kind or not maximum[kind]:return prior
         original=attempt_path(receipt,0)

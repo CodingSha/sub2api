@@ -38,6 +38,7 @@ func RegisterAdminRoutes(
 		admin.GET("/zhiyongli/reports", h.Zhiyongli.AdminReports)
 		admin.GET("/zhiyongli/reports/:id", h.Zhiyongli.AdminReport)
 		admin.POST("/zhiyongli/reports/:id/publish", h.Zhiyongli.Publish)
+		admin.POST("/zhiyongli/reports/batch-publish", h.Zhiyongli.BatchPublish)
 		admin.POST("/zhiyongli/imports", h.Zhiyongli.Import)
 		admin.GET("/zhiyongli/runs", h.Zhiyongli.Runs)
 		admin.POST("/zhiyongli/jobs", h.Zhiyongli.StartJobs)

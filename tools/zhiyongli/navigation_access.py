@@ -11,6 +11,10 @@ VERSION = 'navigation-access-20261109.1'
 UNIT_BYTES = 120_000
 
 
+class ReadbackCapacity(ValueError):
+    """已验明请求的节点超过执行容量；不是来源或访问证明损坏。"""
+
+
 def freeze(path, value):
     path=Path(path)
     if path.exists() and json.loads(path.read_text())!=value:
@@ -116,7 +120,7 @@ class Access:
             values.append(dict(mode=query['mode'],value=value))
         sizes='；'.join(entry['value']['node_id'][:12]+'='+str(raw_size(entry['value']))+'字节' for entry in values)
         if raw_size(values)>INPUT_BYTES:
-            raise ValueError('分层补读合计超过单次容量，须减少节点，不截断：单次上限'+str(INPUT_BYTES)+'字节，本次请求'+sizes)
+            raise ReadbackCapacity('分层补读合计超过单次容量，须减少节点，不截断：单次上限'+str(INPUT_BYTES)+'字节，本次请求'+sizes)
         result=copy.deepcopy(unit);access=result['context_access'];available=set(access['available_node_ids'])
         leaves=set(access['leaf_node_ids'])
         for entry in values:
@@ -132,7 +136,7 @@ class Access:
                 access['observations'].append(dict(node_id=key,mode='inspect',node=value))
         access.update(available_node_ids=sorted(available),leaf_node_ids=sorted(leaves),raw_read_fragments=len(access['raw_node_ids']))
         if raw_size(result)>UNIT_BYTES:
-            raise ValueError('分层补读后的完整材料超过评分容量，须继续分层综合，不裁掉反证或原文：补读前剩余约'
+            raise ReadbackCapacity('分层补读后的完整材料超过评分容量，须继续分层综合，不裁掉反证或原文：补读前剩余约'
                 +str(unit['context_access'].get('remaining_bytes','未知'))+'字节，本次请求'+sizes+'；请求更少的原文节点，或基于已提供内容给出判断')
         set_remaining(result)
         proof=dict(identity=self.identity,previous_unit_sha256=digest(unit),queries=queries,next_unit_sha256=digest(result))

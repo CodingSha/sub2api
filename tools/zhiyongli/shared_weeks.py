@@ -5,7 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from runtime import atomic,digest,policy,validate_review
+from runtime import atomic,digest,policy,compatible_policy,validate_review
 from semantic_audit import validate as validate_audit
 
 FILES=('input.json','packet.json','identified.json','unit.json','review.json','audit.json','native-report.json','bundle.json','review.receipt.json')
@@ -91,7 +91,7 @@ def resolve(directory):
 
 
 def checked(entry):
-    if entry.get('state')!='accepted' or entry.get('policy_sha256')!=policy():
+    if entry.get('state')!='accepted' or not compatible_policy(entry.get('policy_sha256')):
         raise ValueError('共享周评不是当前合同已核结果')
     data={name:read_ref(entry['files'][name]) for name in FILES}
     # 补读后的实际候选、输入及每轮回执也须验签，不能只核最初的补读请求。
@@ -138,6 +138,9 @@ def slot(shared_root,packet,directory):
         try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:
             raise Paused('queued','相同来源周评正在执行，等待原任务落盘后继续') from None
+        compatible=[p for p in root.glob('*.json') if compatible_policy(p.stem)]
+        if len(compatible)>1:raise ValueError('同来源存在多个兼容执行索引，须核对原执行记录')
+        if compatible:path=compatible[0]
         for prior in root.glob('*.json'):
             entry=json.loads(prior.read_text())
             if entry['directory']==str(directory):continue

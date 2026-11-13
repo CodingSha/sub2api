@@ -47,6 +47,7 @@ export interface Report {
   score: string | null
   exact: string | null
   score_reason: string
+  score_explanation?: { reasons: string[]; effect: string }
   rating: string | null
   policy_versions: { scale: string; aggregation: string; rating: string; rules: string; review?: string }
   dimensions: Dimension[]
@@ -76,7 +77,7 @@ export interface Report {
 }
 export interface Run { id: number; digest: string; source_name: string; report_count: number; created_at: string }
 export interface Page<T> { items: T[]; total: number; page: number; page_size: number; pages: number }
-export interface Filters { period_type?: string; publication_status?: string; search?: string; page?: number; page_size?: number }
+export interface Filters { period_type?: string; period_start?: string; publication_status?: string; search?: string; page?: number; page_size?: number }
 
 const base = (admin: boolean) => admin ? '/admin/zhiyongli' : '/zhiyongli/me'
 export async function listReports(admin: boolean, params: Filters) {
@@ -88,6 +89,9 @@ export async function getReport(admin: boolean, id: number) {
 export async function publishReport(report: Report) {
   return (await apiClient.post<Report>(`/admin/zhiyongli/reports/${report.id}/publish`, { revision: report.revision })).data
 }
+export async function batchPublishReports(input: {period_type: string; period_start: string; reports: {id: number; revision: number}[]}) {
+  return (await apiClient.post<{published_count: number; report_ids: number[]}>('/admin/zhiyongli/reports/batch-publish', input)).data
+}
 export async function importResults(bundle: unknown) {
   return (await apiClient.post<Run>('/admin/zhiyongli/imports', bundle)).data
 }
@@ -98,6 +102,7 @@ export interface ReviewJob {
   id: number; user_id: number; user_email: string
   period_type: 'week' | 'month'; period_start: string; period_end: string; rules_version: string
   state: 'queued' | 'running' | 'needs_review' | 'unknown' | 'failed' | 'completed' | 'no_activity'
+  active: boolean
   phase: string; completed_units: number; total_units: number; message: string
   created_at: string; updated_at: string
   scope_key: string; workday_scope?: WorkdayScope
@@ -109,8 +114,8 @@ export async function startJobs(input: {user_ids: number[]; period_type: 'week' 
 export async function startLastWeekJobs() {
   return (await apiClient.post<ReviewJob[]>('/admin/zhiyongli/jobs/last-week')).data
 }
-export async function listJobs(page: number) {
-  return (await apiClient.get<Page<ReviewJob>>('/admin/zhiyongli/jobs', {params:{page,page_size:20}})).data
+export async function listJobs(page: number, filters: {state?: string; search?: string} = {}) {
+  return (await apiClient.get<Page<ReviewJob>>('/admin/zhiyongli/jobs', {params:{page,page_size:20,...filters}})).data
 }
 export async function resumeJob(id: number) {
   return (await apiClient.post<ReviewJob>(`/admin/zhiyongli/jobs/${id}/resume`)).data

@@ -120,6 +120,9 @@ func scanReport(row scanner) (Report, error) {
 		return r, e
 	}
 	e = json.Unmarshal(body, &r.Result)
+	if e == nil {
+		r.ScoreExplanation = scoreExplanation(r.Result)
+	}
 	return r, e
 }
 
@@ -135,6 +138,9 @@ func filterSQL(f Filter) (string, []any) {
 	}
 	if f.PeriodType != "" {
 		add(" AND r.period_type=$%d", f.PeriodType)
+	}
+	if f.PeriodStart != "" {
+		add(" AND r.period_start=$%d::date", f.PeriodStart)
 	}
 	if f.Status != "" {
 		add(" AND r.publication_status=$%d", f.Status)
@@ -224,42 +230,47 @@ func (s *Store) Publish(ctx context.Context, id int64, revision int, actor int64
 	if _, e = tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(241241)"); e != nil {
 		return Report{}, e
 	}
+	if e = publishReportTx(ctx, tx, id, revision, actor); e != nil {
+		return Report{}, e
+	}
+	if e = tx.Commit(); e != nil {
+		return Report{}, e
+	}
+	return s.Get(ctx, id, 0)
+}
+
+// 单份与整批发布复用相同的权限、修订及工作日范围检查。
+func publishReportTx(ctx context.Context, tx *sql.Tx, id int64, revision int, actor int64) error {
 	r, e := scanReport(tx.QueryRowContext(ctx, "SELECT "+reportColumns+" FROM zhiyongli_reports r WHERE r.id=$1 FOR UPDATE", id))
 	if e != nil {
-		return r, e
+		return e
 	}
 	if revision != r.Revision || r.PublicationStatus == "superseded" {
-		return r, ErrConflict
+		return ErrConflict
 	}
 	if e = personalUserAllowed(r.UserID); e != nil {
-		return r, e
+		return e
 	}
 	if r.PublicationStatus == "published" {
-		if e = tx.Commit(); e != nil {
-			return r, e
-		}
-		return s.Get(ctx, id, 0)
+		return nil
 	}
 	if r.PolicyVersions.Rules == RulesVersion && r.WorkdayScope == nil {
-		return r, invalid("该候选为历史自然周范围，请按当前工作日范围重评后发布")
+		return invalid("该候选为历史自然周范围，请按当前工作日范围重评后发布")
 	}
 	var latest int
 	if e = tx.QueryRowContext(ctx, `SELECT MAX(revision) FROM zhiyongli_reports WHERE user_id=$1 AND period_type=$2 AND period_start=$3::date`, r.UserID, r.PeriodType, r.PeriodStart).Scan(&latest); e != nil {
-		return r, e
+		return e
 	}
 	if latest != revision {
-		return r, ErrConflict
+		return ErrConflict
 	}
 	if _, e = tx.ExecContext(ctx, `UPDATE zhiyongli_reports SET publication_status='superseded' WHERE user_id=$1 AND period_type=$2 AND period_start=$3::date AND publication_status='published'`, r.UserID, r.PeriodType, r.PeriodStart); e != nil {
-		return r, e
+		return e
 	}
 	if _, e = tx.ExecContext(ctx, `UPDATE zhiyongli_reports SET publication_status='published',published_by=$2,published_at=now() WHERE id=$1`, id, actor); e != nil {
-		return r, e
+		return e
 	}
-	if e = tx.Commit(); e != nil {
-		return r, e
-	}
-	return s.Get(ctx, id, 0)
+	return nil
 }
 func (s *Store) Runs(ctx context.Context, page, size int) ([]Run, int64, error) {
 	var total int64

@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from context_readback import complete, expand
+from context_readback import complete, expand,InvalidReadback
 from pipeline import evaluate_week, received, Paused
 from review_control import model_receipt, parent_proof
 from runtime import atomic, digest, RUBRIC, VERSION, REVIEW_POLICY
@@ -100,6 +100,53 @@ class ReadbackTests(unittest.TestCase):
             p['events'][-1]['text']='已变化'
             with self.assertRaisesRegex(ValueError,'冻结来源'):complete(u,p,root,client,received)
             self.assertEqual(1,client.calls)
+
+    def test_mixed_readback_uses_bounded_revision_and_keeps_prior_receipt(self):
+        class Repairer(ReadbackClient):
+            accepts_revision_feedback=True
+            feedback=None;always=False
+            def call(self,unit,path,feedback=None):
+                if path.exists():return json.loads(path.read_text())
+                if feedback is None or self.always:
+                    self.calls+=1
+                    return record(dict(version=VERSION,review_policy=REVIEW_POLICY,key=unit['key'],
+                        needs_events=['missing-context'],evidence=[dict(quote='违规部分评分')],period_reviews=[]),path)
+                self.feedback=feedback
+                return super().call(unit,path)
+        def view(packet,*args):
+            result=copy.deepcopy(packet);result['events']=result['events'][:1]
+            result['reading_notes']=[dict(event_id='missing-context',summary='合成背景')]
+            return result
+        with tempfile.TemporaryDirectory() as tmp,patch('pipeline.reading_view',side_effect=view):
+            root=Path(tmp);client=Repairer();result=evaluate_week(self.source(),root,client)
+            self.assertEqual(1,len(result['reports']))
+            self.assertEqual(1,len(list((root/'revisions').iterdir())))
+            self.assertIn('不能同时提交评分',client.feedback['contract_error']['error'])
+            original=(root/'review.receipt.json').read_bytes();calls=client.calls
+            self.assertEqual(result,evaluate_week(self.source(),root,client))
+            self.assertEqual(calls,client.calls);self.assertEqual(original,(root/'review.receipt.json').read_bytes())
+        with tempfile.TemporaryDirectory() as tmp,patch('pipeline.reading_view',side_effect=view):
+            root=Path(tmp);client=Repairer();client.always=True
+            with self.assertRaises(Paused):evaluate_week(self.source(),root,client)
+            self.assertEqual(2,len(list((root/'revisions').iterdir())))
+            calls=client.calls
+            with self.assertRaises(Paused):evaluate_week(self.source(),root,client)
+            self.assertEqual(calls,client.calls)
+
+    def test_capacity_is_revisable_but_integrity_error_is_not(self):
+        from types import SimpleNamespace
+        from navigation_access import ReadbackCapacity
+        p=self.source();u=self.unit(p)
+        reply=dict(version=VERSION,review_policy=REVIEW_POLICY,key=u['key'],needs_events=[],
+            needs_nodes=[dict(node_id='synthetic',mode='raw')],evidence=[],period_reviews=[])
+        for failure in (ReadbackCapacity('合计超容量'),ValueError('冻结证明变化')):
+            with tempfile.TemporaryDirectory() as tmp:
+                client=ReadbackClient(reply)
+                def expand(*args):raise failure
+                access=SimpleNamespace(start=lambda unit:unit,expand=expand)
+                with self.assertRaises(ValueError) as error:complete(u,p,Path(tmp),client,received,navigation_access=access)
+                self.assertEqual(isinstance(failure,ReadbackCapacity),isinstance(error.exception,InvalidReadback))
+                self.assertEqual(1,client.calls)
 
     def test_round_limit_preserves_last_request_without_additional_call(self):
         p=self.source();u=self.unit(p);client=ReadbackClient()

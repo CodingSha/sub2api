@@ -12,14 +12,13 @@
           <span v-if="report.score !== null" class="text-sm text-gray-400">/ 100</span>
           <span v-if="report.rating" class="badge badge-success">{{ report.rating }}</span>
           <span v-else-if="report.period_type === 'month' && report.score !== null" class="text-sm text-amber-700 dark:text-amber-400">评级待定</span>
-          <HelpTooltip v-if="report.score_reason || hasDimensionObservations" class="self-center" width-class="w-80">
+          <HelpTooltip v-if="report.score_explanation || report.score_reason || hasDimensionObservations" class="self-center" width-class="w-80">
             <template #trigger="{ open, tooltipId }">
               <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded hover:bg-gray-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500" :class="scoreNeedsAttention(report) ? 'text-orange-600 dark:text-orange-400' : 'text-gray-500 dark:text-gray-400'" aria-label="查看评分说明" :aria-describedby="open ? tooltipId : undefined">
                 <Icon :name="scoreNeedsAttention(report) ? 'exclamationTriangle' : 'infoCircle'" size="sm" aria-hidden="true" />
               </button>
             </template>
-            <p v-if="hasDimensionObservations">维度观察分反映已有记录中的表现。四个维度有分数，并不代表本期已满足综合评分条件。</p>
-            <p v-if="report.score_reason" :class="{ 'mt-2': hasDimensionObservations }">{{ displayText(report.score_reason) }}</p>
+            <ScoreExplanation :report="report" />
           </HelpTooltip>
         </div>
         <p v-if="report.eligibility" class="mt-3 text-sm text-gray-500 dark:text-gray-400">{{ report.eligibility.task_count }} 个任务 · 使用 {{ report.eligibility.active_days }} 天<span v-if="report.period_type === 'month'"> · <template v-if="['1.4', '1.5', '1.6'].includes(report.policy_versions.rules)">{{ report.eligibility.valid_weeks ?? 0 }} 个有效周评</template><template v-else>覆盖 {{ report.eligibility.active_weeks }} 个自然周</template></span></p>
@@ -51,8 +50,9 @@
         </svg>
       </div>
     </div>
-    <div v-if="report.items?.length" class="pt-6">
-      <h2 class="mb-3 text-lg font-semibold">分数从哪里来</h2>
+    <EvidenceCases :report="report" :admin="reviewDetails" />
+    <details v-if="report.items?.length" class="pt-6">
+      <summary class="mb-3 cursor-pointer text-lg font-semibold">分项评分与标准</summary>
       <details v-for="item in presentedItems" :key="item.item_code" :open="item.item_code === firstItem" class="item-row border-b border-gray-200 dark:border-dark-700">
         <summary class="flex cursor-pointer items-center gap-3 py-4 focus-visible:outline-primary-500">
           <span class="item-dimension text-xs text-gray-500 dark:text-gray-400">{{ dimensionNames[item.item_code[0]] }}</span>
@@ -112,7 +112,7 @@
           </div>
         </div>
       </details>
-    </div>
+    </details>
     <details v-if="reviewDetails && report.limitations?.length" class="mt-5 text-sm">
       <summary class="detail-toggle">资料范围与限制</summary>
       <ul class="explanation-list mt-3 text-gray-600 dark:text-gray-400"><li v-for="limit in report.limitations" :key="limit">{{ displayText(limit) }}</li></ul>
@@ -147,6 +147,8 @@ import { computed, ref } from 'vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import Icon from '@/components/icons/Icon.vue'
 import WorkdayRange from './WorkdayRange.vue'
+import ScoreExplanation from './ScoreExplanation.vue'
+import EvidenceCases from './EvidenceCases.vue'
 import { stateText, type Report, type Item, type Evidence } from './api'
 import { dimensionNames, evidenceForDisplay, explanation, explanationsForDisplay, observationsForDisplay, reportText, scoreNeedsAttention, scoreStatusLabel, sourceContext, taskEvidence } from './reportPresentation'
 const props = defineProps<{ report: Report; reviewDetails?: boolean }>()

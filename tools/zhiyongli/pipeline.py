@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 
-from runtime import atomic, digest, response_text, response_value, validate_review, summarize_month, VERSION, RUBRIC, policy, moment
+from runtime import atomic, digest, response_text, response_value, validate_review, summarize_month, VERSION, RUBRIC, policy, compatible_policy, moment
 from source_frames import frames, read_signed
 from protocol_events import extract
 from task_identification import canonical, validate as validate_identified
@@ -124,7 +124,7 @@ def reading_preflight(packet,client):
     try:identification_plan({k:v for k,v in dict(packet,events=candidates).items() if k not in {'reading_notes','reading_provenance'}})
     except ValueError as ex:
         raise Paused('needs_review','单条候选输入超出当前完整归属容量；须补分段本人归属合同，本次未发送阅读请求，原文未截断') from ex
-    reading=plan(packet);pages=len(reading['pages'])
+    reading=plan(packet,include_text=False);pages=len(reading['pages'])
     # 即使摘要为空，固定来源索引也可能超过后续全局归属合同；先查确定性下界，
     # 不能先付费读完几千页，之后才发现下一阶段无论如何都无法装配。
     minimum_notes=[dict(event_id=f['event_id'],start=f['start'],end=f['end'],summary='',limitations=[],open_questions=[])
@@ -137,21 +137,37 @@ def reading_preflight(packet,client):
 
 def reading_view(packet,root,client,progress,force_hierarchical=False):
     """长来源逐页全读；保留全部候选输入、各页摘要和逐字依据，原文仍在冻结包。"""
-    from bounded_read import raw_size,read_all,plan
+    from bounded_read import raw_size,read_all
     from hierarchical_reading import supported
     hierarchical=supported(client) and (force_hierarchical or raw_size(packet)>DIRECT_BYTES
         or any(raw_size(e)>85_000 for e in packet['events'] if e['actor_class']=='candidate_user'))
     if raw_size(packet)<=DIRECT_BYTES and not hierarchical:return packet
     reading_preflight(packet,client)
-    pages=len(plan(packet)['pages'])
-    progress('reading',0,pages,'逐页读取全部已保存内容；不裁掉长对话')
-    status=read_all(packet,root/'reading',client=client,limit=pages,
-        on_page=lambda done,total:progress('reading',done,total,'阅读页已落盘并核对引文，原文完整保留'))
+    progress('reading',0,0,'计算完整来源阅读页数；不裁掉长对话')
+    status=read_all(packet,root/'reading',client=client,limit=None,
+        on_page=lambda done,total:progress('reading',done,total,'阅读页已落盘并核对引文，原文完整保留' if done else '逐页读取全部已保存内容；不裁掉长对话'))
+    pages=status['pages']
     progress('reading',len(status['received_pages']),pages,'已收到的阅读页已逐字验引文')
     if status['state']=='reading_blocked':
         if any(b['state']=='unknown' for b in status['blocked']):raise Paused('unknown','来源阅读请求结果不明；保留已完成页，不自动重发')
         raise Paused('needs_review','部分来源阅读未通过校验，已完成页保留')
     if len(status['received_pages'])!=pages:raise Paused('needs_review','来源阅读未完成，不能进入整周评审')
+    # 阅读状态中的执行版本不属于来源事实。等价升级后继续绑定本轮首次冻结
+    # 的合同，避免仅因运行版本改变而使归属补读的实际输入签名漂移。
+    stamp_root=root
+    # 自动修订复用父轮归属回执，阅读证明也须沿用同一冻结合同。
+    for _ in range(AUTO_REVISIONS):
+        revision=stamp_root/'revision.json'
+        if not revision.exists():break
+        proof=json.loads(revision.read_text())
+        if not proof.get('automatic_round'):break
+        stamp_root=Path(proof['parent_directory'])
+    stamp_path=stamp_root/'input.json'
+    if stamp_path.exists():
+        stamp=json.loads(stamp_path.read_text())
+        if stamp.get('packet_sha256')!=digest(packet) or not compatible_policy(stamp.get('policy_sha256')):
+            raise ValueError('阅读视图与本轮冻结来源或合同不符')
+        status=dict(status,policy_sha256=stamp['policy_sha256'])
     events={e['event']:e for e in packet['events']};notes=[];excerpts={}
     directory=Path(status['evidence_directory']);manifest=json.loads((directory/'plan.json').read_text())
     for index,page in enumerate(manifest['pages']):
@@ -315,9 +331,19 @@ def _evaluate_week(packet, directory, client, progress):
     if packet.get('preparation_only'):raise Paused('needs_review','日常准备材料尚未封口，只可建立阅读导航，禁止生成周分')
     stamp=dict(packet_sha256=digest(packet),policy_sha256=policy())
     path=root/'input.json'
-    if path.exists() and json.loads(path.read_text())!=stamp:
-        raise Paused('needs_review','冻结来源或评审合同发生变化，旧回执不能自动升级；需明确修订')
-    atomic(path,stamp); atomic(root/'packet.json',packet)
+    if path.exists():
+        prior=json.loads(path.read_text())
+        if prior.get('packet_sha256')!=stamp['packet_sha256'] or not compatible_policy(prior.get('policy_sha256')):
+            raise Paused('needs_review','冻结来源或评审合同发生变化，旧回执不能自动升级；需明确修订')
+        # 不改写历史合同或大包；仍核对冻结文件确实绑定当前来源。
+        from shared_weeks import file_digest
+        import hashlib
+        signature=hashlib.sha256()
+        for part in json.JSONEncoder(ensure_ascii=False,indent=2).iterencode(packet):
+            for offset in range(0,len(part),65536):signature.update(part[offset:offset+65536].encode())
+        if file_digest(root/'packet.json')!=signature.hexdigest():raise ValueError('冻结来源文件与原输入签名不符')
+    else:
+        atomic(root/'packet.json',packet);atomic(path,stamp)
     current=[e for e in packet['events'] if e['actor_class']=='candidate_user' and not e['timestamp_unknown']
         and moment(packet['since'])<=moment(e['at'])<moment(packet['until'])]
     if not current:
@@ -374,7 +400,7 @@ def identify_packet(packet,frozen_packet,root,client,progress):
 
 def review_materials(packet,unit,root,client,progress,feedback=None):
     """按完整材料签名建立模型视图，回填时仅增加冻结背景。"""
-    from context_readback import complete
+    from context_readback import complete,InvalidReadback
     from shared_weeks import reference
     from bounded_read import raw_size
     projected=raw_size(unit)>DIRECT_BYTES
@@ -390,7 +416,8 @@ def review_materials(packet,unit,root,client,progress,feedback=None):
         from context_navigation import Navigation
         from navigation_access import Access
         access=Access(Navigation(root/'context-navigation',packet),root/'navigation-access',native=native if projected else None)
-    unit,record,receipt=complete(unit,packet,root,client,received,progress,navigation_access=access,feedback=feedback)
+    try:unit,record,receipt=complete(unit,packet,root,client,received,progress,navigation_access=access,feedback=feedback)
+    except InvalidReadback as ex:contract_failure(root,'review',ex,client)
     view=unit
     if projected:
         from model_view import hydrate
@@ -571,9 +598,13 @@ def _evaluate_fragment(fragment,unit,lo,hi,target,client,progress):
     unit=month_fragment(unit,lo.isoformat(),hi.isoformat())
     target.mkdir(parents=True,exist_ok=True,mode=0o700)
     stamp=dict(packet_sha256=digest(fragment),unit_sha256=digest(unit),policy_sha256=policy())
-    if (target/'input.json').exists() and read(target/'input.json')!=stamp:
-        raise Paused('needs_review','月内片段输入或合同变化，原回执保留，须显式修订')
-    atomic(target/'input.json',stamp);atomic(target/'packet.json',fragment);atomic(target/'unit.json',unit)
+    if (target/'input.json').exists():
+        prior=read(target/'input.json')
+        if (dict(prior,policy_sha256=stamp['policy_sha256'])!=stamp
+                or not compatible_policy(prior.get('policy_sha256'))):
+            raise Paused('needs_review','月内片段输入或合同变化，原回执保留，须显式修订')
+    else:atomic(target/'input.json',stamp)
+    atomic(target/'packet.json',fragment);atomic(target/'unit.json',unit)
     if not unit['person_events']:raise Paused('needs_review','该月内片段没有本人输入，需核对空期间来源；不补造评分')
     from bounded_read import raw_size
     if raw_size(unit)>DIRECT_BYTES:

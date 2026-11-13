@@ -35,6 +35,46 @@ class Auditor(FixtureClient):
         return record(value,path)
 
 
+class AuditCapacityTests(unittest.TestCase):
+    def test_node_capacity_repairs_only_request_and_reuses_received_attempts(self):
+        from audit_readback import checked
+        from navigation_access import ReadbackCapacity
+        class Client:
+            accepts_revision_feedback=True
+            calls=0;always=False;unknown=False
+            def audit_review(self,u,r,path,feedback=None):
+                if path.exists():return json.loads(path.read_text())
+                self.calls+=1
+                if feedback and self.unknown:
+                    value=dict(status='unknown');atomic(path,value);return value
+                nodes=['one','two'] if not feedback or self.always else ['one']
+                return record(dict(items={},global_issues=[],needs_events=[],
+                    needs_nodes=[dict(node_id=k,mode='raw') for k in nodes]),path)
+        def check_request(value):
+            if len(value['needs_nodes'])>1:raise ReadbackCapacity('合成节点合计超过容量，减少节点')
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);client=Client();path=root/'audit.receipt.json'
+            result=checked({},dict(events=[]),{},path,client,received,check_request)
+            self.assertEqual(1,len(result[1]['needs_nodes']));self.assertEqual('audit.fix1.receipt.json',result[3].name)
+            self.assertEqual(2,client.calls);original=path.read_bytes()
+            checked({},dict(events=[]),{},path,client,received,check_request)
+            self.assertEqual(2,client.calls);self.assertEqual(original,path.read_bytes())
+            proof=json.loads((root/'audit.request.contract-error.json').read_text())
+            self.assertTrue(proof['feedback']['readback_request'])
+        for unknown in (False,True):
+            with tempfile.TemporaryDirectory() as tmp:
+                client=Client();client.always=True;client.unknown=unknown
+                with self.assertRaises(Paused if unknown else ValueError):
+                    checked({},dict(events=[]),{},Path(tmp)/'audit.receipt.json',client,received,check_request)
+                self.assertEqual(2 if unknown else 3,client.calls)
+        with tempfile.TemporaryDirectory() as tmp:
+            client=Client()
+            def integrity(value):raise ValueError('访问证明签名变化')
+            with self.assertRaisesRegex(ValueError,'访问证明签名变化'):
+                checked({},dict(events=[]),{},Path(tmp)/'audit.receipt.json',client,received,integrity)
+            self.assertEqual(1,client.calls)
+
+
 def source():
     p=packet('2026-09-07T00:00:00+08:00','2026-09-14T00:00:00+08:00')
     p['events'].append(dict(event='missing-context',text='合成工具失败与尚未修复的反证，不可由正面概括覆盖。',

@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import time
 
-from runtime import atomic,digest,policy,response_value,validate_review,RUBRIC
+from runtime import atomic,digest,policy,compatible_policy,response_value,validate_review,RUBRIC
 from semantic_audit import validate as validate_audit
 from shared_weeks import reference,read_ref,source_identity
 from request_retry import read_receipt
@@ -27,7 +27,7 @@ def selected(base, *, allow_historical=False):
     stamp=proof.get('policy_sha256')
     if (directory.parent!=base.resolve()/'revisions' or not isinstance(stamp,str) or len(stamp)!=64
         or any(c not in '0123456789abcdef' for c in stamp)
-        or not allow_historical and stamp!=policy()):
+        or not allow_historical and stamp!=policy() and not compatible_policy(stamp)):
         raise ValueError('当前修订目录或实际合同不符')
     if allow_historical and (directory/'input.json').exists():
         if json.loads((directory/'input.json').read_text()).get('policy_sha256')!=stamp:
@@ -41,7 +41,8 @@ def is_revision(directory,parent,packet):
     if not path.exists():return False
     proof=json.loads(path.read_text())
     if (proof.get('parent_directory')!=str(Path(parent).resolve()) or proof.get('source_identity')!=source_identity(packet)
-        or proof.get('policy_sha256')!=policy() or not proof.get('reviewer') or not proof.get('reason')):return False
+        or (proof.get('policy_sha256')!=policy() and not compatible_policy(proof.get('policy_sha256')))
+        or not proof.get('reviewer') or not proof.get('reason')):return False
     verify_files(proof['parent_files'])
     return True
 
@@ -114,7 +115,9 @@ def resolution(root,unit):
 
 
 def validate_resolution(root,unit,proof,proof_ref):
-    if proof.get('parent')!=parent_proof(root,unit):raise ValueError('处置未绑定当前实际输入、模型候选或复查回执')
+    actual=parent_proof(root,unit);parent=proof.get('parent',{})
+    if not compatible_policy(parent.get('policy_sha256')) or dict(parent,policy_sha256=actual['policy_sha256'])!=actual:
+        raise ValueError('处置未绑定当前实际输入、模型候选或复查回执')
     if proof.get('reviewer_kind') not in {'human','codex'} or not proof.get('reviewer') or not proof.get('reason'):
         raise ValueError('处置须明确核对者、方式和理由；Codex自检不得称真人独立复核')
     read_ref(proof['parent']['model_receipt'])

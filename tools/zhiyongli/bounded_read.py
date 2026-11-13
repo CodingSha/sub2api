@@ -5,12 +5,13 @@ import copy
 from contextlib import nullcontext
 from datetime import timedelta,timezone
 import fcntl
+import hashlib
 import json
 from pathlib import Path
 
 from model_config import response_text,ModelError
 from review_schema import obj, array
-from runtime import atomic, digest, policy, moment, CompanyClient
+from runtime import atomic, digest, json_bytes, policy, moment, CompanyClient
 
 VERSION = 'bounded-source-reading-20261110.6'
 PAGE_BYTES = 90_000
@@ -27,17 +28,16 @@ INSTRUCTIONS += '\n先读完本页再写各槽位；按同一来源的非空requ
 
 
 def raw_size(value):
-    return len(json.dumps(value, ensure_ascii=False, separators=(',', ':')).encode())
+    return sum(map(len,json_bytes(value,sort_keys=False)))
 
 
-def fragments(packet, max_bytes=PAGE_BYTES):
+def iter_fragments(packet, max_bytes=PAGE_BYTES):
     """用字符偏移切分UTF-8文本，保留每个字和来源事件；不把切口当任务。"""
     if type(max_bytes) is not int or max_bytes < 4096:
         raise ValueError('阅读页字节预算至少4096')
     ids = [e['event'] for e in packet['events']]
     if len(ids) != len(set(ids)):
         raise ValueError('来源事件ID重复')
-    result = []
     for event in packet['events']:
         text = event['text']; start = 0
         source_sha = digest(event)
@@ -53,29 +53,70 @@ def fragments(packet, max_bytes=PAGE_BYTES):
                     'at','actor_class','timestamp_unknown','timestamp_basis','session_id','request_id','protocol_role','content_kind','truncated','field','audit_row_id') if k in event})
             if raw_size(value) > max_bytes:
                 raise ValueError('单片段元数据超过预算；不能裁掉引用标识')
-            result.append(value)
+            yield value
             if stop == len(text): break
             start = stop
-    return result
 
 
-def plan(packet, max_bytes=PAGE_BYTES):
+def fragments(packet, max_bytes=PAGE_BYTES):
+    return list(iter_fragments(packet,max_bytes))
+
+
+def plan(packet, max_bytes=PAGE_BYTES, *, include_text=True):
     pages = []; current = []; previous_day = None
-    for fragment in fragments(packet, max_bytes):
+    def page(values):
+        return dict(fragments=values if include_text else [{k:v for k,v in f.items() if k!='text'} for f in values])
+    for fragment in iter_fragments(packet, max_bytes):
         # 来源时刻仅用于稳定执行分页；不补造历史时间，也不改变事件先后、目标或计分范围。
         day = moment(fragment['at']).astimezone(timezone(timedelta(hours=8))).date() if fragment.get('at') is not None else None
         if current and (day != previous_day or len(current) >= PAGE_FRAGMENTS or raw_size(dict(fragments=current+[fragment])) > max_bytes
                 or request_size(dict(fragments=current+[fragment]))>REQUEST_BYTES):
-            pages.append(dict(fragments=current));current=[]
+            pages.append(page(current));current=[]
         if raw_size(dict(fragments=[fragment])) > max_bytes:
             raise ValueError('片段包装超过阅读预算')
         if request_size(dict(fragments=[fragment]))>REQUEST_BYTES:
             raise ValueError('单个完整阅读片段的实际请求结构超容量，发送前暂停，不裁掉原文')
         current.append(fragment);previous_day = day
-    if current: pages.append(dict(fragments=current))
+    if current: pages.append(page(current))
     return dict(version=VERSION, packet_sha256=digest(packet), page_bytes=max_bytes, pages=pages,
                 source_issues=copy.deepcopy(packet.get('issues', [])),
                 coverage_scope='全部已保存文字；不证明原对话未截断或没有缺失')
+
+
+def source_page(page, events):
+    """仅还原当前页；原事件、偏移、字段及请求顺序与完整计划相同。"""
+    return dict(fragments=[dict(f,text=events[f['event_id']]['text'][f['start']:f['end']]) for f in page['fragments']])
+
+
+def object_bytes(value, array_key, values):
+    """流式写出一个已知数组字段，其余JSON规则与digest一致。"""
+    yield b'{'
+    for index,key in enumerate(sorted(value)):
+        if index:yield b','
+        yield from json_bytes(key)
+        yield b':'
+        if key!=array_key:
+            yield from json_bytes(value[key]);continue
+        yield b'['
+        for offset,item in enumerate(values):
+            if offset:yield b','
+            yield from json_bytes(item)
+        yield b']'
+    yield b'}'
+
+
+def reading_identity(reading, events):
+    """使用原合同和原完整计划字节计算目录，不因索引化更换检查点地址。"""
+    contract=hashlib.sha256()
+    for chunk in object_bytes(dict(instructions=INSTRUCTIONS,schemas=None),'schemas',
+            (schema(source_page(p,events)) for p in reading['pages'])):contract.update(chunk)
+    signature=hashlib.sha256()
+    signature.update(b'{"contract":')
+    for chunk in json_bytes(contract.hexdigest()):signature.update(chunk)
+    signature.update(b',"plan":')
+    for chunk in object_bytes(reading,'pages',(source_page(p,events) for p in reading['pages'])):signature.update(chunk)
+    signature.update(b'}')
+    return signature.hexdigest()
 
 
 def anchors(fragment):
@@ -187,8 +228,17 @@ def read_checked_page(page, receipt, client, cache):
         try:
             text=response_text(record['response'])
         except ModelError as ex:
-            # 未完整生成的输出保留原故障，不以格式修复掩盖截断或拒绝。
-            raise InvalidReading(str(ex)) from None
+            response=record.get('response') or {}
+            truncated=(response.get('status')=='incomplete' and
+                (response.get('incomplete_details') or {}).get('reason')=='max_output_tokens')
+            # 已收到明确的截断终态，可按原有次数上限修正输出；未知发送、
+            # 拒绝及其他未完成原因仍阻断，原响应不覆盖、不记作成功页。
+            if not truncated or attempt>=CONTRACT_RETRIES or not getattr(client,'accepts_revision_feedback',False):
+                raise InvalidReading(str(ex)) from None
+            feedback=dict(attempt=attempt+1,error='输出达到长度上限仍未完成。保留全部片段槽位；summary、fact、limitations和open_questions保持简短，逐字依据使用anchor_id，不复制整段原文。',
+                previous_response_sha256=digest(record))
+            checkpoint(path.with_name(path.name.replace('.receipt.json','.contract-error.json')),feedback)
+            continue
         try:
             value=checked(page,json.loads(text))
             return actual,record,value
@@ -217,8 +267,11 @@ def read_all(packet, directory, *, client=None, max_bytes=PAGE_BYTES, limit=1,on
 
 def _read_all(packet, directory, *, client=None, max_bytes=PAGE_BYTES, limit=1,on_page=None):
     """每轮最多读limit页；已收回执按原输入重验，unknown不再发送。"""
-    if type(limit) is not int or limit < 1: raise ValueError('单轮阅读数量须为正整数')
-    reading = plan(packet, max_bytes)
+    if limit is not None and (type(limit) is not int or limit < 1): raise ValueError('单轮阅读数量须为正整数')
+    reading = plan(packet,max_bytes,include_text=False)
+    if limit is None:limit=max(1,len(reading['pages']))
+    if on_page:on_page(0,len(reading['pages']))
+    events={e['event']:e for e in packet['events']}
     # 目录按实际阅读合同寻址；无关评分代码变更不能触发重复阅读。
     base=Path(directory)
     cache=None
@@ -226,26 +279,22 @@ def _read_all(packet, directory, *, client=None, max_bytes=PAGE_BYTES, limit=1,o
         from reading_cache import ReadingCache
         cache=ReadingCache(client.reading_cache_root,
             dict(user_id=packet.get('user_id'),user_email=packet.get('user_email')),client)
-    contract=digest(dict(instructions=INSTRUCTIONS,schemas=[schema(page) for page in reading['pages']]))
     for prior in base.glob('*/plan.json'):
-        saved=json.loads(prior.read_text())
         from request_retry import blocking_status
         for receipt in prior.parent.glob('*.receipt.json'):
             if blocking_status(receipt) in {'requesting','unknown'}:
-                return dict(state='reading_blocked',blocked=[dict(state='unknown',receipt=str(receipt))],
+                return dict(state='reading_blocked',pages=len(reading['pages']),received_pages=[],blocked=[dict(state='unknown',receipt=str(receipt))],
                     semantic_acceptance=False,reason='同来源旧请求结果不明，变更阅读合同也不能重新发送')
-    root = base/digest(dict(plan=reading,contract=contract))
+    root = base/reading_identity(reading,events)
     root.mkdir(parents=True,exist_ok=True,mode=0o700)
     with (root/'reader.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        manifest=copy.deepcopy(reading)
-        for page in manifest['pages']:
-            for fragment in page['fragments']: fragment.pop('text')
-        checkpoint(root/'plan.json',manifest)
+        checkpoint(root/'plan.json',reading)
         done=[];handled=0;blocked=[]
-        for index, page in enumerate(reading['pages']):
+        for index, page_index in enumerate(reading['pages']):
             receipt = root/(str(index)+'.receipt.json')
             if not receipt.exists() and (client is None or handled >= limit): continue
+            page=source_page(page_index,events)
             if client is not None:
                 before=client.budget.used() if hasattr(client,'budget') else None
                 is_new=not receipt.exists()

@@ -117,6 +117,28 @@ export function taskEvidence(item: Item) {
   }))
 }
 
+// 按真实来源及引文合并展示，标题只作标签，不能把同名材料认作同一任务。
+export function evidenceCases(report: Pick<Report, 'items'>, admin = false) {
+  const cases = new Map<string, { key: string; record: Evidence; assessments: { items: string[]; fact: string }[] }>()
+  const display = reportText(report)
+  for (const item of report.items ?? []) {
+    const records = admin ? item.evidence ?? [] : evidenceForDisplay(item)
+    for (const record of records) {
+      const related = (item.evidence ?? []).filter(e => e.supports === record.supports)
+      if (!admin && !canDisplayAnalysis(item, related)) continue
+      const key = JSON.stringify([record.source_ref, record.source_hash, record.quote])
+      const entry = cases.get(key) ?? { key, record, assessments: [] }
+      const fact = display(record.supports)
+      const assessment = entry.assessments.find(a => a.fact === fact)
+      if (assessment) {
+        if (!assessment.items.includes(item.name)) assessment.items.push(item.name)
+      } else if (fact.trim()) entry.assessments.push({ items: [item.name], fact })
+      cases.set(key, entry)
+    }
+  }
+  return [...cases.values()].sort((a, b) => a.record.occurred_at.localeCompare(b.record.occurred_at))
+}
+
 // 这些是导出时添加的包装标签；引文与来源片段原样保留，不对用户原话做编号替换。
 export function sourceContext(evidence: Evidence) {
   const marker = '\n来源原文片段：\n'

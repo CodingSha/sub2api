@@ -76,8 +76,18 @@ contract_error非空时，上一轮输出没有通过程序的确定性校验，
 '''
 
 
+def json_bytes(value, *, sort_keys=True):
+    """保持原JSON字节合同，分块编码，避免整包字符串和字节副本同时驻留。"""
+    encoder=json.JSONEncoder(ensure_ascii=False,sort_keys=sort_keys,separators=(',', ':'))
+    for part in encoder.iterencode(value):
+        for start in range(0,len(part),65536):
+            yield part[start:start+65536].encode()
+
+
 def digest(value):
-    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    result=hashlib.sha256()
+    for chunk in json_bytes(value):result.update(chunk)
+    return result.hexdigest()
 
 
 def atomic(path, value):
@@ -97,7 +107,7 @@ def load_ref(ref):
     return json.loads(raw)
 
 
-def policy():
+def policy_files():
     # 包含实际校验器和执行器，防止同版本号代码漂移仍复用结果。
     base=ROOT/'research/ai-usage-assessment/scoring_pipeline'
     paths=[Path(__file__),base.parent/'score-levels-g2.json',base/'weekly_performance/review022.py',base/'weekly_performance/task_context.py',
@@ -112,7 +122,33 @@ def policy():
         'context_navigation.py','context_readback.py','goal_reconciliation.py','navigation_access.py','candidate_segments.py','audit_readback.py','model_view.py',
         'hierarchical_reading.py','identification_readback.py','month_readback.py','personal_scope.py')]
     paths.append(ROOT/'backend/internal/zhiyongli/workday-registry.json')
-    return digest({str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in paths})
+    return {str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
+
+
+def policy():
+    return digest(policy_files())
+
+
+def compatible_policy(stamp):
+    """只允许固定升级清单证明的执行等价版本；评分、原文和回执仍逐项验签。"""
+    current=policy_files()
+    if stamp==digest(current):return True
+    manifest=Path(__file__).with_name('execution-upgrade-20261113.json')
+    if not manifest.exists():return False
+    proof=json.loads(manifest.read_text())
+    if (proof.get('version')!=1 or not proof.get('reason')
+            or proof.get('current_policy_sha256')!=digest(current)):return False
+    # 多次执行等价升级仍逐一固定完整文件清单，不递归信任历史manifest。
+    previous_versions=proof.get('previous_versions',[])
+    if not isinstance(previous_versions,list) or len(previous_versions)>2:return False
+    matches=[files for files in [proof.get('previous_files',{})]+previous_versions
+        if isinstance(files,dict) and set(files)==set(current) and digest(files)==stamp]
+    if len(matches)!=1:return False
+    previous=matches[0]
+    allowed={'runtime.py','pipeline.py','bounded_read.py','source_frames.py','reading_cache.py',
+             'review_control.py','shared_weeks.py','request_retry.py','context_readback.py','navigation_access.py','audit_readback.py'}
+    changed={p for p in current if current[p]!=previous[p]}
+    return bool(changed) and all(p.startswith('tools/zhiyongli/') and p.split('/')[-1] in allowed for p in changed)
 
 
 class Queue:
@@ -310,6 +346,8 @@ class CompanyClient:
         if feedback is not None:
             transport['contract_feedback']=feedback
             audit_instructions+='\ncontract_feedback表示同一冻结候选的复查输出未通过确定性校验。只修复error指出的输出合同问题，previous_audit是待修复原输出，不是来源证据。保留其中已有的各项verdict、own_state、person_act、reason、problem_codes和global_issues，只修正无效引用或补齐缺失字段；不得重新评分、删除异议或改为支持来绕过校验。返回完整复查。'
+            if feedback.get('readback_request'):
+                audit_instructions+='\nreadback_request=true表示此前仅提出了超容量补读请求，尚未形成逐项结论。根据error和当前remaining_bytes减少本轮请求节点，仍只返回合法的补读请求，不提交评分或复查结论；必要原文未读时不能假称已核查。'
         payload=dict(model=self.config.model,instructions=audit_instructions,
             input=json.dumps(transport,ensure_ascii=False,separators=(',',':')),
             stream=True,store=False,max_output_tokens=24000,

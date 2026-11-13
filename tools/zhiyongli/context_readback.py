@@ -13,6 +13,10 @@ MAX_NODE_ROUNDS = 24
 UNIT_BYTES = 120_000
 
 
+class InvalidReadback(ValueError):
+    """已收到的补读请求违反合同，可由既有有界修订处理，原回执保留。"""
+
+
 def expand(unit, packet, requested):
     if (not isinstance(requested, list) or not requested or len(requested) > MAX_EVENTS
             or any(not isinstance(e, str) for e in requested) or len(set(requested)) != len(requested)):
@@ -66,7 +70,7 @@ def complete(unit, packet, directory, client, receive, progress=lambda *args: No
         if not requested and not nodes:
             return current, record, receipt
         if value.get('evidence') or value.get('period_reviews'):
-            raise ValueError('补读请求不能同时提交评分；原回执保留，禁止部分评分冒充已完成')
+            raise InvalidReadback('补读请求不能同时提交评分；原回执保留，禁止部分评分冒充已完成')
         fields={'version','review_policy','key','evidence','period_reviews','needs_events'}
         if navigation_access is not None:fields.add('needs_nodes')
         if (set(value) != fields
@@ -77,7 +81,10 @@ def complete(unit, packet, directory, client, receive, progress=lambda *args: No
         if nodes:
             if navigation_access is None:raise ValueError('当前未提供分层导航，不接受节点补读')
             if node_rounds>=MAX_NODE_ROUNDS:raise ValueError('分层补读达到本轮执行上限，保留原回执待核')
-            next_unit=navigation_access.expand(current,nodes,str(index+1));node_rounds+=1
+            from navigation_access import ReadbackCapacity
+            try:next_unit=navigation_access.expand(current,nodes,str(index+1))
+            except ReadbackCapacity as ex:raise InvalidReadback(str(ex)) from None
+            node_rounds+=1
         else:
             if event_rounds>=MAX_ROUNDS:raise ValueError('补读达到本轮执行上限，保留全部回执待核，不无限追加模型请求')
             next_unit=expand(current,packet,requested);event_rounds+=1

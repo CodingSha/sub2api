@@ -128,12 +128,13 @@ type Bundle struct {
 }
 type Report struct {
 	Result
-	ID                int64      `json:"id"`
-	UserID            int64      `json:"user_id"`
-	Revision          int        `json:"revision"`
-	PublicationStatus string     `json:"publication_status"`
-	PublishedAt       *time.Time `json:"published_at"`
-	CreatedAt         time.Time  `json:"created_at"`
+	ScoreExplanation  *ScoreExplanation `json:"score_explanation,omitempty"`
+	ID                int64             `json:"id"`
+	UserID            int64             `json:"user_id"`
+	Revision          int               `json:"revision"`
+	PublicationStatus string            `json:"publication_status"`
+	PublishedAt       *time.Time        `json:"published_at"`
+	CreatedAt         time.Time         `json:"created_at"`
 }
 type Run struct {
 	ID          int64     `json:"id"`
@@ -143,9 +144,9 @@ type Run struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 type Filter struct {
-	UserID                     int64
-	PeriodType, Status, Search string
-	Page, PageSize             int
+	UserID                                  int64
+	PeriodType, PeriodStart, Status, Search string
+	Page, PageSize                          int
 }
 
 var itemNames = map[string]string{"P1": "目标清楚", "P2": "信息充分", "P3": "要求约束", "M1": "方法分工", "M2": "依赖推进", "M3": "调整执行", "J1": "判断依据", "J2": "核验安排", "J3": "结果处理", "E1": "交互组织", "E2": "失效止损", "E3": "复用自动化"}

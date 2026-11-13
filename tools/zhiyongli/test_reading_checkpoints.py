@@ -45,7 +45,7 @@ class CheckpointTests(unittest.TestCase):
         self.assertEqual('invalid_reading',result['blocked'][0]['state'])
         self.assertEqual(before,path.read_bytes());self.assertEqual(sent,self.calls)
 
-    def test_incomplete_model_output_blocks_reading_and_is_not_resent_on_resume(self):
+    def test_truncated_output_stops_after_bounded_repairs_and_resume_never_resends(self):
         response=dict(status='incomplete',incomplete_details=dict(reason='max_output_tokens'),
             output=[dict(content=[dict(type='output_text',text='不完整的评审输出')])])
         wire=('data: '+json.dumps(dict(type='response.incomplete',response=response))+'\n\n').encode()
@@ -60,8 +60,8 @@ class CheckpointTests(unittest.TestCase):
         self.assertEqual('invalid_reading',first['blocked'][0]['state'])
         self.assertEqual([],first['received_pages'])
         self.assertEqual(first,second)
-        self.assertEqual(1,opener.open.call_count)
-        self.assertEqual(1,client.budget.used())
+        self.assertEqual(3,opener.open.call_count)
+        self.assertEqual(3,client.budget.used())
         self.assertEqual(original,{str(p):p.read_bytes() for p in self.root.rglob('*.receipt.json')})
 
     def test_nonempty_fragment_repairs_are_bounded_and_not_resent_on_resume(self):

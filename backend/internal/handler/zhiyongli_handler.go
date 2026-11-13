@@ -32,7 +32,7 @@ func zhiyongliError(c *gin.Context, e error) {
 	case errors.Is(e, zhiyongli.ErrConflict):
 		response.Error(c, http.StatusConflict, e.Error())
 	case errors.As(e, &bad):
-		response.BadRequest(c, bad.Error())
+		response.BadRequest(c, e.Error())
 	default:
 		response.ErrorFrom(c, e)
 	}
@@ -59,7 +59,14 @@ func (h *ZhiyongliHandler) list(c *gin.Context, owner int64) {
 	if !ok {
 		return
 	}
-	f := zhiyongli.Filter{UserID: owner, Page: p, PageSize: n, PeriodType: c.Query("period_type"), Status: c.Query("publication_status"), Search: c.Query("search")}
+	f := zhiyongli.Filter{UserID: owner, Page: p, PageSize: n, PeriodType: c.Query("period_type"), PeriodStart: c.Query("period_start"), Status: c.Query("publication_status"), Search: c.Query("search")}
+	if f.PeriodStart != "" {
+		start, err := time.Parse("2006-01-02", f.PeriodStart)
+		if err != nil || start.Format("2006-01-02") != f.PeriodStart {
+			response.BadRequest(c, "周期开始日期无效")
+			return
+		}
+	}
 	if f.PeriodType != "" && f.PeriodType != "week" && f.PeriodType != "month" || f.Status != "" && f.Status != "draft" && f.Status != "published" && f.Status != "superseded" || len(f.Search) > 200 {
 		response.BadRequest(c, "筛选参数无效")
 		return
@@ -163,6 +170,28 @@ func (h *ZhiyongliHandler) Runs(c *gin.Context) {
 	response.Paginated(c, items, total, p, n)
 }
 
+func (h *ZhiyongliHandler) BatchPublish(c *gin.Context) {
+	actor, ok := middleware.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "请先登录")
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16384)
+	d := json.NewDecoder(c.Request.Body)
+	d.DisallowUnknownFields()
+	var input zhiyongli.BatchPublishInput
+	if d.Decode(&input) != nil || d.Decode(new(any)) != io.EOF {
+		response.BadRequest(c, "批量发布参数格式无效")
+		return
+	}
+	result, err := h.store.BatchPublish(c.Request.Context(), input, actor.UserID)
+	if err != nil {
+		zhiyongliError(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
 func (h *ZhiyongliHandler) StartJobs(c *gin.Context) {
 	actor, ok := middleware.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -213,7 +242,12 @@ func (h *ZhiyongliHandler) Jobs(c *gin.Context) {
 	if !ok {
 		return
 	}
-	jobs, total, e := h.store.Jobs(c.Request.Context(), p, n)
+	filter := zhiyongli.JobFilter{State: c.Query("state"), Search: c.Query("search")}
+	if e := filter.Validate(); e != nil {
+		zhiyongliError(c, e)
+		return
+	}
+	jobs, total, e := h.store.Jobs(c.Request.Context(), p, n, filter)
 	if e != nil {
 		zhiyongliError(c, e)
 		return

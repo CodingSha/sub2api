@@ -94,6 +94,19 @@ class ReadingCacheTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'签名变化'):self.read(self.packet(),first)
         self.assertEqual(1,self.calls)
 
+    def test_crashed_requesting_without_seal_blocks_as_unknown_instead_of_signature_failure(self):
+        first=self.client('a');page=plan(self.packet())['pages'][0]
+        cache=ReadingCache(first.reading_cache_root,dict(user_id='1',user_email='synthetic@example.test'),first)
+        source=cache.root/digest(page)
+        key=digest(dict(endpoint=first.config.responses_url,payload=first.reading_payload(page)))
+        receipt=source/(key+'.receipt.json')
+        atomic(receipt,dict(status='requesting',request_sha256=key))
+        with self.assertRaises(Paused) as error:
+            with cache.page(page):self.fail('不得越过原发送意图')
+        self.assertEqual('unknown',error.exception.state)
+        self.assertFalse(receipt.with_name(key+'.seal.json').exists())
+        self.assertEqual(0,self.calls)
+
     def test_failed_preflight_does_not_consume_budget_and_missing_receipt_does(self):
         client=self.client('a')
         with self.assertRaisesRegex(ValueError,'上下文预算'):

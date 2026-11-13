@@ -93,14 +93,16 @@ class RetryTests(unittest.TestCase):
         self.assertEqual('unknown',self.client('c')._call(self.payload,self.receipt)['status'])
         self.assertEqual(3,self.sends);self.assertEqual('unknown',blocking_status(self.receipt))
 
-    def test_orphaned_requesting_receipt_resends_in_place_only_when_configured(self):
+    def test_orphaned_requesting_receipt_never_resends_even_with_transport_retries(self):
+        from request_retry import blocking_status
         self.errors=[]
         atomic(self.receipt,dict(request_sha256=digest(dict(endpoint=self.config.responses_url,payload=self.payload)),
             status='requesting',sent_at=self.now,response_id=None))
         self.assertEqual(('requesting',0),(self.client()._call(self.payload,self.receipt)['status'],self.sends))
         self.interrupted_flow()
-        self.assertEqual(('received',1),(self.client('b')._call(self.payload,self.receipt)['status'],self.sends))
-        self.assertEqual('requesting',json.loads(attempt_path(self.receipt,0).read_text())['status'])
+        self.assertEqual(('requesting',0),(self.client('b')._call(self.payload,self.receipt)['status'],self.sends))
+        self.assertEqual('requesting',blocking_status(self.receipt))
+        self.assertFalse(attempt_path(self.receipt,0).exists())
 
     def test_budget_refusal_keeps_pending_but_can_resume_without_new_send_intent(self):
         first=self.start(self.client(limit=1));self.now+=181

@@ -7,6 +7,7 @@ COPY tools/zhiyongli/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt && useradd --uid 1000 --create-home reviewer
 COPY tools/zhiyongli/*.py /app/tools/zhiyongli/
 COPY tools/zhiyongli/dsh_source.cjs /app/tools/zhiyongli/
+COPY tools/zhiyongli/execution-upgrade-20261113.json /app/tools/zhiyongli/
 COPY research/ai-usage-assessment/scoring_pipeline /app/research/ai-usage-assessment/scoring_pipeline
 COPY research/ai-usage-assessment/score-levels-g2.json /app/research/ai-usage-assessment/score-levels-g2.json
 COPY backend/internal/zhiyongli/workday-registry.json /app/backend/internal/zhiyongli/workday-registry.json

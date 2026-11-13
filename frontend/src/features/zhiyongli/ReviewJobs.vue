@@ -1,17 +1,23 @@
 <template>
   <div class="space-y-4">
-    <div class="flex items-center justify-between text-sm">
-      <span class="text-gray-500 dark:text-gray-400">{{ total }} 项评审</span>
+    <div class="flex flex-wrap items-center gap-3 text-sm">
+      <Select v-model="state" :options="stateOptions" class="w-40" aria-label="筛选评审状态" @change="resetList" />
+      <form class="flex gap-2" @submit.prevent="applySearch">
+        <input v-model="searchInput" class="input w-64" placeholder="账户邮箱" aria-label="搜索评审账户" />
+        <button class="btn btn-secondary">查询</button>
+      </form>
+      <span class="ml-auto text-gray-500 dark:text-gray-400">{{ total }} 项评审</span>
       <button class="btn btn-secondary" :disabled="loading" @click="load()">刷新</button>
     </div>
     <p v-if="error" role="alert" class="text-sm text-red-600">{{ error }}</p>
-    <DataTable :columns="columns" :data="jobs" :loading="loading">
+    <DataTable class="review-jobs-table" :columns="columns" :data="jobs" :loading="loading">
+      <template #cell-user_email="{value}"><span class="block whitespace-normal break-all">{{ value }}</span></template>
       <template #cell-period_start="{row}">
         <span class="tabular-nums">{{ row.period_start }} · {{ row.period_type === 'week' ? '周' : '月' }} · {{ row.rules_version }}</span>
-        <WorkdayRange v-if="row.workday_scope" :scope="row.workday_scope" class="mt-1 w-56" />
+        <WorkdayRange v-if="row.workday_scope" :scope="row.workday_scope" class="mt-1" />
         <span v-else class="block text-xs text-gray-500">{{ row.period_type === 'week' ? '历史自然周范围' : '历史自然月范围' }}</span>
       </template>
-      <template #cell-state="{row}"><span class="badge" :class="row.state === 'completed' ? 'badge-success' : 'badge-gray'">{{ states[row.state as ReviewJob['state']] }}</span></template>
+      <template #cell-state="{row}"><span class="badge relative overflow-hidden" :class="[stateClass(row), {'review-active': row.active}]" :aria-busy="row.active"><span class="relative z-10">{{ row.state === 'running' && !row.active ? '等待续评' : states[row.state as ReviewJob['state']] }}</span></span></template>
       <template #cell-phase="{row}">
         <div class="text-sm">{{ phases[row.phase] || row.phase }}<span v-if="row.total_units > 0" class="ml-2 tabular-nums text-gray-500">{{ row.completed_units }}/{{ row.total_units }}</span></div>
         <div v-if="row.message" class="max-w-xs whitespace-normal text-xs leading-5 text-gray-500 dark:text-gray-400">{{ row.message }}</div>
@@ -68,14 +74,20 @@ const props = defineProps<{startOpen:boolean}>()
 const emit = defineEmits<{close:[];reports:[email:string]}>()
 const app=useAppStore()
 const jobs=ref<ReviewJob[]>([]),page=ref(1),total=ref(0),loading=ref(false),error=ref(''),resuming=ref<number|null>(null)
+const state=ref(''),searchInput=ref(''),search=ref('')
 const kind=ref<'week'|'month'>('week'),startDate=ref(''),starting=ref(false),startError=ref('')
 const users=ref<{id:number;email:string}[]>([]),selected=ref<{id:number;email:string}[]>([]),userSearch=ref(''),userTotal=ref(0),finding=ref(false)
 const periods=[{value:'week',label:'周评分'},{value:'month',label:'月评分'}]
 const states:Record<ReviewJob['state'],string>={queued:'等待执行',running:'评审中',needs_review:'待复核',unknown:'请求结果不明',failed:'执行失败',completed:'候选已生成',no_activity:'本期无记录'}
+const stateOptions=[{value:'',label:'全部状态'},...Object.entries(states).map(([value,label])=>({value,label:value==='running'?'执行及待续评':label}))]
+const stateClasses:Record<ReviewJob['state'],string>={queued:'bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200',running:'bg-teal-100 text-teal-800 dark:bg-teal-900/50 dark:text-teal-200',needs_review:'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200',unknown:'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-200',failed:'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200',completed:'badge-success',no_activity:'badge-gray'}
+const stateClass=(job:ReviewJob)=>job.state==='running'&&!job.active?'badge-gray':stateClasses[job.state]
 const phases:Record<string,string>={collecting:'采集来源',reading:'阅读来源',identifying:'识别目标',reviewing:'分项评审',checking:'核对依据',importing:'接入候选',done:'已完成',paused:'已暂停'}
-const columns=[{key:'user_email',label:'成员'},{key:'period_start',label:'周期 / 规则'},{key:'state',label:'状态'},{key:'phase',label:'进度与问题'},{key:'updated_at',label:'最近更新'},{key:'actions',label:'操作'}]
+const columns=[{key:'user_email',label:'成员',class:'w-48'},{key:'period_start',label:'周期 / 规则',class:'w-[34%]'},{key:'state',label:'状态',class:'w-32 whitespace-nowrap'},{key:'phase',label:'进度与问题'},{key:'updated_at',label:'最近更新',class:'w-40'},{key:'actions',label:'操作',class:'w-24 whitespace-nowrap'}]
 let request=0,findRequest=0,alive=true,timer:ReturnType<typeof setTimeout>|undefined
-async function load(silent=false){const current=++request;if(!silent)loading.value=true;try{const value=await listJobs(page.value);if(alive&&current===request){jobs.value=value.items;total.value=value.total;error.value=''}}catch(e){if(alive&&current===request)error.value=(e as Error).message}finally{if(current===request)loading.value=false}}
+async function load(silent=false){const current=++request;if(!silent)loading.value=true;try{const value=await listJobs(page.value,{state:state.value,search:search.value});if(alive&&current===request){jobs.value=value.items;total.value=value.total;error.value=''}}catch(e){if(alive&&current===request)error.value=(e as Error).message}finally{if(current===request)loading.value=false}}
+function resetList(){page.value=1;void load()}
+function applySearch(){search.value=searchInput.value.trim();resetList()}
 async function poll(){await load(true);if(alive)timer=setTimeout(poll,5000)}
 function changePage(delta:number){page.value+=delta;void load()}
 async function findUsers(){const current=++findRequest;finding.value=true;try{const result=await listUsers(1,20,{search:userSearch.value});if(alive&&current===findRequest){users.value=result.items;userTotal.value=result.total}}catch(e){if(alive&&current===findRequest)startError.value=(e as Error).message}finally{if(current===findRequest)finding.value=false}}
@@ -98,3 +110,9 @@ watch(()=>props.startOpen&&kind.value==='month',need=>{if(need)void findUsers()}
 onMounted(()=>{void poll()})
 onUnmounted(()=>{alive=false;request++;findRequest++;if(timer)clearTimeout(timer)})
 </script>
+<style scoped>
+.review-jobs-table :deep(table){table-layout:fixed;min-width:1120px}
+.review-active::after{content:'';position:absolute;inset:0;background:linear-gradient(100deg,transparent 20%,rgb(20 184 166 / .28) 50%,transparent 80%);transform:translateX(-100%);animation:review-sweep 2.4s linear infinite;pointer-events:none}
+@keyframes review-sweep{to{transform:translateX(100%)}}
+@media(prefers-reduced-motion:reduce){.review-active::after{animation:none;transform:none;background:rgb(20 184 166 / .12)}}
+</style>

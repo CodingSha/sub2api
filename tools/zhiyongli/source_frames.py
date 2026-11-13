@@ -8,10 +8,13 @@ def read_signed(root, ref):
     path = (root / ref['path']).resolve()
     if not path.is_relative_to(root.resolve()):
         raise ValueError('来源路径越界')
-    raw = path.read_bytes()
-    if hashlib.sha256(raw).hexdigest() != ref['sha256']:
-        raise ValueError('来源签名变化')
-    return json.loads(raw)
+    with path.open('rb') as stream:
+        signature=hashlib.sha256()
+        for chunk in iter(lambda:stream.read(1024*1024),b''):signature.update(chunk)
+        if signature.hexdigest() != ref['sha256']:
+            raise ValueError('来源签名变化')
+        stream.seek(0)
+        return json.load(stream)
 
 
 def frames(root, snapshot):
