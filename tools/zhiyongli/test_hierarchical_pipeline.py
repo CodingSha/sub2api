@@ -76,7 +76,7 @@ class HierarchicalTests(unittest.TestCase):
                 decision=dict(status='recovered',reason='仅合成跨周恢复合同',recovery_period=pid,recovery_refs=[proof['id']],
                     source_quotes=[dict(period_id=pid,event=proof['event'],quote=proof['quote'])])
                 return record(dict(slots={data['slot']:decision},needs_period_nodes=[]),path)
-        def prepare(_root,_user,a,b):
+        def prepare(_root,_user,a,b,metadata_cache=None):
             if a[:10] not in {'2026-09-07','2026-09-14','2026-09-21'}:
                 p=packet(a,b);p['events']=[];return p
             p=source();p.update(since=a,until=b)
@@ -164,6 +164,17 @@ class HierarchicalTests(unittest.TestCase):
                 if _==0:calls=client.calls
                 else:self.assertEqual(calls,client.calls)
             self.assertFalse((root/'bundle.json').exists());self.assertTrue(list((root/'reading').rglob('*.checked.json')))
+
+    def test_large_source_issues_are_bounded_but_all_original_issues_survive_native_validation(self):
+        from hierarchical_reading import compact,preflight,complete_native
+        p=source();p['issues']=[dict(frame='source-'+str(i),code='source_truncated') for i in range(5000)]
+        original=copy.deepcopy(p)
+        view=compact(p,dict(node_id='0'*64,summary='完整导航'),dict(original_packet_sha256=digest(p)))
+        self.assertLess(raw_size({k:v for k,v in view.items() if k!='events'}),15000)
+        self.assertEqual(5000,view['source_issue_summary']['codes']['source_truncated'])
+        self.assertTrue(preflight(p))
+        unit=complete_native(dict(events=[],source_issues=[]),p)
+        self.assertEqual(p['issues'],unit['source_issues']);self.assertEqual(original,p)
 
 
 if __name__=='__main__':unittest.main()

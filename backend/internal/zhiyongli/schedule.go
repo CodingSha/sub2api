@@ -9,6 +9,7 @@ type ScheduleConfig struct {
 	Version   int    `json:"version"`
 	Enabled   bool   `json:"enabled"`
 	FirstWeek string `json:"first_week"`
+	FirstDay  string `json:"first_day,omitempty"`
 	ActorID   int64  `json:"actor_id"`
 }
 type PreparationTarget struct {
@@ -25,6 +26,32 @@ type ScheduleResult struct {
 	Jobs               []Job             `json:"jobs"`
 	NonEvaluationWeeks []string          `json:"non_evaluation_weeks"`
 	Preparation        *DailyPreparation `json:"preparation,omitempty"`
+	FirstDay           string            `json:"first_day,omitempty"`
+}
+
+// preparationDay 23点开始处理当日数据；凌晨及次日保留前一日补偿目标。
+func preparationDay(now time.Time) time.Time {
+	now = now.In(time.FixedZone("CST", 8*3600))
+	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	if now.Hour() < 23 {
+		day = day.AddDate(0, 0, -1)
+	}
+	return day
+}
+
+// preparationThrough 封口后仍保留最后工作日补偿，不为周末新增空的本人评分任务。
+func preparationThrough(scope *WorkdayScope, now time.Time) string {
+	day := preparationDay(now).Format("2006-01-02")
+	if day < scope.PeriodStart || day >= scope.PeriodEnd {
+		return ""
+	}
+	through := ""
+	for _, working := range scope.WorkingDates {
+		if working <= day {
+			through = working
+		}
+	}
+	return through
 }
 
 // ScheduleDue 只入队已封口范围。配置由部署管理员提供，不接受Worker指定身份或评分。
@@ -36,7 +63,10 @@ func (s *Store) ScheduleDue(ctx context.Context, c ScheduleConfig, now time.Time
 	tz := time.FixedZone("CST", 8*3600)
 	now = now.In(tz)
 	first, err := time.ParseInLocation("2006-01-02", c.FirstWeek, tz)
-	if c.Version != 1 || err != nil || first.Weekday() != time.Monday || c.ActorID <= 0 || first.After(now) {
+	if c.Version == 2 {
+		first, err = time.ParseInLocation("2006-01-02", c.FirstDay, tz)
+	}
+	if c.Version != 1 && c.Version != 2 || err != nil || c.Version == 1 && (first.Weekday() != time.Monday || c.FirstDay != "") || c.Version == 2 && c.FirstWeek != "" || c.ActorID <= 0 || first.After(now) {
 		return result, invalid("自动评审缺已确认启用周或管理身份")
 	}
 	var admin bool
@@ -58,6 +88,17 @@ func (s *Store) ScheduleDue(ctx context.Context, c ScheduleConfig, now time.Time
 		result.Jobs = append(result.Jobs, jobs...)
 		return nil
 	}
+	// 新日评计划独立版本化；补偿已封口日，不再同时排旧周评任务。
+	if c.Version == 2 {
+		result.FirstDay = c.FirstDay
+		last := preparationDay(now)
+		for cursor := first; !cursor.After(last); cursor = cursor.AddDate(0, 0, 1) {
+			if e := queue("day", cursor.Format("2006-01-02")); e != nil {
+				return result, e
+			}
+		}
+		return result, nil
+	}
 	current := now.AddDate(0, 0, -(int(now.Weekday())+6)%7)
 	current = time.Date(current.Year(), current.Month(), current.Day(), 0, 0, 0, 0, tz)
 	for cursor := first; !cursor.After(current); cursor = cursor.AddDate(0, 0, 7) {
@@ -66,14 +107,10 @@ func (s *Store) ScheduleDue(ctx context.Context, c ScheduleConfig, now time.Time
 			return result, e
 		}
 		freeze, _ := time.Parse(time.RFC3339, scope.FreezeAt)
+		if through := preparationThrough(scope, now); through != "" {
+			result.Preparation = &DailyPreparation{ThroughDate: through, Scope: scope, Users: users}
+		}
 		if freeze.After(now) {
-			// 每天02:00后维护前一日已采集材料；仅建立阅读导航，不提前评分。
-			if cursor.Equal(current) && now.Hour() >= 2 {
-				day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, tz).AddDate(0, 0, -1)
-				if !day.Before(cursor) {
-					result.Preparation = &DailyPreparation{ThroughDate: day.Format("2006-01-02"), Scope: scope, Users: users}
-				}
-			}
 			continue
 		}
 		if len(scope.WorkingDates) == 0 {

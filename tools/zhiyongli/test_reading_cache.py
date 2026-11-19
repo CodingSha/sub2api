@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import weakref
 from unittest.mock import patch
 
 from bounded_read import plan,read_all
@@ -34,7 +35,12 @@ class ReadingCacheTests(unittest.TestCase):
                 notes={f['fragment_id']:dict(summary='合成页主要事实',
                     facts=[dict(anchor_id=f['segments'][0]['anchor_id'],fact='合成依据')],
                     limitations=[],open_questions=[]) for f in page['fragments']}
-                response=dict(status='completed',output=[dict(content=[dict(type='output_text',text=json.dumps(dict(notes=notes)))])])
+                value=dict(notes=notes)
+                if 'text' in payload and payload['text']['format']['name']=='zhiyongli_source_reading_page_navigation':
+                    from page_navigation import FIELDS
+                    value['page_navigation']=dict({k:'合成局部事实；失败与未决未解除。' for k in FIELDS},
+                        covered_fragment_ids=[f['fragment_id'] for f in page['fragments']])
+                response=dict(status='completed',output=[dict(content=[dict(type='output_text',text=json.dumps(value))])])
                 return io.BytesIO(('data: '+json.dumps(dict(type='response.completed',response=response))+'\n\n').encode())
         patcher=patch.object(ModelConfig,'opener',return_value=Opener());patcher.start();self.addCleanup(patcher.stop)
 
@@ -68,6 +74,65 @@ class ReadingCacheTests(unittest.TestCase):
         changed['user_id']='2';self.read(changed,self.client('c'));self.assertEqual(3,self.calls)
         changed['events'][0]['actor_class']='candidate_user'
         self.read(changed,self.client('d'));self.assertEqual(4,self.calls)
+
+    def test_inspect_plain_receipt_reads_once_and_rechecks_each_call(self):
+        client=self.client('inspect');item={'synthetic':'page'};payload={'input':'unchanged'}
+        cache=ReadingCache(client.reading_cache_root,dict(user_id='1',user_email='synthetic@example.test'),client)
+        key=digest(dict(endpoint=client.config.responses_url,payload=payload))
+        record=dict(status='received',request_sha256=key,response={'status':'completed','output':['原反证不消失']})
+        with cache.request(item,payload) as receipt:atomic(receipt,record)
+        original=Path.read_text;reads=[]
+        def counted(path,*args,**kwargs):
+            if path==receipt:reads.append(path)
+            return original(path,*args,**kwargs)
+        before={p:(p.read_bytes(),p.stat().st_mtime_ns) for p in cache.root.rglob('*') if p.is_file()}
+        with patch.object(Path,'read_text',counted):
+            self.assertEqual((receipt,record),cache.inspect(item,payload))
+        self.assertEqual([receipt],reads)
+        self.assertEqual(before,{p:(p.read_bytes(),p.stat().st_mtime_ns) for p in before})
+        # 调用内快照不跨轮保存，后续正文篡改及unknown必须从原件重新发现。
+        changed=copy.deepcopy(record);changed['response']['output']=['篡改反证'];atomic(receipt,changed)
+        with self.assertRaisesRegex(ValueError,'签名变化'):cache.inspect(item,payload)
+        changed['status']='unknown';atomic(receipt,changed)
+        with self.assertRaises(Paused) as caught:cache.inspect(item,payload)
+        self.assertEqual('unknown',caught.exception.state)
+        self.assertEqual((0,0),(self.calls,client.budget.used()))
+
+    def test_inspect_multiple_contracts_releases_unselected_records_and_keeps_error_priority(self):
+        import reading_cache
+        client=self.client('inspect-many');item={'synthetic':'same-page'}
+        cache=ReadingCache(client.reading_cache_root,dict(user_id='1',user_email='synthetic@example.test'),client)
+        paths=[];records=[]
+        for index in range(6):
+            payload={'input':'contract-'+str(index)}
+            record=dict(status='received',request_sha256=digest(dict(endpoint=client.config.responses_url,payload=payload)),
+                response={'status':'completed','output':['完整大笔记'*2000]})
+            with cache.request(item,payload) as receipt:atomic(receipt,record)
+            paths.append(receipt);records.append(record)
+        class Tracked(dict):
+            __slots__=('__weakref__',)
+        loads=json.loads;references=[];live_before=[]
+        def tracked(*args,**kwargs):
+            value=loads(*args,**kwargs)
+            if isinstance(value,dict) and 'response' in value and 'request_sha256' in value:
+                live_before.append(sum(ref() is not None for ref in references))
+                value=Tracked(value);references.append(weakref.ref(value))
+            return value
+        with patch.object(reading_cache.json,'loads',side_effect=tracked):
+            result=cache.inspect(item,payload)
+        self.assertEqual((paths[-1],records[-1]),result)
+        self.assertEqual(6,len(references))
+        # 可保留唯一目标对象；其它已核合同的正文不能累计驻留。
+        self.assertLessEqual(max(live_before),1)
+        self.assertEqual(1,sum(ref() is not None for ref in references))
+        seal=paths[0].with_name(paths[0].name.replace('.receipt.json','.seal.json'))
+        atomic(seal,{'corrupt':True})
+        unknown=dict(records[1],status='unknown');atomic(paths[1],unknown)
+        with self.assertRaises(Paused) as error:cache.inspect(item,payload)
+        self.assertEqual('unknown',error.exception.state)
+        atomic(paths[1],records[1]);atomic(paths[0].parent/'reservation.json',{'invalid':True})
+        with self.assertRaisesRegex(ValueError,'预约格式'):cache.inspect(item,payload)
+        self.assertEqual((0,0),(self.calls,client.budget.used()))
 
     def test_unknown_shared_receipt_blocks_other_jobs_without_charging_them(self):
         self.read(self.packet(),self.client('a'))

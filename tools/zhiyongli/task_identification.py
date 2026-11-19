@@ -121,6 +121,21 @@ def checked(client, packet, receipt, receive, check):
                   else client.identify(packet, path, feedback), receipt, receive, check)
 
 
+def contract_value(record, receive, check):
+    """执行与只读阶段核查使用相同的输出合同。"""
+    response = record.get('response') or {}
+    if (record.get('status') == 'received' and response.get('status') == 'incomplete'
+            and (response.get('incomplete_details') or {}).get('reason') == 'max_output_tokens'):
+        raise ValueError('输出达到长度上限仍未完成：human_quotes只摘取可唯一定位的简短本人原句，'
+                         '不复制编码数据、日志或整段材料；reason与assignment_reason保持简短')
+    value = receive(record)
+    return value, check(value)
+
+
+def correction(attempt, error):
+    return dict(attempt=attempt + 1, error=(type(error).__name__ + ': ' + str(error))[:1000])
+
+
 def resend(client, send, receipt, receive, check):
     import json
     from pathlib import Path
@@ -129,20 +144,14 @@ def resend(client, send, receipt, receive, check):
         path = receipt if not attempt else receipt.with_name(
             receipt.name.replace('.receipt.json', '.fix' + str(attempt) + '.receipt.json'))
         record = send(path, feedback)
-        response = record.get('response') or {}
         try:
-            if (record.get('status') == 'received' and response.get('status') == 'incomplete'
-                    and (response.get('incomplete_details') or {}).get('reason') == 'max_output_tokens'):
-                # 已收到终态但输出写满上限未完成：属于输出本身不合合同，同样带原因有界重发。
-                raise ValueError('输出达到长度上限仍未完成：human_quotes只摘取可唯一定位的简短本人原句，'
-                                 '不复制编码数据、日志或整段材料；reason与assignment_reason保持简短')
-            value = receive(record)
-            return record, value, check(value)
+            value, checked_value = contract_value(record, receive, check)
+            return record, value, checked_value
         except (ValueError, KeyError, TypeError) as ex:
             # 结果不明、预算暂停等执行状态（带state）原样上抛，不进入重发。
             if hasattr(ex, 'state') or attempt >= CONTRACT_RETRIES or not getattr(client, 'accepts_revision_feedback', False):
                 raise
-            feedback = dict(attempt=attempt + 1, error=(type(ex).__name__ + ': ' + str(ex))[:1000])
+            feedback = correction(attempt, ex)
             note = path.with_name(path.name.replace('.receipt.json', '.contract-error.json'))
             note.write_text(json.dumps(feedback, ensure_ascii=False))
 
@@ -165,6 +174,10 @@ def schema(packet):
         slots[event['event']] = {'anyOf': [slot(enum('human'), nullable, dict(array(text), minItems=1)),
                                            slot(enum(*others), dict(type='null'), dict(array(text), maxItems=0))]}
     materials = obj(slots)
+    from navigation_contract import instructions as directory_instructions
+    if directory_instructions(packet):
+        # 空槽对象仅供请求补读；终态仍由canonical强制完整覆盖全部本人候选。
+        materials={'anyOf':[materials,obj({})]}
     contexts = array(dict(type='string', enum=context_ids)) if context_ids else dict(type='array', items=text, maxItems=0)
     result=obj(dict(materials=materials, goals=array(obj(dict(goal_id=text, title=text, purpose=text,
         boundary=enum('confirmed', 'unresolved'), boundary_reason=text, context_event_ids=contexts)))))

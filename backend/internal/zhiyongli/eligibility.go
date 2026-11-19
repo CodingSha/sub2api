@@ -257,7 +257,7 @@ func (r *Result) validateEligibility() error {
 	if current {
 		for _, it := range r.Items {
 			if it.State == "pending" || it.State == "attribution_unclear" {
-				g.Reasons = append(g.Reasons, "存在待复核或本人归属未决的判断")
+				g.Reasons = append(g.Reasons, "本期含证据或归属不足而不计分的分项")
 				break
 			}
 		}

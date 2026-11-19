@@ -3,8 +3,8 @@ import copy
 import json
 from pathlib import Path
 
-from runtime import atomic,digest,moment
-from bounded_read import raw_size
+from runtime import digest,moment
+from bounded_read import raw_size,checkpoint
 from task_identification import canonical,checked,resend,validate
 from review_schema import obj,array,enum
 
@@ -22,20 +22,35 @@ def plan(packet,max_bytes=85000):
     if packet.get('reading_provenance'):
         base['reading_provenance_sha256']=digest(packet['reading_provenance'])
     base['source_scope']='partition_of_frozen_window'
+    from material_packing import VERSION as PACKING_VERSION, material_size
+    if packet.get('material_encoding')==PACKING_VERSION:
+        # 实际传输共享相同正文后再分批；每条原消息及分段身份照常保留。
+        pages=[];current=[]
+        for event in sorted(packet['events'],key=lambda e:moment(e['at'])):
+            if material_size(dict(base,events=[event]))>max_bytes:
+                raise ValueError('无损编码后单条候选仍超归属容量，须继续连续分段，不能裁掉原文')
+            if current and material_size(dict(base,events=current+[event]))>max_bytes:
+                pages.append(dict(base,events=current));current=[]
+            current.append(copy.deepcopy(event))
+        if current:pages.append(dict(base,events=current))
+        return pages
     # 导航只需放一份；按实际导航大小给两组完整表达预留空间，避免固定40KB误伤大导航。
+    base_size=raw_size(dict(base,events=[]))
     if packet.get('candidate_segmentation'):
-        size=raw_size(dict(base,events=[]))
-        max_bytes=min(max_bytes,size+(85_000-size)//2-2_000)
-    if raw_size(dict(base,events=[]))>=max_bytes:
+        max_bytes=min(max_bytes,base_size+(85_000-base_size)//2-2_000)
+    if base_size>=max_bytes:
         raise ValueError('全局上下文导航已超过分批容量，须继续分层整理；不能删除导航后冒称完整上下文')
-    events=packet['events'];pages=[];current=[]
+    events=packet['events'];pages=[];current=[];current_size=base_size
     # 稳定排序保留上游同刻协议顺序及连续分段，不能再用哈希标识打散输入/返回。
     ordered=sorted(events,key=lambda e:moment(e['at']))
     for e in ordered:
-        if raw_size(dict(base,events=[e]))>max_bytes:
+        # 空数组包装已计入base_size；完整记录只编码一次，数组内额外只增加逗号。
+        size=raw_size(e)
+        if base_size+size>max_bytes:
             raise ValueError('单条完整输入超过归属批次容量，须专门分段核归属，不能截断')
-        if current and raw_size(dict(base,events=current+[e]))>max_bytes:
-            pages.append(dict(base,events=current));current=[]
+        if current and current_size+size+1>max_bytes:
+            pages.append(dict(base,events=current));current=[];current_size=base_size
+        current_size+=size+bool(current)
         current.append(copy.deepcopy(e))
     if current:pages.append(dict(base,events=current))
     if {e['event'] for p in pages for e in p['events']}!={e['event'] for e in events}:
@@ -101,7 +116,7 @@ def reconcile(packet,graphs,merged):
 def identify(packet,directory,client,receive,progress=lambda *args:None,access_factory=None):
     root=Path(directory);root.mkdir(parents=True,exist_ok=True,mode=0o700)
     pages=plan(packet);graphs=[];working=copy.deepcopy(packet);extra={}
-    atomic(root/'plan.json',dict(packet_sha256=digest(packet),pages=[digest(p) for p in pages]))
+    checkpoint(root/'plan.json',dict(packet_sha256=digest(packet),pages=[digest(p) for p in pages]))
     for i,page in enumerate(pages):
         progress('identifying',i,len(pages),'逐批核对本人归属，局部目标稍后统一归并')
         if access_factory is None:
@@ -113,14 +128,14 @@ def identify(packet,directory,client,receive,progress=lambda *args:None,access_f
             for event in page['events']:
                 if event['event'] not in initial:extra[event['event']]=event
         canonical(page,graph) # 局部槽位、时间和逐字引文先核验。
-        atomic(root/(str(i)+'.graph.json'),graph);graphs.append(graph)
+        checkpoint(root/(str(i)+'.graph.json'),graph);graphs.append(graph)
     existing={e['event'] for e in working['events']}
     added=[event for key,event in extra.items() if key not in existing]
     working['events'].extend(added)
     if len(graphs)==1:result=canonical(working,graphs[0])
     else:result=merge_identified(working,graphs,root,client,receive,progress)
     if added:result['readback_context_events']=added
-    atomic(root/'identified.json',result);return result
+    checkpoint(root/'identified.json',result);return result
 
 
 def merge_identified(packet,graphs,root,client,receive,progress):

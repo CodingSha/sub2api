@@ -37,7 +37,7 @@ class StateRestoreTests(unittest.TestCase):
             db.execute("INSERT INTO attempts VALUES('interrupted','synthetic-restore',?,?,0,10,'active',NULL,NULL,NULL,1)",(request,str(pending)))
         queue=Preparations(state)
         with queue.connect() as db:
-            db.execute("INSERT INTO preparations VALUES('pending',1,'synthetic@example.test','{}','2026-09-08',NULL,'unknown',0,'合成待核')")
+            db.execute("INSERT INTO preparations(key,user_id,user_email,scope,through_date,prepared_through,state,updated,message) VALUES('pending',1,'synthetic@example.test','{}','2026-09-08',NULL,'unknown',0,'合成待核')")
         cache=ObjectCache(state/'source-cache');sha=cache.put('synthetic-revision',dict(text='合成完整来源，不丢失'))
         cache.attach(sha,state/'sources');cache.db.close()
         # 所有数据库连接已关闭且无Worker写入；真实部署还须协调产品库快照及发送时点。

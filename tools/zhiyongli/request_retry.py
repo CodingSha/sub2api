@@ -1,4 +1,4 @@
-"""为明确HTTP429和传输中断提供有界续发；原回执与每次新发送独立留存。"""
+"""为明确限流和传输中断提供有界续发；原回执与每次新发送独立留存。"""
 import json
 import os
 from pathlib import Path
@@ -6,9 +6,10 @@ import re
 
 from runtime import atomic,digest
 
-VERSION='bounded-transport-retry-20261110.1'
+VERSION='bounded-gateway-retry-20261114.1'
+TRANSPORT='bounded-transport-retry-20261110.1'
 LEGACY='bounded-http429-retry-20261109.1'
-VERSIONS={VERSION,LEGACY}
+VERSIONS={VERSION,TRANSPORT,LEGACY}
 ATTEMPT=re.compile(r'^(.*)\.attempt-(\d+)\.receipt\.json$')
 # 客户端可确定没有取得终态的传输层失败；进程崩溃遗留的requesting及缺回执预留不在此列。
 INTERRUPTED_CODES={'stream_ended_without_terminal','stream_timeout'}
@@ -17,15 +18,29 @@ INTERRUPTED_ERRORS={'URLError','ConnectionResetError','ConnectionAbortedError','
     'http_408','http_500','http_502','http_503','http_504'}
 
 
+def gateway_limited(record):
+    """仅接纳AI Hub尚未取得账号/用户槽位的明确失败，不重发已有输出或其他失败。"""
+    response=record.get('response')
+    if not isinstance(response,dict):return False
+    error=response.get('error')
+    return (record.get('status')=='received' and response.get('status')=='failed'
+        and response.get('output') in (None,[]) and isinstance(error,dict)
+        and error.get('code')=='gateway_concurrency_limit'
+        and isinstance(error.get('message'),str)
+        and re.fullmatch(r'Concurrency limit exceeded for (user|account), please retry later',error['message']) is not None)
+
+
 def retry_kind(record,version=VERSION):
     """可续发的失败类型。请求为store=false的无状态推理，重复发送没有服务端副作用；
     仍只在显式配置的次数内续发，原回执不改写，每次尝试都计入任务与全局预算。"""
     if record.get('status')=='rejected' and record.get('error')=='http_429':return 'http_429'
-    if (version==VERSION and record.get('status')=='unknown'
+    # 流内限流沿用已显式批准的429次数；旧链仍按原语义验签，不隐式升级旧终态。
+    if version==VERSION and gateway_limited(record):return 'http_429'
+    if (version in {VERSION,TRANSPORT} and record.get('status')=='unknown'
             and (record.get('error_code') in INTERRUPTED_CODES or record.get('error') in INTERRUPTED_ERRORS)):
         return 'interrupted'
     # 仅供核验旧续发链；新发送入口及扫描会单独阻断无终态的requesting。
-    if version==VERSION and record.get('status')=='requesting':return 'interrupted'
+    if version in {VERSION,TRANSPORT} and record.get('status')=='requesting':return 'interrupted'
     return None
 
 
@@ -110,7 +125,22 @@ def blocking_status(path):
 
 def retry_pending(path):
     path=Path(path)
-    return path.exists() and blocking_status(path) in {'retry_wait','interrupted'}
+    if not path.exists():return False
+    raw=json.loads(path.read_text())
+    if 'shared_reading_receipt' in raw:
+        actual=Path(raw['shared_reading_receipt']);saved=json.loads(actual.read_text())
+        record=read_receipt(actual) if saved.get('transport_version') in VERSIONS else saved
+        if record.get('request_sha256')!=raw.get('request_sha256'):
+            raise ValueError('共享阅读回执请求签名变化')
+        if digest(record)!=raw.get('shared_receipt_sha256'):
+            original=json.loads(attempt_path(actual,0).read_text()) if saved.get('transport_version') in VERSIONS else record
+            if not gateway_limited(original) or digest(original)!=raw.get('shared_receipt_sha256'):
+                raise ValueError('共享阅读回执签名变化')
+            # 仅原明确限流的引用可进入原共享页锁，核对续发链并刷新引用；成功页不适用。
+            return True
+        if 'shared_reading_receipt' in record:raise ValueError('共享阅读引用不能递归嵌套')
+        return gateway_limited(record) or blocking_status(actual) in {'retry_wait','interrupted'}
+    return gateway_limited(raw) or blocking_status(path) in {'retry_wait','interrupted'}
 
 
 def origin_digest(path):
@@ -155,7 +185,8 @@ def call(client,payload,receipt,send):
         chain.update(status=prior['status'],exhausted=True);atomic(receipt,chain)
         return read_receipt(receipt)
     if kind=='http_429':
-        wait_until=max(prior.get('retry_after_at',0),prior.get('sent_at',0)+client.flow.config['cooldown_seconds'])
+        backoff=2**min(used(receipt,chain,kind)-1,2) if gateway_limited(prior) else 1
+        wait_until=max(prior.get('retry_after_at',0),prior.get('sent_at',0)+client.flow.config['cooldown_seconds']*backoff)
         if client.flow.now()<wait_until:raise Paused('queued','模型明确限流，已保留原回执；冷却后在累计预算内进行有界续跑')
     index=len(chain['attempts'])
     target=attempt_path(receipt,index)

@@ -103,6 +103,7 @@ class ScaleDatabaseTests(unittest.TestCase):
         from worker import tick,update
         migration=Path(__file__).resolve().parents[2]/'backend/migrations/245_zhiyongli_jobs.sql'
         self.db.execute(migration.read_text())
+        self.db.execute(migration.with_name('246_zhiyongli_workday_scope.sql').read_text())
         self.db.execute("""INSERT INTO zhiyongli_jobs(user_id,period_type,period_start,period_end,rules_version,created_by)
             SELECT 1,'week',date '2020-01-06'+7*n,date '2020-01-13'+7*n,'1.6',1 FROM generate_series(0,99) n""")
         order=[];counts={}
@@ -123,6 +124,7 @@ class ScaleDatabaseTests(unittest.TestCase):
         from worker import tick,update
         self.db.execute("INSERT INTO users SELECT n,'synthetic-'||n||'@example.test',NULL FROM generate_series(2,100) n")
         self.db.execute((Path(__file__).resolve().parents[2]/'backend/migrations/245_zhiyongli_jobs.sql').read_text())
+        self.db.execute((Path(__file__).resolve().parents[2]/'backend/migrations/246_zhiyongli_workday_scope.sql').read_text())
         self.db.execute("""INSERT INTO zhiyongli_jobs(user_id,period_type,period_start,period_end,rules_version,created_by)
             SELECT id,'week','2026-09-07','2026-09-14','1.6',1 FROM users""")
         mutex=threading.Lock();active=set();counts={};collisions=[]

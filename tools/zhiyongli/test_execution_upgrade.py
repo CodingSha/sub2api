@@ -58,6 +58,15 @@ class UpgradeTests(unittest.TestCase):
         self.assertFalse(compatible_policy(digest(proof['previous_versions'][0])))
         self.assertFalse(compatible_policy(digest(intermediate)))
 
+    def test_nine_prior_contracts_are_exact_and_history_remains_bounded(self):
+        versions=[dict(self.previous,**{'tools/zhiyongli/runtime.py':x*64}) for x in ('d','e','f','0','1','2','3','4')]
+        proof=json.loads(self.manifest.read_text());proof['previous_versions']=versions
+        atomic(self.manifest,proof)
+        self.assertTrue(all(compatible_policy(digest(v)) for v in [self.previous]+versions))
+        proof['previous_versions'].append(dict(self.previous,**{'tools/zhiyongli/runtime.py':'5'*64}))
+        atomic(self.manifest,proof)
+        self.assertFalse(compatible_policy(digest(self.previous)))
+
     def test_old_input_is_preserved_and_changed_source_or_frozen_file_is_rejected(self):
         packet=self.packet();directory=self.root/'job'
         stamp=dict(packet_sha256=digest(packet),policy_sha256=digest(self.previous))

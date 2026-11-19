@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -100,6 +101,7 @@ type Assessment struct {
 	Issues          []SourceIssue `json:"issues"`
 }
 type Result struct {
+	DailyReview     *DailyReview     `json:"daily_review,omitempty"`
 	UserEmail       string           `json:"user_email"`
 	PeriodType      string           `json:"period_type"`
 	PeriodStart     string           `json:"period_start"`
@@ -120,6 +122,8 @@ type Result struct {
 	Eligibility     *Eligibility     `json:"eligibility,omitempty"`
 	WeeklyReports   []Result         `json:"weekly_reports,omitempty"`
 	WorkdayScope    *WorkdayScope    `json:"workday_scope,omitempty"`
+	TaskReview      *TaskReview      `json:"task_review,omitempty"`
+	SampleInitial   *SampleInitial   `json:"sample_initial,omitempty"`
 }
 type Bundle struct {
 	SchemaVersion int      `json:"schema_version"`
@@ -220,9 +224,63 @@ func level(n *big.Rat) *string {
 	return &s
 }
 
+// validateJSONBText 只读检查公开JSON字段，避免JSONB拒绝NUL时变成数据库500。
+// 不额外编码整包或遍历time.Time内部；当前结果合同没有循环引用。
+func validateJSONBText(value any) error {
+	var contains func(reflect.Value) bool
+	contains = func(v reflect.Value) bool {
+		switch v.Kind() {
+		case reflect.String:
+			return strings.ContainsRune(v.String(), '\x00')
+		case reflect.Pointer, reflect.Interface:
+			return !v.IsNil() && contains(v.Elem())
+		case reflect.Struct:
+			for i := 0; i < v.NumField(); i++ {
+				field := v.Type().Field(i)
+				if field.PkgPath == "" && field.Tag.Get("json") != "" && field.Tag.Get("json") != "-" && contains(v.Field(i)) {
+					return true
+				}
+			}
+		case reflect.Slice, reflect.Array:
+			for i := 0; i < v.Len(); i++ {
+				if contains(v.Index(i)) {
+					return true
+				}
+			}
+		case reflect.Map:
+			iter := v.MapRange()
+			for iter.Next() {
+				if contains(iter.Key()) || contains(iter.Value()) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if contains(reflect.ValueOf(value)) {
+		return invalid("结果展示字段含NUL控制字符；须由来源侧明确展示转换并保留原始哈希，服务端不改写内容")
+	}
+	return nil
+}
+
 // Validate 只接受登记版本；后续月评修改须新增版本处理，不重解释旧报告。
 // 总分、维度和等级全部由服务端精确重算，忽略传入的展示值。
 func (r *Result) Validate() error {
+	if r.PeriodType == "day" {
+		if err := validateJSONBText(r); err != nil {
+			return err
+		}
+		return r.validateDaily()
+	}
+	if r.DailyReview != nil {
+		return invalid("日评上下文不能用于周月报告")
+	}
+	if err := validateJSONBText(r); err != nil {
+		return err
+	}
+	if err := r.validateTaskReview(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(r.UserEmail) == "" || len(r.UserEmail) > 320 || !hashValid(r.SourceDigest) {
 		return invalid("缺少明确的账户邮箱或来源哈希")
 	}
@@ -321,7 +379,8 @@ func (r *Result) Validate() error {
 		if modern {
 			wantVersion = ObservationAssessmentVersion
 		}
-		if r.PeriodType != "month" || a.Version != wantVersion || !hashValid(a.SourceGapDigest) || strings.TrimSpace(a.Scope) == "" {
+		finalObservation := modern && a.Version == "scope-disclosure-20261118.3"
+		if r.PeriodType != "month" || a.Version != wantVersion && !finalObservation || !hashValid(a.SourceGapDigest) || strings.TrimSpace(a.Scope) == "" {
 			return invalid("资料处置版本或范围无效")
 		}
 		ids := map[string]bool{}
@@ -364,10 +423,14 @@ func (r *Result) Validate() error {
 	values := map[string][]*big.Rat{}
 	gaps := map[string][]*big.Rat{}
 	dispositions := map[string]GapDisposition{}
+	finalObservation := modern && blocked && r.Assessment != nil && r.Assessment.Version == "scope-disclosure-20261118.3"
 	for _, g := range r.GapDispositions {
 		key := g.ItemCode + "/" + g.PeriodStart
-		if _, ok := dispositions[key]; ok || g.Reason == "" || g.Status != "open" && g.Status != "recovered" {
+		if _, ok := dispositions[key]; ok || g.Reason == "" || g.Status != "open" && g.Status != "recovered" && !(finalObservation && g.Status == "unresolved") {
 			return invalid("缺口处置重复或不完整")
+		}
+		if g.Status == "unresolved" && (g.RecoveryPeriod != "" || len(g.RecoveryEvidenceIDs) != 0) {
+			return invalid("恢复证据不足不能混入恢复声明")
 		}
 		dispositions[key] = g
 	}
@@ -521,7 +584,9 @@ func (r *Result) Validate() error {
 						return invalid("月末必要缺口尚未处置")
 					}
 					delete(dispositions, key)
-					if g.Status == "open" {
+					if g.Status == "unresolved" {
+						// 已完成本次判断但恢复证据不足；资料阻断保证不生成总分及等级。
+					} else if g.Status == "open" {
 						gaps[it.Code[:1]] = append(gaps[it.Code[:1]], v)
 					} else {
 						recovered := false
@@ -659,7 +724,7 @@ func (r *Result) Validate() error {
 			r.ScoreReason = strings.Join(r.Eligibility.Reasons, "；") + "。保留已核分项和维度观察，暂不形成完整周期综合分。"
 		}
 	}
-	return nil
+	return r.validateSampleInitial()
 }
 
 // 日期字段代表北京时间零点，历史与转发材料不充当本期本人表现。

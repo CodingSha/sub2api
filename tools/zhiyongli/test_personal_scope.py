@@ -7,11 +7,19 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from personal_scope import excluded_user_ids
+from personal_scope import excluded_user_ids, excluded_api_key_ids
 import test_scale
 
 
 class PersonalScopeTests(unittest.TestCase):
+    def test_service_keys_merge_without_excluding_the_person(self):
+        with patch.dict(os.environ,ZHIYONGLI_EXCLUDED_API_KEY_IDS='179,230',ZHIYONGLI_EXCLUDED_USER_IDS='22'):
+            self.assertEqual([179,230],excluded_api_key_ids([230]))
+            self.assertEqual([22],excluded_user_ids())
+        for value in ('0','-1','230,','２３０',str(2**63)):
+            with patch.dict(os.environ,ZHIYONGLI_EXCLUDED_API_KEY_IDS=value),self.assertRaises(ValueError):
+                excluded_api_key_ids([179])
+
     def test_configuration_is_strict(self):
         for value in ('0', '-1', '22,22', '22,', ' ', '+22', '２２', str(2**63)):
             with patch.dict(os.environ, ZHIYONGLI_EXCLUDED_USER_IDS=value):
@@ -38,7 +46,7 @@ class PersonalScopeTests(unittest.TestCase):
                 queue.enqueue(PreparationTests().daily('2026-09-09'))
                 self.assertTrue(queue.tick(None, client, [999]))
                 self.assertEqual('needs_review', queue.snapshot()[0]['state'])
-                process(None, dict(id=123, user_id=2), root, None, client, None, [999])
+                process(None, dict(id=123, user_id=2,period_type='week'), root, None, client, None, [999])
                 self.assertEqual('needs_review', update.call_args.args[2])
             self.assertEqual('保留原回执', sentinel.read_text())
 
@@ -48,6 +56,19 @@ class PersonalSourceTests(unittest.TestCase):
     setUp = test_scale.ScaleDatabaseTests.setUp
     tearDown = test_scale.ScaleDatabaseTests.tearDown
     source = test_scale.ScaleDatabaseTests.source
+
+    def test_two_service_keys_are_excluded_but_same_user_personal_key_remains(self):
+        from source_snapshot import collect
+        self.db.execute("""INSERT INTO llm_audit_logs(id,user_id,api_key_id,created_at,updated_at,request_body)
+            VALUES(1,1,179,'2026-11-18','2026-11-18','旧评审服务'),
+                  (2,1,230,'2026-11-18','2026-11-18','新评审服务'),
+                  (3,1,231,'2026-11-18','2026-11-18','本人使用')""")
+        with tempfile.TemporaryDirectory() as tmp,self.source() as source,patch.dict(os.environ,ZHIYONGLI_EXCLUDED_API_KEY_IDS='179,230'):
+            root=Path(tmp);collect(source,root,[230],'2026-11-18T00:00:00+08:00')
+            snapshot=json.loads((root/json.loads((root/'latest.json').read_text())['path']).read_text())
+            self.assertEqual([179,230],snapshot['excluded_api_key_ids'])
+            self.assertEqual([3],[row['id'] for row in snapshot['rows']])
+            self.assertIn(1,[person['id'] for person in snapshot['users']])
 
     def test_excluded_user_never_enters_snapshot_but_database_and_cache_remain(self):
         from source_snapshot import collect

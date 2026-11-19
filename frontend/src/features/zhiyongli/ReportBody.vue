@@ -1,17 +1,23 @@
 <template>
-  <section>
+  <AssessmentReader v-if="report.period_type === 'day' && report.daily_review && report.items?.length" :report="report" :period-label="report.period_start" :source-labels="report.daily_review.source_labels" :source-sessions="report.daily_review.source_sessions" :conversations="report.daily_review.conversations" />
+  <section v-else-if="reviewPending(report)" aria-label="评审状态">
+    <h2 class="score-title text-gray-900 dark:text-gray-100">智用力评分</h2>
+    <p class="mt-3 text-sm text-gray-600 dark:text-gray-300">评审待完成</p>
+    <WorkdayRange v-if="report.workday_scope" :scope="report.workday_scope" class="mt-5" />
+  </section>
+  <section v-else>
     <div class="score-hero border-b border-gray-200 dark:border-dark-700">
       <div class="score-summary">
         <div class="flex flex-wrap items-center gap-3">
           <h2 class="score-title text-gray-900 dark:text-gray-100">智用力评分</h2>
-          <span class="badge badge-gray">{{ report.period_type === 'week' ? '周评' : '月评' }}</span>
+          <span class="badge badge-gray">{{ periodLabel ?? (report.period_type === 'day' ? '日评' : report.period_type === 'week' ? '周评' : '月评') }}</span>
         </div>
-        <div class="my-3 flex flex-wrap gap-2" :class="report.score === null ? 'items-center' : 'items-baseline'">
-          <span v-if="report.score !== null" class="score-number text-gray-900 dark:text-gray-100" :aria-label="`${report.score}分`">{{ report.score }}</span>
+        <div class="my-3 flex flex-wrap gap-2" :class="displayedScore === null ? 'items-center' : 'items-baseline'">
+          <ScoreReveal v-if="displayedScore !== null" :key="`${report.id}:${report.revision}`" class="score-number text-gray-900 dark:text-gray-100" :score="displayedScore" :exact="displayedExact" :animate="revealScore === true" :identity="`${report.user_id}:${report.id}:${report.revision}`" />
           <span v-else class="text-sm text-gray-600 dark:text-gray-300">{{ scoreStatusLabel(report) }}</span>
-          <span v-if="report.score !== null" class="text-sm text-gray-400">/ 100</span>
+          <span v-if="displayedScore !== null" class="text-sm text-gray-400">/ 100</span>
           <span v-if="report.rating" class="badge badge-success">{{ report.rating }}</span>
-          <span v-else-if="report.period_type === 'month' && report.score !== null" class="text-sm text-amber-700 dark:text-amber-400">评级待定</span>
+          <span v-else-if="report.period_type === 'month' && displayedScore !== null" class="text-sm text-amber-700 dark:text-amber-400">评级待定</span>
           <HelpTooltip v-if="report.score_explanation || report.score_reason || hasDimensionObservations" class="self-center" width-class="w-80">
             <template #trigger="{ open, tooltipId }">
               <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded hover:bg-gray-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500" :class="scoreNeedsAttention(report) ? 'text-orange-600 dark:text-orange-400' : 'text-gray-500 dark:text-gray-400'" aria-label="查看评分说明" :aria-describedby="open ? tooltipId : undefined">
@@ -50,10 +56,16 @@
         </svg>
       </div>
     </div>
-    <EvidenceCases :report="report" :admin="reviewDetails" />
-    <details v-if="report.items?.length" class="pt-6">
-      <summary class="mb-3 cursor-pointer text-lg font-semibold">分项评分与标准</summary>
-      <details v-for="item in presentedItems" :key="item.item_code" :open="item.item_code === firstItem" class="item-row border-b border-gray-200 dark:border-dark-700">
+    <slot name="summary" />
+    <section v-if="report.items?.length" class="pt-8" aria-label="分项评分与标准">
+      <h2 class="mb-4 text-lg font-semibold">分项评分与标准</h2>
+      <div class="dimension-tabs flex border-b border-gray-200 dark:border-dark-700" role="tablist" aria-label="评分维度">
+        <button v-for="dimension in chartDimensions" :id="`${panelId}-${dimension.code}-tab`" :key="dimension.code" type="button" role="tab" class="dimension-tab flex-1 border-b-2 px-3 py-3 text-center text-sm focus-visible:outline-primary-500" :class="selectedDimension === dimension.code ? 'border-primary-500 font-semibold text-primary-700 dark:text-primary-400' : 'border-transparent text-gray-500 dark:text-gray-400'" :aria-selected="selectedDimension === dimension.code" :aria-controls="`${panelId}-panel`" :tabindex="selectedDimension === dimension.code ? 0 : -1" @click="selectedDimension = dimension.code" @keydown="switchDimension($event, dimension.code)">
+          <span>{{ dimension.name }}</span><span class="ml-3 tabular-nums">{{ dimension.score ?? '—' }}</span>
+        </button>
+      </div>
+      <div :id="`${panelId}-panel`" :key="`${report.id}:${report.revision}:${selectedDimension}`" role="tabpanel" :aria-labelledby="`${panelId}-${selectedDimension}-tab`" tabindex="0">
+      <details v-for="item in selectedItems" :key="item.item_code" :open="item.item_code === firstItem" class="item-row border-b border-gray-200 dark:border-dark-700">
         <summary class="flex cursor-pointer items-center gap-3 py-4 focus-visible:outline-primary-500">
           <span class="item-dimension text-xs text-gray-500 dark:text-gray-400">{{ dimensionNames[item.item_code[0]] }}</span>
           <span class="flex-1 font-medium">{{ item.name }}</span>
@@ -63,21 +75,24 @@
         </summary>
         <div class="item-content pb-6 pr-8 text-sm leading-7 text-gray-700 dark:text-gray-300">
           <p v-if="item.state === 'related'" class="mb-5 text-gray-500 dark:text-gray-400">本项仅作关联说明，不单独计分。</p>
-          <p v-if="!reviewDetails && item.state === 'observed' && !item.explanations.length" class="mb-5 text-gray-500 dark:text-gray-400">本项判定说明未在个人报告中展示，可联系管理员核对。</p>
           <div v-if="item.observations.length" class="mb-5">
             <h3 class="explanation-label">本期表现</h3>
-            <ul class="explanation-list"><li v-for="observation in item.observations" :key="observation">{{ observation }}</li></ul>
+            <ul class="explanation-list"><li v-for="observation in item.observations" :key="observation"><ReportProse :text="observation" /></li></ul>
           </div>
-          <div v-if="report.period_type === 'week' && item.explanations.length === 1 && item.explanations[0].basis.length" class="mb-5">
-            <h3 class="explanation-label">得分依据</h3>
-            <ul class="explanation-list"><li v-for="line in item.explanations[0].basis" :key="line">{{ line }}</li></ul>
+          <div v-if="report.period_type === 'week' && item.explanations.length === 1" class="mb-5">
+            <h3 class="explanation-label">{{ item.score === null ? '为什么不单独计分' : '为什么得到这个分数' }}</h3>
+            <ReportProse v-for="line in item.explanations[0].analysis" :key="line" :text="line" />
+            <template v-if="item.explanations[0].basis.length">
+              <h3 class="explanation-label mt-4">距离下一档还差什么</h3>
+              <ReportProse v-for="line in item.explanations[0].basis" :key="line" :text="line" />
+            </template>
           </div>
-          <details v-if="item.explanations.length" class="explanation-detail" :open="!item.observations.length">
+          <details v-else-if="item.explanations.length" class="explanation-detail" :open="!item.observations.length">
             <summary class="detail-toggle">{{ report.period_type === 'month' ? '各周评分说明' : '任务综合分析' }}</summary>
             <div v-for="(section,index) in item.explanations" :key="index" class="mt-4">
               <h3 v-if="section.date" class="explanation-label">{{ section.date }} 起</h3>
-              <ul class="explanation-list"><li v-for="line in section.analysis" :key="line">{{ line }}</li></ul>
-              <template v-if="section.basis.length && (report.period_type === 'month' || item.explanations.length > 1)"><h4 class="explanation-label mt-3">得分依据</h4><ul class="explanation-list"><li v-for="line in section.basis" :key="line">{{ line }}</li></ul></template>
+              <ul class="explanation-list"><li v-for="line in section.analysis" :key="line"><ReportProse :text="line" /></li></ul>
+              <template v-if="section.basis.length && (report.period_type === 'month' || item.explanations.length > 1)"><h4 class="explanation-label mt-3">分档依据与尚未达到更高档位的原因</h4><ul class="explanation-list"><li v-for="line in section.basis" :key="line"><ReportProse :text="line" /></li></ul></template>
             </div>
           </details>
           <details v-if="item.criterion" class="explanation-detail">
@@ -94,7 +109,7 @@
           <template v-if="reviewDetails"><p v-for="limit in item.limitations" :key="limit" class="mt-2 text-amber-700 dark:text-amber-400">{{ displayText(limit) }}</p></template>
           <div v-if="item.tasks.length" class="task-evidence mt-6">
             <h3 class="explanation-label">相关任务 <span class="ml-1 font-normal text-gray-500">{{ item.tasks.length }} 个</span></h3>
-            <details v-for="(task,taskIndex) in item.tasks" :key="task.title" :open="taskIndex === 0" class="task-record border-b border-gray-200 dark:border-dark-700">
+            <details v-for="task in item.tasks" :key="task.title" class="task-record border-b border-gray-200 dark:border-dark-700">
               <summary class="flex cursor-pointer items-start gap-3 py-3 font-medium focus-visible:outline-primary-500">
                 <span class="min-w-0 flex-1">{{ task.title }}</span><span class="shrink-0 text-xs font-normal text-gray-500 dark:text-gray-400">{{ task.records.length }} 条记录</span><Icon name="chevronDown" size="sm" aria-hidden="true" class="expand-arrow shrink-0 text-gray-500 dark:text-gray-400" />
               </summary>
@@ -112,7 +127,10 @@
           </div>
         </div>
       </details>
-    </details>
+      </div>
+    </section>
+    <TaskReviewSection v-if="hasTaskReview" :key="`${report.id}-${report.revision}-${reviewDetails}`" :report="report" :admin="reviewDetails" />
+    <EvidenceCases v-else :report="report" :admin="reviewDetails" />
     <details v-if="reviewDetails && report.limitations?.length" class="mt-5 text-sm">
       <summary class="detail-toggle">资料范围与限制</summary>
       <ul class="explanation-list mt-3 text-gray-600 dark:text-gray-400"><li v-for="limit in report.limitations" :key="limit">{{ displayText(limit) }}</li></ul>
@@ -143,28 +161,56 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import AssessmentReader from './AssessmentReader.vue'
+import { computed, ref, useId, watch } from 'vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import Icon from '@/components/icons/Icon.vue'
 import WorkdayRange from './WorkdayRange.vue'
 import ScoreExplanation from './ScoreExplanation.vue'
 import EvidenceCases from './EvidenceCases.vue'
+import ReportProse from './ReportProse.vue'
+import TaskReviewSection from './TaskReviewSection.vue'
+import ScoreReveal from './ScoreReveal.vue'
 import { stateText, type Report, type Item, type Evidence } from './api'
-import { dimensionNames, evidenceForDisplay, explanation, explanationsForDisplay, observationsForDisplay, reportText, scoreNeedsAttention, scoreStatusLabel, sourceContext, taskEvidence } from './reportPresentation'
-const props = defineProps<{ report: Report; reviewDetails?: boolean }>()
+import { checkedWeekJudgment, reviewPending, dimensionNames, evidenceForDisplay, explanation, observationsForDisplay, reportText, scoreNeedsAttention, scoreStatusLabel, sourceContext, taskEvidence } from './reportPresentation'
+const props = defineProps<{ report: Report; reviewDetails?: boolean; revealScore?: boolean; periodLabel?: string }>()
+const hasTaskReview = computed(() => {
+  const value = props.report.task_review
+  return props.report.period_type === 'week' && !!value && (value.version === 'task-evidence-20261106.1' && ['case_checked', 'week_checked', 'generated'].includes(value.status) || value.version === 'source-evidence-20261116.1' && value.status === 'source_linked')
+})
+const displayedScore = computed(() => props.report.score)
+const displayedExact = computed(() => props.report.exact)
 const hasDimensionObservations = computed(() => props.report.score === null && props.report.dimensions.some(d => d.score !== null))
 const expandedEvidence = ref(new Set<string>())
 const displayText = computed(() => reportText(props.report))
 const presentedItems = computed(() => (props.report.items ?? []).map(item => {
   const records = props.reviewDetails ? item.evidence ?? [] : evidenceForDisplay(item)
+  const judgment = checkedWeekJudgment(props.report, item.item_code)
+  const explanations = judgment ? explanation({ ...item, reason: judgment.reason }, displayText.value) : explanation(item, displayText.value)
+  const observations = props.reviewDetails ? [...new Set(records.map(e => e.supports).filter(Boolean))].map(displayText.value) : observationsForDisplay(item, displayText.value)
   return {
     ...item,
-    observations: props.reviewDetails ? [...new Set(records.map(e => e.supports).filter(Boolean))].map(displayText.value) : observationsForDisplay(item, displayText.value),
-    explanations: props.reviewDetails ? explanation(item, displayText.value) : explanationsForDisplay(item, displayText.value),
+    observations: observations.filter(text => !explanations.some(section => section.analysis.join('') === text)),
+    explanations,
     tasks: taskEvidence({ ...item, evidence: records })
   }
 }))
-const firstItem = computed(() => props.report.items?.find(item => item.score !== null)?.item_code ?? props.report.items?.[0]?.item_code)
+const panelId = useId()
+const selectedDimension = ref('P')
+watch(() => [props.report.id, props.report.revision], () => {
+  selectedDimension.value = props.report.dimensions[0]?.code ?? 'P'
+}, { immediate: true })
+const selectedItems = computed(() => presentedItems.value.filter(item => item.item_code.startsWith(selectedDimension.value)))
+const firstItem = computed(() => selectedItems.value.find(item => item.score !== null)?.item_code ?? selectedItems.value[0]?.item_code)
+function switchDimension(event: KeyboardEvent, code: string) {
+  const codes = chartDimensions.value.map(dimension => dimension.code)
+  const index = codes.indexOf(code)
+  const next = event.key === 'Home' ? 0 : event.key === 'End' ? codes.length - 1 : event.key === 'ArrowRight' ? (index + 1) % codes.length : event.key === 'ArrowLeft' ? (index + codes.length - 1) % codes.length : -1
+  if (next < 0) return
+  event.preventDefault()
+  selectedDimension.value = codes[next]
+  document.getElementById(`${panelId}-${codes[next]}-tab`)?.focus()
+}
 const evidenceKey = (code: string, title: string) => JSON.stringify([code, title])
 const visibleEvidence = (code: string, title: string, records: Evidence[]) => expandedEvidence.value.has(evidenceKey(code,title)) ? records : records.slice(0,2)
 const componentFor = (item:Item,start:string) => item.components?.find(c=>c.period_start===start)

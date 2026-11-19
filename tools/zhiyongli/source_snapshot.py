@@ -4,6 +4,7 @@
 数据库连接仅从环境 ZHIYONGLI_SOURCE_DSN 读取。此入口不识别任务、不评分。
 """
 import argparse
+from contextlib import nullcontext
 from datetime import datetime, timezone
 import hashlib
 import fcntl
@@ -12,7 +13,7 @@ import os
 from pathlib import Path
 import sqlite3
 import uuid
-from personal_scope import excluded_user_ids
+from personal_scope import excluded_user_ids, excluded_api_key_ids
 
 AUDIT_COLUMNS = ('id','request_id','session_id','request_count','user_id','api_key_id','platform',
     'endpoint','method','model','status_code','request_body','response_body','request_truncated',
@@ -60,6 +61,8 @@ def file_sha256(path):
 
 
 def collect(connection, directory, excluded_keys, since, user_ids=None,shared_root=None):
+    """来源可传现有连接或按需会话工厂；采集结束即释放工厂连接。"""
+    excluded_keys=excluded_api_key_ids(excluded_keys)
     root = Path(directory)
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(root, 0o700)
@@ -69,7 +72,8 @@ def collect(connection, directory, excluded_keys, since, user_ids=None,shared_ro
         except BlockingIOError:
             raise ValueError('已有来源采集，禁止并发覆盖快照') from None
         try:
-            return _collect(connection, directory, excluded_keys, since, user_ids,shared_root)
+            with connection() if callable(connection) else nullcontext(connection) as session:
+                return _collect(session, directory, excluded_keys, since, user_ids,shared_root)
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
 

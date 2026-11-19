@@ -18,7 +18,7 @@ func TestJobWindows(t *testing.T) {
 		{"month", "2026-09-01", "2026-10-01", true},
 		{"month", "2026-11-01", "", false},
 		{"month", "2026-09-02", "", false},
-		{"day", "2026-09-07", "", false},
+		{"day", "2026-09-07", "2026-09-08", true},
 	} {
 		got, err := jobWindow(v.kind, v.start, now)
 		if (err == nil) != v.valid || v.valid && got != v.end {

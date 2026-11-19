@@ -254,10 +254,11 @@ class AuditReadbackTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp,patch('pipeline.reading_view',side_effect=view):
             root=Path(tmp);p=source();client=Reviser();client.always=True
             with self.assertRaises(Paused) as caught:evaluate_week(p,root,client)
-            self.assertEqual('needs_review',caught.exception.state);self.assertEqual(2,len(list((root/'revisions').iterdir())))
+            self.assertEqual('needs_review',caught.exception.state);self.assertIn('相同材料',str(caught.exception))
+            self.assertEqual(1,len(list((root/'revisions').iterdir())))
             calls=client.calls
             with self.assertRaises(Paused):evaluate_week(p,root,client)
-            self.assertEqual((calls,2),(client.calls,len(list((root/'revisions').iterdir()))))
+            self.assertEqual((calls,1),(client.calls,len(list((root/'revisions').iterdir()))))
 
     def test_review_failing_program_checks_is_revised_with_the_checker_reason(self):
         class Misquoting(Auditor):
@@ -386,7 +387,7 @@ class AuditReadbackTests(unittest.TestCase):
         from semantic_audit import schema,validate
         from review_schema import schema as review_schema
         from runtime import VERSION
-        unit=dict(key='k',events=[dict(event='only-synthetic-event',text='合成材料')],person_events=['only-synthetic-event'])
+        unit=dict(key='k',periods=[dict(period_id='synthetic-period')],events=[dict(event='only-synthetic-event',text='合成材料')],person_events=['only-synthetic-event'])
         items={i:dict(verdict='supported',reason='合成',source_quotes=[dict(event='only-synthetic-event',quote='合成')],problem_codes=[])
             for i in RUBRIC['items']}
         value=dict(items=items,global_issues=[],remarks=['仅说明材料范围'],needs_events=[])

@@ -78,7 +78,7 @@ def schema(periods):
         source_quotes=array(quote),recovery_period=dict(type=['string','null']),recovery_refs=array(text))) for key in slots(periods)})))
 
 
-def validate(periods,value,only_keys=None):
+def validate(periods,value,only_keys=None,*,allow_unresolved=False):
     expected=slots(periods);decisions=value.get('slots')
     if only_keys is not None:
         if not set(only_keys)<=set(expected):raise ValueError('逐项核对不能引入未知月末缺口')
@@ -93,7 +93,7 @@ def validate(periods,value,only_keys=None):
             if q.get('event') not in events or not q.get('quote') or q['quote'] not in events[q['event']]['text']:
                 raise ValueError('月末处置引文不在实际期间来源')
         origin=expected[key];source=by_id[origin['period_id']]
-        if d['status']=='unresolved':raise ValueError('必要缺口月末状态未决，保留回执待核，不补造处置')
+        if d['status']=='unresolved' and not allow_unresolved:raise ValueError('必要缺口月末状态未决，保留回执待核，不补造处置')
         if d['status']=='recovered':
             recovery=by_id.get(d.get('recovery_period'))
             if not recovery or moment(recovery['row']['window']['start'])<moment(source['row']['window']['end']):

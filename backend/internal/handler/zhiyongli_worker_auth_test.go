@@ -33,12 +33,15 @@ func TestZhiyongliWorkerCredentialIsRequiredAndBounded(t *testing.T) {
 			t.Setenv("ZHIYONGLI_WORKER_KEY_FILE", tc.path)
 			r := gin.New()
 			r.POST("/jobs/:id/import", h.ImportJob)
-			req := httptest.NewRequest(http.MethodPost, "/jobs/1/import", strings.NewReader("not-json"))
-			req.Header.Set("X-Zhiyongli-Worker-Key", tc.header)
-			out := httptest.NewRecorder()
-			r.ServeHTTP(out, req)
-			if out.Code != tc.want {
-				t.Fatalf("got %d want %d", out.Code, tc.want)
+			r.POST("/jobs/:id/import-draft", h.ImportDayJobDraft)
+			for _, route := range []string{"/jobs/1/import", "/jobs/1/import-draft"} {
+				req := httptest.NewRequest(http.MethodPost, route, strings.NewReader("not-json"))
+				req.Header.Set("X-Zhiyongli-Worker-Key", tc.header)
+				out := httptest.NewRecorder()
+				r.ServeHTTP(out, req)
+				if out.Code != tc.want {
+					t.Fatalf("%s got %d want %d", route, out.Code, tc.want)
+				}
 			}
 		})
 	}

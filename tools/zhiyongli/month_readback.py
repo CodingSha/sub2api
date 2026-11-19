@@ -38,7 +38,8 @@ def prepare(periods,directories,item,root):
         directory=Path(directories[pid]);tree=directory/'context-navigation/tree.json'
         if tree.exists():
             packet=json.loads((directory/'packet.json').read_text())
-            access=Access(Navigation(directory/'context-navigation',packet),root/'access'/pid)
+            # 多期间共用总请求容量，未实现聚合目录规划前保留原定位合同。
+            access=Access(Navigation(directory/'context-navigation',packet),root/'access'/pid,child_directory=False)
             view=access.start(view);accesses[pid]=access
         else:
             # 短期间可提供全部原文；长期间必须有自己的截止前导航，不能只看少数引文。

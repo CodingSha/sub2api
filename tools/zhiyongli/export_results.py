@@ -35,8 +35,20 @@ def load_ref(base, ref):
 
 def safe(text):
     """仅输出判定引用；凭证脱敏，不输出原始审计请求体或磁盘位置。"""
-    text = re.sub(r'(?i)((?:password|authorization|api[_-]?key|secret|token|密码|密钥)[\"\s:=：]+)([^\s,\"}\n]+)', r'\1[已脱敏]', text)
+    text = re.sub(r'(?i)((?:password|authorization|api[_-]?key|secret|token|账号密码|账密|密码|密钥)[\"\s:=：是为]+)([^\s,\"}\n，。；]+)', r'\1[已脱敏]', text)
     return re.sub(r'\bsk-[A-Za-z0-9_-]{16,}', '[已脱敏]', text)
+
+
+def reviewed_reason(cell):
+    """仅排列已核判断，不重新生成事实、邻档解释或任务结局。"""
+    if cell['state']!='observed':return safe(cell['reason'])
+    parts=[('本项判断',cell['reason']),('实际机会',cell['opportunity']['description']),
+        ('本人行为',cell['action']['fact']),('AI承担的工作',cell['action']['ai_role']),
+        ('本人归属依据',cell['action']['attribution_explanation']),
+        ('质量依据',cell['quality']['reason']),('判档依据',cell['performance']['reason'])]
+    if cell.get('difference'):parts.append(('与其他分项的独立事实',cell['difference']))
+    # 月报每期间必须保持一行，前端依靠行首期间日期定位相应证据。
+    return '；'.join(label+'：'+safe(value).replace('\r',' ').replace('\n',' ') for label,value in parts)
 
 
 def evidence_for(unit, review, cell):
@@ -130,7 +142,7 @@ def convert(base, entry, loader=None):
             result['items'].append(dict(item_code=cell['item'], name=ITEMS[cell['item']],
                 state=cell['state'] if not (cell['state'] == 'observed' and not observed) else 'pending',
                 exact=str(PERFORMANCE[cell['performance']['verdict']]) if observed else None, score=None,
-                reason=safe(cell['performance']['reason'] if observed else cell['reason']),
+                reason=reviewed_reason(cell),
                 criterion=RUBRIC['performance_anchors'].get(cell['item'], {}).get(cell.get('performance', {}).get('verdict'),
                     ITEMS[cell['item']] + '：按023对应表现档与已证必要缺口判定'),
                 necessary_gap=observed and cell['quality']['label'] in NECESSARY, components=[], period_states={},
@@ -145,12 +157,14 @@ def convert(base, entry, loader=None):
         if not computed['publishable']:
             from release_scope import assess
             assessment=assess(computed,entry.get('scope_decisions',[]),entry.get('scope_eligibility'))
-            if not assessment['gradeable']:
+            if not assessment['gradeable'] and not entry.get('final_observation',False):
                 raise ValueError('月来源或证据尚未核完，不导出可发布数字：' + str(computed['source_gaps']))
             result['assessment']=dict(version=assessment['version'],source_gap_digest=assessment['source_gap_digest'],
                 scope=assessment['scope'],issues=[dict(id=d['id'],status=d['status'],
                     description=safe(d['source'] if isinstance(d['source'],str) else json.dumps(d['source'],ensure_ascii=False)),
                     reason=safe(d['reason'])) for d in assessment['issues']])
+            if entry.get('final_observation',False) and not assessment['gradeable']:
+                result['assessment']['version']='scope-disclosure-20261118.3'
             result['limitations'].extend(safe(d['reason']) for d in assessment['issues'])
         result['coverage'] = [dict(period_start=row['window']['start'][:10], period_end=row['window']['end'][:10], evidence_checked=True)
                               for _, _, row in sorted(sources, key=lambda s: s[2]['window']['start'])]
@@ -165,7 +179,7 @@ def convert(base, entry, loader=None):
                                         exact=str(PERFORMANCE[cell['performance']['verdict']]),
                                         necessary_gap=cell['quality']['label'] in NECESSARY))
                     evidence.extend(evidence_for(unit, review, cell))
-                    reasons.append(row['window']['start'][:10] + '：' + safe(cell['performance']['reason']))
+                    reasons.append(row['window']['start'][:10] + '：' + reviewed_reason(cell))
             result['items'].append(dict(item_code=code, name=ITEMS[code],
                 state='observed' if item['exact'] is not None else next(iter(states)) if len(states)==1 else 'mixed_unscored', exact=item['exact'], score=None,
                 reason='\n'.join(reasons) if reasons else '本月各评价期间未形成该分项的数值，逐期间状态保留在计算依据中。',

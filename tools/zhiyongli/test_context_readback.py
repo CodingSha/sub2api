@@ -160,6 +160,7 @@ class ReadbackTests(unittest.TestCase):
         from review_schema import schema
         u=self.unit(self.source())
         u['events']=[dict(event='present')]
+        u['periods']=[dict(period_id='synthetic-period')]
         transport=schema(u,RUBRIC,VERSION)['properties']['needs_events']
         self.assertEqual(['missing-context'],transport['items']['enum'])
         self.assertEqual(24,transport['maxItems'])

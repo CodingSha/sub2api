@@ -55,6 +55,13 @@ func testStore(t *testing.T) *Store {
 	if _, e = scoped.Exec(string(migration)); e != nil {
 		t.Fatal(e)
 	}
+	taskCases, e := migrations.FS.ReadFile("247_zhiyongli_task_cases.sql")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = scoped.Exec(string(taskCases)); e != nil {
+		t.Fatal(e)
+	}
 	if _, e = scoped.Exec(`CREATE TABLE audit_whitelist_users(user_id BIGINT PRIMARY KEY REFERENCES users(id))`); e != nil {
 		t.Fatal(e)
 	}

@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from runtime import atomic, digest, response_text, response_value, validate_review, summarize_month, VERSION, RUBRIC, policy, compatible_policy, moment
-from source_frames import frames, read_signed
+from source_frames import iter_frames, read_signed
 from protocol_events import extract
 from task_identification import canonical, validate as validate_identified
 from export_results import convert
@@ -18,17 +18,32 @@ DIRECT_BYTES=120_000
 AUTO_REVISIONS=2
 
 class Paused(ValueError):
-    def __init__(self, state, message):
-        super().__init__(message); self.state=state
+    def __init__(self, state, message, *, reason_code=None):
+        super().__init__(message); self.state=state; self.reason_code=reason_code
+
+
+def reading_failure(status):
+    """区分发送不明、明确执行失败及内容校验，不从页面通用提示推断原因。"""
+    blocked=status['blocked']
+    if any(b['state']=='unknown' for b in blocked):
+        return Paused('unknown','来源阅读请求结果不明；保留已完成页，不自动重发')
+    failed=[b for b in blocked if b['state'] in {'model_failed','rejected'}]
+    if failed:
+        if any(b.get('error_code')=='gateway_concurrency_limit' for b in failed):
+            return Paused('needs_review','来源阅读的模型请求因账户或用户并发超限失败；原回执与已完成页保留，受控续发次数未配置或已用尽，须核对后续处理')
+        return Paused('needs_review','来源阅读的模型请求执行失败；原始错误码与回执保留，不能作为内容校验失败或无活动结果')
+    return Paused('needs_review','部分来源阅读未通过校验，已完成页保留')
+
 
 def received(record):
     if record['status']=='budget_paused':
         raise Paused('needs_review','DSH在发送前达到请求预算；原会话和回执已保留，须显式核预算续接，页面恢复不会重新发请求')
     if record['status'] in {'requesting','unknown'}:
-        raise Paused('unknown','模型请求结果不明，已保留回执；需核对后处理，不自动重发')
+        raise Paused('unknown','模型请求结果不明，已保留回执；需核对后处理，不自动重发',reason_code='model_outcome_unknown')
     if record['status']!='received':
-        raise Paused('needs_review','模型请求被明确拒绝；已保留回执，不自动重发')
-    return json.loads(response_text(record['response']))
+        raise Paused('needs_review','模型请求被明确拒绝；已保留回执，不自动重发',reason_code='model_request_rejected')
+    from review_protocol import decode
+    return decode(json.loads(response_text(record['response'])))
 
 def source_display_order(event):
     """同采集时刻按审计行及请求组织展示；同帧内部保留协议数组顺序。"""
@@ -37,7 +52,11 @@ def source_display_order(event):
     request=event.get('request_id') or ':'.join(frame[2:])
     return moment(event['at']),int(frame[1]),request,frame[2]=='response'
 
-def prepare(source_root, user_id, start, end,workday_scope=None,preparation=False,preparation_until=None):
+def prepare(source_root, user_id, start, end,workday_scope=None,preparation=False,preparation_until=None,metadata_cache=None,session_review=False):
+    parser=extract
+    if session_review:
+        from session_evidence import captured_events
+        parser=captured_events
     latest=json.loads((Path(source_root)/'latest.json').read_text())
     snapshot=read_signed(Path(source_root),latest)
     user=next((u for u in snapshot['users'] if u['id']==user_id),None)
@@ -57,24 +76,46 @@ def prepare(source_root, user_id, start, end,workday_scope=None,preparation=Fals
         raise Paused('needs_review','来源缓存的采集起点晚于本期开始，缺失日期不能冒称完整周材料')
     if snapshot.get('until') and moment(snapshot['until'])<moment(cutoff):
         raise Paused('needs_review','来源缓存的采集终点早于本期截止，快照保存时间不能替代采集范围')
-    own=copy.deepcopy(snapshot)
-    # 先按签名查所属人员；不会把其他人员正文装配入模型。
-    own['rows']=[r for r in snapshot['rows'] if read_signed(Path(source_root),r)['user_id']==user_id]
-    framed=frames(source_root,own)
+    dates=set(workday_scope['evaluation_dates']) if workday_scope is not None and 'evaluation_dates' in workday_scope else None
+    # 在展开协议前过滤截止后材料；会话起点前的必要背景仍保留。
+    def include_at(at):
+        return moment(at)<moment(cutoff) and (dates is None or moment(at).astimezone(TZ).date().isoformat() in dates)
     def group(frame):
         return frame.get('session_id') or 'audit:'+frame['frame'].split(':')[1]
-    active={group(f) for f in framed['frames'] if moment(start)<=moment(f['at'])<moment(cutoff)}
-    framed['frames']=[f for f in framed['frames'] if group(f) in active and moment(f['at'])<moment(cutoff)]
-    frame_ids={f['frame'] for f in framed['frames']}
-    framed['issues']=[i for i in framed['issues'] if i['frame'] in frame_ids]
-    packet=extract(framed)
+    def within_usage(at):
+        local=moment(at).astimezone(TZ)
+        return 8<=local.hour<21
+    # 先只扫元数据确定活跃会话，再逐帧提取；历史先出现也不会漏掉。
+    # 两遍均验来源签名。首遍不保留整周帧正文，第二遍不解析无关会话协议。
+    active={group(f) for f,_ in iter_frames(source_root,snapshot,include_at=include_at,
+        user_id=user_id,metadata_only=True,cache_root=metadata_cache) if moment(start)<=moment(f['at'])<moment(cutoff)
+        and (not session_review or within_usage(f['at']))}
+    packet=parser(dict(snapshot_at=snapshot['snapshot_at'],frames=[],issues=[]))
+    source_issues=[];protocol_issues=[];history={}
+    def consume(frame):
+        extracted=parser(dict(snapshot_at=snapshot['snapshot_at'],frames=[frame],issues=[]))
+        protocol_issues.extend(extracted['issues'])
+        for event in extracted['events']:
+            event['source']['original_event']=event['event']
+            event['event']='audit-'+digest(event['event'])[:32]
+            # 及时释放重复provider历史；只合并时间未知背景，真实重复提交均保留。
+            if event['timestamp_unknown']:
+                key=(event.get('api_key_id'),event['session_id'] or event['source']['frame'].split(':')[1],event['protocol_role'],event['text'])
+                if key in history:
+                    history[key].setdefault('duplicate_source_events',[]).append(event['event']);continue
+                history[key]=event
+            packet['events'].append(event)
+    for frame,issues in iter_frames(source_root,snapshot,include_at=include_at,user_id=user_id,
+            include_group=lambda g:g in active,cache_root=metadata_cache):
+        source_issues.extend(issues)
+        consume(frame)
+        del frame
+    # 保持旧合同的两阶段问题排列，不将来源问题与协议问题交错。
+    packet['issues']=source_issues+protocol_issues
+    del history
     if workday_scope is not None:packet['workday_scope']=copy.deepcopy(workday_scope)
     if preparation:packet.update(preparation_only=True,preparation_observed_until=cutoff)
-    for event in packet['events']:
-        # 产品来源标识只允许字母、数字、冒号、下划线和连字符；原指针另存。
-        event['source']['original_event']=event['event']
-        event['event']='audit-'+digest(event['event'])[:32]
-    # 历史同文只去掉时间未知的副本，真实再次发送不去重。
+    # 已知提交可能晚于历史副本出现，待扫描结束才确定未知副本的上下文归属。
     known={(e['session_id'],e['text']) for e in packet['events'] if e['actor_class']=='candidate_user' and not e['timestamp_unknown']}
     for e in packet['events']:
         if e['actor_class']=='candidate_user' and not e['timestamp_unknown'] and moment(e['at'])<moment(start):
@@ -82,37 +123,95 @@ def prepare(source_root, user_id, start, end,workday_scope=None,preparation=Fals
         if e['actor_class']=='candidate_user' and e['timestamp_unknown'] and (e['session_id'],e['text']) in known:
             e['actor_class']='context'
         if (workday_scope is not None and e['actor_class']=='candidate_user' and not e['timestamp_unknown']
-            and moment(e['at']).astimezone(TZ).date().isoformat() not in workday_scope['working_dates']):
+            and moment(e['at']).astimezone(TZ).date().isoformat() not in workday_scope.get('evaluation_dates',workday_scope['working_dates'])):
             e.update(actor_class='context',workday_exclusion='non_workday_context_only')
-    # 完整provider历史可能随每次请求重复携带；仅合并时间未知的同会话、同角色、同文背景。
-    # 本次真实提交（时间已知）无论同文多少次均保留。
-    history={};retained=[]
-    for e in packet['events']:
-        if e['timestamp_unknown']:
-            key=(e['session_id'] or e['source']['frame'].split(':')[1],e['protocol_role'],e['text'])
-            if key in history:
-                history[key].setdefault('duplicate_source_events',[]).append(e['event']);continue
-            history[key]=e
-        retained.append(e)
-    packet['events']=retained
+        if session_review and e['actor_class']=='candidate_user' and not e['timestamp_unknown'] and not within_usage(e['at']):
+            e.update(actor_class='context',usage_window_exclusion='outside_0800_2100_context_only')
+    del known
     packet.update(user_id=str(user_id),user_email=user['email'],since=start,until=end,
-        source_scope='full_person_window',source_snapshot=latest)
+        source_scope='registered_person_workdays' if dates is not None else 'full_person_window',source_snapshot=latest)
+    if session_review:
+        packet['usage_window']=dict(timezone='Asia/Shanghai',start='08:00',end='21:00',end_exclusive=True,
+            time_basis='保留原事件timestamp_basis；audit_capture只界定审计调用时窗，不证明历史消息发送时间',
+            background_policy='同活跃会话的既有上下文保留；窗外已知候选仅作背景，不计本人表现')
     # 稳定排序不能用哈希事件ID打散同请求的输入/返回或协议内原有顺序。
     # 这只是展示顺序，不能据此推断耗时、历史发送先后或跨请求的因果关系。
     packet['events'].sort(key=source_display_order)
+    return packet
+
+def selected_packet(directory,source_root,user_id,start,end,scope,*,create=False,session_review=False):
+    """局部范围先离线冻结，在线只验签读取；避免多线程反复装配完整旧资料。"""
+    import fcntl
+    root=Path(directory);root.mkdir(parents=True,exist_ok=True,mode=0o700)
+    with (root/'prepare.lock').open('a') as lock:
+        try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:raise Paused('queued','所选范围资料正在离线冻结，等待验签完成') from None
+        return _selected_packet(root,source_root,user_id,start,end,scope,create=create,session_review=session_review)
+
+def _selected_packet(directory,source_root,user_id,start,end,scope,*,create=False,session_review=False):
+    from source_snapshot import file_sha256,require_current_query
+    from workday_scope import validate
+    validate(scope)
+    if not scope.get('evaluation_dates'):raise ValueError('离线选日资料必须绑定受信局部范围')
+    root=Path(directory);source_root=Path(source_root)
+    latest=json.loads((source_root/'latest.json').read_text())
+    snapshot=read_signed(source_root,latest);require_current_query(snapshot)
+    identity=dict(user_id=str(user_id),since=start,until=end,workday_scope=scope,source_snapshot=latest)
+    if session_review:identity['source_access_mode']='session_review'
+    proof_path=root/'prepared.json'
+    if not proof_path.exists():
+        if not create:raise Paused('needs_review','所选范围尚未完成离线资料冻结，未在线加载大包或发送模型请求')
+        root.mkdir(parents=True,exist_ok=True,mode=0o700)
+        if (root/'packet.json').exists():raise ValueError('离线资料存在未封口文件，保留待核，不能覆盖')
+        packet=prepare(source_root,user_id,start,end,workday_scope=scope,metadata_cache=root/'source-frames',
+            **(dict(session_review=True) if session_review else {}))
+        if session_review:packet['source_access_mode']='session_review'
+        if json.loads((source_root/'latest.json').read_text())!=latest:raise ValueError('离线装配期间来源快照变化，保留待核')
+        atomic(root/'packet.json',packet)
+        atomic(proof_path,dict(identity=identity,policy_sha256=policy(),
+            packet=dict(path='packet.json',sha256=file_sha256(root/'packet.json'))))
+        return packet
+    proof=json.loads(proof_path.read_text())
+    if proof.get('identity')!=identity or not compatible_policy(proof.get('policy_sha256')):
+        raise ValueError('离线资料的来源、范围或执行合同变化，不能覆盖或重建放行')
+    # 仍核原始来源文件签名；预备包不能掩盖源文件损坏，但无需解析长正文。
+    for ref in snapshot['rows']:
+        path=(source_root/ref['path']).resolve()
+        if not path.is_relative_to(source_root.resolve()) or file_sha256(path)!=ref['sha256']:
+            raise ValueError('离线资料原来源路径越界或签名变化')
+    packet=read_signed(root,proof['packet'])
+    if any(packet.get(k)!=v for k,v in identity.items()):raise ValueError('离线资料内容未绑定所选人员、周期及范围')
     return packet
 
 def reading_preflight(packet,client):
     """日常准备与封口共用容量检查；已知下游不能装配时均不得先付费阅读。"""
     from bounded_read import raw_size,plan
     from hierarchical_reading import supported, preflight
-    if supported(client) and (raw_size(packet)>DIRECT_BYTES
+    from source_index import enabled
+    if enabled(client):
+        if not supported(client):
+            raise Paused('needs_review','证据优先实验须支持分批归属及受控原文补读')
+        if getattr(client,'reading_page_navigation',False) is True:
+            raise Paused('needs_review','证据优先与旧融合页模式不可同时启用')
+        from hierarchical_reading import compact
+        from candidate_segments import split
+        from goal_batches import plan as identification_plan
+        view=compact(packet,dict(node_id='0'*64,summary='程序原文索引，尚未进行模型阅读'),{})
+        identification_plan(split(view))
+        return
+    if getattr(client,'reading_page_navigation',False) is True and not supported(client):
+        raise Paused('needs_review','实验页导航须保留完整分层归属及原文回读，本次未发送首读请求')
+    # 本次检查内材料只读，完整JSON字节数仅计算一次，避免大包反复编码。
+    packet_bytes=raw_size(packet)
+    if getattr(client,'reading_efficiency',False) is True and packet_bytes>DIRECT_BYTES and not supported(client):
+        raise Paused('needs_review','新正文复用合同须保留全事件导航及原文补读；当前客户端不支持，本次未发送阅读请求')
+    if supported(client) and (packet_bytes>DIRECT_BYTES
             or any(raw_size(e)>85_000 for e in packet['events'] if e['actor_class']=='candidate_user')):
         try:preflight(packet)
         except ValueError as ex:raise Paused('needs_review','分层归属的确定性装配超容量，本次未发送阅读请求') from ex
         return
     candidates=[e for e in packet['events'] if e['actor_class']=='candidate_user']
-    if raw_size(packet)<=DIRECT_BYTES:
+    if packet_bytes<=DIRECT_BYTES:
         if any(raw_size(e)>85_000 for e in candidates):
             raise Paused('needs_review','单条候选输入的分段归属已有合同，但整周有界综合尚未接通；本次未发送模型请求，原文完整保留')
         return
@@ -139,18 +238,28 @@ def reading_view(packet,root,client,progress,force_hierarchical=False):
     """长来源逐页全读；保留全部候选输入、各页摘要和逐字依据，原文仍在冻结包。"""
     from bounded_read import raw_size,read_all
     from hierarchical_reading import supported
+    from source_index import enabled,build_view
+    if enabled(client):
+        progress('indexing',0,len(packet['events']),'程序建立原文目录，背景按需读取，未宣称模型已全读')
+        return build_view(packet,root)
+    prior_navigation=Path(root)/'context-navigation/input.json'
+    if prior_navigation.exists():
+        from page_navigation import MODE
+        requested=MODE if getattr(client,'reading_page_navigation',False) is True else None
+        if json.loads(prior_navigation.read_text()).get('page_navigation_mode')!=requested:
+            raise Paused('needs_review','已有导航的阅读模式冻结，本次不先发送新首读请求；须沿原执行续跑')
     hierarchical=supported(client) and (force_hierarchical or raw_size(packet)>DIRECT_BYTES
         or any(raw_size(e)>85_000 for e in packet['events'] if e['actor_class']=='candidate_user'))
     if raw_size(packet)<=DIRECT_BYTES and not hierarchical:return packet
     reading_preflight(packet,client)
     progress('reading',0,0,'计算完整来源阅读页数；不裁掉长对话')
     status=read_all(packet,root/'reading',client=client,limit=None,
+        navigation_root=root/'context-navigation' if hierarchical else None,
         on_page=lambda done,total:progress('reading',done,total,'阅读页已落盘并核对引文，原文完整保留' if done else '逐页读取全部已保存内容；不裁掉长对话'))
     pages=status['pages']
     progress('reading',len(status['received_pages']),pages,'已收到的阅读页已逐字验引文')
     if status['state']=='reading_blocked':
-        if any(b['state']=='unknown' for b in status['blocked']):raise Paused('unknown','来源阅读请求结果不明；保留已完成页，不自动重发')
-        raise Paused('needs_review','部分来源阅读未通过校验，已完成页保留')
+        raise reading_failure(status)
     if len(status['received_pages'])!=pages:raise Paused('needs_review','来源阅读未完成，不能进入整周评审')
     # 阅读状态中的执行版本不属于来源事实。等价升级后继续绑定本轮首次冻结
     # 的合同，避免仅因运行版本改变而使归属补读的实际输入签名漂移。
@@ -181,6 +290,16 @@ def reading_view(packet,root,client,progress,force_hierarchical=False):
                 a,b=fact['source_start'],fact['source_end'];eid=event['event']+'-span-'+str(a)+'-'+str(b)
                 excerpt=copy.deepcopy(event);excerpt.update(event=eid,text=event['text'][a:b],
                     source_event=event['event'],source_span=[a,b]);excerpts[eid]=excerpt
+    if 'reading_strategy' in manifest:
+        if not hierarchical:raise ValueError('正文复用不能绕过完整来源导航')
+        from reading_efficiency import procedural_notes
+        notes.extend(procedural_notes(packet,manifest,notes))
+        from shared_weeks import reference
+        from bounded_read import checkpoint
+        # 日常和周评可能共用外部阅读目录；周评必须显式签入实际原计划及检查点。
+        checkpoint(root/'reading-efficiency.json',dict(packet_sha256=digest(packet),
+            reading_strategy=manifest['reading_strategy'],evidence_directory=str(directory.resolve()),
+            files=[reference(p) for p in sorted(directory.glob('*.json')) if not p.name.endswith('.receipt.json')]))
     if hierarchical:
         from hierarchical_reading import build
         view=build(packet,notes,status,root,client,received)
@@ -196,7 +315,7 @@ def reading_view(packet,root,client,progress,force_hierarchical=False):
         raise Paused('needs_review','全部来源已分段阅读，但完整候选本人输入及阅读记录仍超过单次容量；须先分批核归属和跨页归并，不裁掉输入或强发整周请求')
     return view
 
-def assemble(packet, identified):
+def assemble(packet, identified, *, allow_unscored=False):
     checked=validate_identified(packet,identified)
     events=[];personal={}
     lo,hi=moment(packet['since']),moment(packet['until'])
@@ -231,7 +350,14 @@ def assemble(packet, identified):
     if remaining:
         sources.append(dict(key=packet['user_id']+':'+period['period_id']+':local',title='保留的局部本人表达',
             purpose='未关联完整目标的表达按上下文判断，不自动扣分',boundary='unresolved',source_kind='local_behavior',person_events=remaining,source_gaps=[],periods=[period]))
-    if not sources: raise Paused('needs_review','本期没有已确认的本人输入；需核对非任务交流、归属未知和无来源状态')
+    if not sources:
+        if not allow_unscored:
+            raise Paused('needs_review','本期没有已确认的本人输入；需核对非任务交流、归属未知和无来源状态',reason_code='source_attribution_unresolved')
+        # 这是实际冻结材料的清单，不是虚构任务或本人动作；模型须完成明确的无分终判。
+        sources.append(dict(key=packet['user_id']+':'+period['period_id']+':material-inventory',
+            title='本期材料归属清单',purpose='已完成归属识别，本期没有已确认的本人输入；不据此推定低表现',
+            boundary='unresolved',boundary_reason='没有可确认本人输入，不把来源user角色直接认领为员工行为',
+            source_kind='local_behavior',person_events=[],source_gaps=[],periods=[period]))
     by_id={e['event']:e for e in packet['events']}
     # 手册1.6：归属未决与表现分开，已核可评范围照常评审，未决部分不计分、不补数，在报告中披露。
     unresolved=[dict(event_id=m['event_id'],reason=m['reason']) for m in checked['materials']
@@ -244,6 +370,7 @@ def assemble(packet, identified):
         person_events=sorted(p for ids in personal.values() for p in ids),source_units=sources,
         source_keys=[s['key'] for s in sources],source_gaps=[],
         source_issues=packet['issues'],reading_notes=packet.get('reading_notes',[]),
+        source_issue_summary=packet.get('source_issue_summary'),
         reading_provenance=packet.get('reading_provenance'),
         identification_provenance=dict(packet_sha256=digest(packet),identified_sha256=digest(identified)))
     if packet.get('workday_scope') is not None:result['workday_scope']=copy.deepcopy(packet['workday_scope'])
@@ -253,16 +380,16 @@ def assemble(packet, identified):
     return result
 
 class Disputed(Paused):
-    """候选未通过另次语义复查或程序校验；有界自动修订用尽后才交人工核对。"""
-    def __init__(self,message='语义复查仍存在判断分歧，各轮候选与复查意见已保留；需实际核对，不自动改分'):
-        super().__init__('needs_review',message)
+    """候选未通过另次语义复查或程序校验；无进展或有界修订用尽后交实际核对。"""
+    def __init__(self,message='语义复查仍存在判断分歧，各轮候选与复查意见已保留；需实际核对，不自动改分',*,reason_code='semantic_dispute'):
+        super().__init__('needs_review',message,reason_code=reason_code)
 
 
 def contract_failure(root,stage,ex,client):
     """评分或复查输出未过确定性校验：记下校验原因供修订轮改正；原回执不动。不支持修订的执行器维持原异常。"""
     if not getattr(client,'accepts_revision_feedback',False):raise ex
     atomic(Path(root)/'contract-error.json',dict(stage=stage,error=str(ex)[:2000]))
-    raise Disputed(('评分' if stage=='review' else '语义复查')+'输出未通过程序校验：'+str(ex)[:300]+'；原回执保留，需实际核对') from None
+    raise Disputed(('评分' if stage=='review' else '语义复查')+'输出未通过程序校验：'+str(ex)[:300]+'；原回执保留，需实际核对',reason_code='model_contract_invalid') from None
 
 
 def revision_round(root):
@@ -291,6 +418,15 @@ def auto_revise(base,current,client):
     """按另次复查的逐项意见开一轮新修订；不是换随机结果重评，原候选、复查回执和前序文件签名全部保留。"""
     done=revision_round(current)
     if done>=AUTO_REVISIONS or not getattr(client,'accepts_revision_feedback',False):return False
+    from revision_convergence import decision
+    control=decision(current)
+    if not control['allow']:
+        # 停止凭据只写一次；重入不得改动已被后续有理由修订冻结的父文件。
+        stop=Path(current)/'revision-stop.json'
+        if stop.exists():
+            if json.loads(stop.read_text())!=control:raise ValueError('自动修订停止依据变化，须实际核对')
+        else:atomic(stop,control)
+        raise Disputed(control['reason'])
     from review_control import revise
     target=revise(base,'自动修订（同模型复查意见驱动）',
         '语义复查存在逐项分歧，按复查意见进行第'+str(done+1)+'轮有界修订；前序候选与复查回执保留',automatic_round=done+1)
@@ -306,19 +442,71 @@ def auto_revise(base,current,client):
 
 
 def evaluate_week(packet, directory, client, progress=lambda *args:None,shared_root=None):
+    if getattr(client,'session_review',False) is True:
+        root=Path(directory)
+        if (root/'input.json').exists() or (root/'active-revision.json').exists():
+            raise ValueError('既有旧路径必须沿原合同恢复，不能原地切换会话评审')
+        client._single_pass=True
+        if shared_root is not None:
+            from session_weeks import evaluate
+            return evaluate(packet,root,client,progress,shared_root)
+        from session_review import evaluate
+        return evaluate(packet,root,client,progress)
+    if (Path(directory)/'session-input.json').exists():
+        raise ValueError('既有会话评审不能切回旧执行模式')
     from review_control import selected
+    from single_pass import MODE
+    base=Path(directory)
+    # 历史目录沿原合同恢复；新执行使用新目录，绝不把旧异议或unknown改成通过。
+    existing=selected(base)
+    frozen=existing/'input.json'
+    if client is not None:
+        client._single_pass=(json.loads(frozen.read_text()).get('review_mode')==MODE if frozen.exists()
+                             else getattr(client,'single_pass',False) is True)
+        if not frozen.exists() and (existing/'shared-week.json').exists():
+            from shared_weeks import read_ref
+            pointer=json.loads((existing/'shared-week.json').read_text())
+            client._single_pass=read_ref(pointer['entry']).get('review_mode')==MODE
     while True:
         current=selected(directory)
         try:return _shared_week(packet,current,client,progress,shared_root)
         except Disputed:
+            if getattr(client,'_single_pass',False):raise
             if not auto_revise(directory,current,client):raise
             progress('reviewing',0,1,'按复查意见或程序校验结果自动修订；前序候选保留')
 
 
 def _shared_week(packet, directory, client, progress,shared_root):
+    from shared_weeks import slot,read_ref,source_identity,checked as checked_shared
+    from page_navigation import MODE
+    mode=MODE if getattr(client,'reading_page_navigation',False) is True else None
+    from source_index import enabled,MODE as SOURCE_MODE
+    source_mode=SOURCE_MODE if enabled(client) else None
+    if source_mode and (shared_root is not None or (Path(directory)/'shared-week.json').exists()):
+        raise Paused('needs_review','证据优先实验须使用独立状态根，尚不接入旧共享周评')
+    existing=Path(directory)/'input.json'
+    if existing.exists():
+        frozen=json.loads(existing.read_text())
+        if frozen.get('source_access_mode')!=source_mode:
+            raise Paused('needs_review','原文访问方式已冻结，不能在原执行中切换证据优先模式')
+        if frozen.get('page_navigation_mode')!=mode:
+            raise Paused('needs_review','已有执行的阅读模式冻结，不能切换模式后复用另一共享结果')
+        if frozen.get('packet_sha256')!=digest(packet) or not compatible_policy(frozen.get('policy_sha256')):
+            raise Paused('needs_review','冻结来源或评审合同发生变化，不能通过共享结果绕过原执行；需明确修订')
+    pointer=Path(directory)/'shared-week.json'
+    if pointer.exists():
+        entry=read_ref(json.loads(pointer.read_text())['entry'])
+        if entry.get('page_navigation_mode')!=mode:
+            raise Paused('needs_review','既有共享周评指针绑定另一阅读模式，须保留原引用并另建验证执行')
+        if entry.get('source_identity')!=source_identity(packet):
+            raise Paused('needs_review','既有共享周评指针绑定另一冻结来源，须保留原引用并另建验证执行')
+        result=checked_shared(entry)
+        progress('checking',1,1,'已复用同来源、同合同的已核周评，未重复调用模型')
+        return result
     if shared_root is None or not packet['events']:return _evaluate_week(packet,directory,client,progress)
-    from shared_weeks import slot
-    with slot(shared_root,packet,directory) as result:
+    from single_pass import active, MODE
+    with slot(shared_root,packet,directory,page_navigation=getattr(client,'reading_page_navigation',False) is True,
+              review_mode=MODE if active(client) else None) as result:
         if result is not None:
             progress('checking',1,1,'已复用同来源、同合同的已核周评，未重复调用模型')
             return result
@@ -326,15 +514,27 @@ def _shared_week(packet, directory, client, progress,shared_root):
 
 
 def _evaluate_week(packet, directory, client, progress):
-    """真实模型识别、评分与另次语义复查；未核通过只留候选，不导入。"""
+    """按冻结执行方式生成周报告；新执行同次生成评分与说明，旧执行保留原复查链。"""
     root=Path(directory);root.mkdir(parents=True,exist_ok=True,mode=0o700)
     if packet.get('preparation_only'):raise Paused('needs_review','日常准备材料尚未封口，只可建立阅读导航，禁止生成周分')
     stamp=dict(packet_sha256=digest(packet),policy_sha256=policy())
+    from single_pass import active, MODE
+    if active(client):stamp['review_mode']=MODE
+    from source_index import enabled,MODE as SOURCE_MODE
+    if enabled(client):
+        if not active(client):
+            raise Paused('needs_review','证据优先实验只接同次评分，不迁移历史复查链')
+        stamp['source_access_mode']=SOURCE_MODE
+    if getattr(client,'reading_page_navigation',False) is True:
+        from page_navigation import MODE
+        stamp['page_navigation_mode']=MODE
     path=root/'input.json'
     if path.exists():
         prior=json.loads(path.read_text())
         if prior.get('packet_sha256')!=stamp['packet_sha256'] or not compatible_policy(prior.get('policy_sha256')):
             raise Paused('needs_review','冻结来源或评审合同发生变化，旧回执不能自动升级；需明确修订')
+        if prior.get('page_navigation_mode')!=stamp.get('page_navigation_mode'):
+            raise Paused('needs_review','本次阅读模式与冻结执行不同，保留原回执，禁止在同一执行中切换')
         # 不改写历史合同或大包；仍核对冻结文件确实绑定当前来源。
         from shared_weeks import file_digest
         import hashlib
@@ -353,21 +553,29 @@ def _evaluate_week(packet, directory, client, progress):
         raise Paused('needs_review' if uncertain else 'no_activity',
             '未找到本期可确认输入；已有上下文或来源问题需核对' if uncertain else '封口来源已核，本期未采集到可定位输入')
     reading_preflight(packet,client)
-    if callable(getattr(client,'preflight_minimum',None)):
-        from bounded_read import plan
-        pages=len(plan(packet)['pages']) if len(json.dumps(packet,ensure_ascii=False).encode())>DIRECT_BYTES else 0
-        client.preflight_minimum(pages+3)
+    if not enabled(client) and callable(getattr(client,'preflight_minimum',None)):
+        from bounded_read import plan,raw_size
+        pages=len(plan(packet,include_text=False,content_identity=getattr(client,'reading_content_identity',False),
+            efficiency=getattr(client,'reading_efficiency',False) is True,
+            page_navigation=getattr(client,'reading_page_navigation',False) is True)['pages']) if raw_size(packet)>DIRECT_BYTES else 0
+        client.preflight_minimum(pages+(2 if active(client) else 3))
     frozen_packet=packet
     packet=reading_view(packet,root,client,progress)
-    from candidate_segments import split as split_candidates
-    packet=split_candidates(packet)
-    if packet.get('candidate_segmentation'):
-        atomic(root/'candidate-segments.json',packet['candidate_segmentation'])
-    progress('identifying',0,1,'结合完整来源识别目标和本人表达')
+    packed=packed_identification(packet,frozen_packet,root,client,progress)
+    if packed is None:
+        if enabled(client) and getattr(client,'supports_material_packing',False) is True:
+            from material_packing import VERSION as PACKING_VERSION
+            packet=dict(packet,material_encoding=PACKING_VERSION)
+        from candidate_segments import split as split_candidates
+        packet=split_candidates(packet)
+        if packet.get('candidate_segmentation'):
+            atomic(root/'candidate-segments.json',packet['candidate_segmentation'])
+        progress('identifying',0,1,'结合完整来源识别目标和本人表达')
+        packet,identified=identify_packet(packet,frozen_packet,root,client,progress)
+    else:packet,identified=packed
     from bounded_read import raw_size
-    packet,identified=identify_packet(packet,frozen_packet,root,client,progress)
     atomic(root/'identified.json',identified)
-    unit=assemble(packet,identified)
+    unit=assemble(packet,identified,allow_unscored=enabled(client))
     if packet.get('context_navigation'):
         from hierarchical_reading import complete_native
         unit=complete_native(unit,frozen_packet)
@@ -378,15 +586,50 @@ def _evaluate_week(packet, directory, client, progress):
     return evaluate_unit(frozen_packet,unit,root,client,progress)
 
 
+def packed_identification(packet,frozen_packet,root,client,progress):
+    """相同段落无损复用后能整批发送时，不再人为拆分消息并跨批归并。"""
+    from source_index import enabled, open_navigation
+    if not enabled(client) or getattr(client,'supports_material_packing',False) is not True:return None
+    from material_packing import VERSION, material_size
+    from navigation_access import Access, ReadbackCapacity, UNIT_BYTES
+    from runtime import MAX_REQUEST_BYTES
+    from bounded_read import checkpoint
+    nav=open_navigation(root/'context-navigation',frozen_packet)
+    access=Access(nav,root/'identification/packed-access',initial_directory=True,material_encoding=VERSION)
+    try:
+        view=access.start(packet,initial_payload=client.identification_payload)
+        wire=len(json.dumps(client.identification_payload(view),ensure_ascii=False).encode())
+        fits=wire<=MAX_REQUEST_BYTES
+    except ReadbackCapacity:
+        view=dict(packet,material_encoding=VERSION);wire=None;fits=False
+    checkpoint(root/'identification/packed-plan.json',dict(version=VERSION,packet_sha256=digest(packet),
+        material_bytes=material_size(view),material_limit=UNIT_BYTES,wire_bytes=wire,wire_limit=MAX_REQUEST_BYTES,
+        state='whole_input_fits' if fits else 'use_existing_batches',candidate_messages=sum(e['actor_class']=='candidate_user' for e in packet['events'])))
+    if not fits:return None
+    progress('identifying',0,1,'共享相同原文段落，整批核本人归属和目标；保留全部消息及背景补读')
+    from identification_readback import complete
+    current,graph=complete(packet,root/'identification/packed-readback',access,client,received)
+    identified=canonical(current,graph)
+    from model_view import background
+    known={e['event'] for e in packet['events']}
+    result=copy.deepcopy(packet)
+    for event in current['events']:
+        if event['event'] in known:continue
+        background(frozen_packet,event)
+        result['events'].append(event)
+    return result,identified
+
+
 def identify_packet(packet,frozen_packet,root,client,progress):
     from bounded_read import raw_size
     if packet.get('context_navigation'):
         from goal_batches import identify
-        from context_navigation import Navigation
+        from source_index import open_navigation
         from navigation_access import Access
-        nav=Navigation(root/'context-navigation',frozen_packet)
+        nav=open_navigation(root/'context-navigation',frozen_packet)
         identified=identify(packet,root/'identification',client,received,progress,
-            access_factory=lambda i:Access(nav,root/'identification/navigation-access'/str(i)))
+            access_factory=lambda i:Access(nav,root/'identification/navigation-access'/str(i),initial_directory=True,
+                material_encoding=packet.get('material_encoding')))
         from model_view import background
         for event in identified.get('readback_context_events',[]):background(frozen_packet,event)
         packet=copy.deepcopy(packet);packet['events'].extend(identified.get('readback_context_events',[]))
@@ -398,7 +641,7 @@ def identify_packet(packet,frozen_packet,root,client,progress):
         identified=checked(client,packet,root/'identify.receipt.json',received,lambda value:canonical(packet,value))[2]
     return packet,identified
 
-def review_materials(packet,unit,root,client,progress,feedback=None):
+def review_materials(packet,unit,root,client,progress,feedback=None,validate_final=None):
     """按完整材料签名建立模型视图，回填时仅增加冻结背景。"""
     from context_readback import complete,InvalidReadback
     from shared_weeks import reference
@@ -413,10 +656,15 @@ def review_materials(packet,unit,root,client,progress,feedback=None):
         unit=create(native)
     access=None
     if (root/'context-navigation/tree.json').exists():
-        from context_navigation import Navigation
+        from source_index import open_navigation
         from navigation_access import Access
-        access=Access(Navigation(root/'context-navigation',packet),root/'navigation-access',native=native if projected else None)
-    try:unit,record,receipt=complete(unit,packet,root,client,received,progress,navigation_access=access,feedback=feedback)
+        access=Access(open_navigation(root/'context-navigation',packet),root/'navigation-access',native=native if projected else None)
+    def validate_current(current,value):
+        if validate_final is not None:
+            from model_view import hydrate
+            validate_final(hydrate(native,current,packet) if projected else current,current,value)
+    try:unit,record,receipt=complete(unit,packet,root,client,received,progress,navigation_access=access,
+        feedback=feedback,validate_final=validate_current if validate_final is not None else None)
     except InvalidReadback as ex:contract_failure(root,'review',ex,client)
     view=unit
     if projected:
@@ -444,12 +692,19 @@ def audit_materials(packet,unit,view,review,root,client,progress,projected,acces
         # 另次复查从相同原文起点独立选择补读，完整分母仍绑定最终原生材料。
         audit_view=create(unit,seeds=view['events'])
         access=Access(Navigation(root/'context-navigation',packet),root/'audit-navigation-access',native=unit)
+    # 新复查为候选预留材料容量；旧回执沿原输入重放，不能因优化改写请求签名。
+    bounded=(root/'audit-capacity-access/input.json').exists()
+    if (root/'context-navigation/tree.json').exists() and (bounded or not list(root.glob('audit*.receipt.json')) and not list((root/'audit-readback').rglob('*.receipt.json'))):
+        from audit_readback import bounded_context
+        audit_view,access=bounded_context(unit,review,packet,root,audit_view if audit_view is not None else view)
     return complete(unit,review,packet,root,client,received,progress,access=access,model_context=audit_view)
 
 
 def evaluate_unit(packet,unit,root,client,progress):
     """同一固定判据处理完整周或月内片段；不重新识别已核目标。"""
     progress('reviewing',0,1,'按1.6上下文合同评审12个分项')
+    from single_pass import active, evaluate
+    if active(client):return evaluate(packet,unit,root,client,progress)
     unit,view,record,projected,access=review_materials(packet,unit,root,client,progress,revision_feedback(root))
     from review_control import resolution
     resolved=resolution(root,unit)
@@ -482,21 +737,27 @@ def evaluate_unit(packet,unit,root,client,progress):
         raise Disputed()
     if unit['evaluation_scope']=='person_week_fragment':
         return None
+    report,result=build_week_bundle(packet,unit,review,audit,root,proof if resolved else None)
+    atomic(root/'native-report.json',report)
+    atomic(root/'bundle.json',result)
+    return result
+
+
+def build_week_bundle(packet,unit,review,audit,root,proof=None):
+    """确定性重建已核周报告；生成与共享重验使用同一导出逻辑，不调用模型。"""
     entry=dict(user_email=packet['user_email'],source_user_id=packet['user_id'],period_type='week',
         period_start=packet['since'][:10],period_end=packet['until'][:10],evidence_checked=True,
         periods=[dict(unit={'name':'unit'},review={'name':'review'})])
     report,_=convert(root,entry,lambda ref:unit if ref['name']=='unit' else review)
     report['limitations'].append(('模型候选经'+proof['reviewer_kind']+'有理由逐项处置，原模型与复查记录保留；'
-        if resolved else 'AI自动评审并经同模型另次语义检查'+('，此前'+str(revision_round(root))+'轮候选已按复查意见自动修订，各轮记录保留；'
+        if proof else 'AI自动评审并经同模型另次语义检查'+('，此前'+str(revision_round(root))+'轮候选已按复查意见自动修订，各轮记录保留；'
             if revision_round(root) else '；'))+'未经独立真人校准，发布前由管理员核对。'
-        +('复查另附'+str(len(audit['value']['remarks']))+'条不要求改动候选的说明，见复查记录。' if not resolved and audit['value'].get('remarks') else ''))
+        +('复查另附'+str(len(audit['value']['remarks']))+'条不要求改动候选的说明，见复查记录。' if not proof and audit['value'].get('remarks') else ''))
     if unit.get('attribution_unresolved'):
         report['limitations'].append('本期有'+str(len(unit['attribution_unresolved']))+'段以用户身份提交的输入未能确认是否为本人表达'
             '（如打包材料、工具输出或编码数据），未计入评分、不补分；原文与判断理由保留，可在评审记录中核对。')
-    atomic(root/'native-report.json',report)
     result=qualify_bundle(dict(schema_version=1,source_name='自动评审1.6:'+unit['key'],reports=[report]))
-    atomic(root/'bundle.json',result)
-    return result
+    return report,result
 
 def month_fragment(unit,start,end):
     """沿用已核整周的本人片段和目标身份；月外输入改为背景，月末之后完全不送入。"""
@@ -534,6 +795,9 @@ def month_fragment(unit,start,end):
 
 def evaluate_month(source_root,user_id,start,end,directory,client,progress=lambda *args:None,shared_root=None,workday_scope=None):
     """完整周保证资格，首尾片段单独判断；月分只走024/025确定性计算。"""
+    if getattr(client,'session_review',False) is True:
+        from session_month import evaluate
+        return evaluate(source_root,user_id,start,end,directory,client,progress,shared_root,workday_scope)
     from month_evidence import freeze_empty,audited_empty
     root=Path(directory);a,b=moment(start),moment(end)
     cursor=a-timedelta(days=a.weekday());weeks=[];period_refs=[];period_values={};native=[];directories={}
@@ -541,7 +805,7 @@ def evaluate_month(source_root,user_id,start,end,directory,client,progress=lambd
     while cursor<b:
         next_week=cursor+timedelta(days=7)
         week_root=root/'weeks'/cursor.date().isoformat()
-        extra={}
+        extra=dict(metadata_cache=(Path(shared_root).parent if shared_root else root)/'source-frames')
         if workday_scope is not None:
             from workday_scope import window,load
             extra['workday_scope']=window(cursor.date().isoformat(),next_week.date().isoformat(),load(expected=workday_scope['registry_sha256']))
@@ -586,10 +850,15 @@ def evaluate_month(source_root,user_id,start,end,directory,client,progress=lambd
 
 def evaluate_fragment(fragment,unit,lo,hi,target,client,progress):
     from review_control import selected
+    from single_pass import MODE
     while True:
         current=selected(target)
+        frozen=Path(current)/'input.json'
+        client._single_pass=(json.loads(frozen.read_text()).get('review_mode')==MODE if frozen.exists()
+                             else getattr(client,'single_pass',False) is True)
         try:return _evaluate_fragment(fragment,unit,lo,hi,current,client,progress)
         except Disputed:
+            if getattr(client,'_single_pass',False):raise
             if not auto_revise(target,current,client):raise
 
 
@@ -598,6 +867,8 @@ def _evaluate_fragment(fragment,unit,lo,hi,target,client,progress):
     unit=month_fragment(unit,lo.isoformat(),hi.isoformat())
     target.mkdir(parents=True,exist_ok=True,mode=0o700)
     stamp=dict(packet_sha256=digest(fragment),unit_sha256=digest(unit),policy_sha256=policy())
+    from single_pass import active, MODE
+    if active(client):stamp['review_mode']=MODE
     if (target/'input.json').exists():
         prior=read(target/'input.json')
         if (dict(prior,policy_sha256=stamp['policy_sha256'])!=stamp

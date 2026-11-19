@@ -52,6 +52,16 @@ func readyWorkdayWindow(kind, start string, now time.Time) (*WorkdayScope, error
 	}
 	var b time.Time
 	switch kind {
+	case "day":
+		scope, err := dailyWindow(start)
+		if err != nil {
+			return nil, err
+		}
+		freeze, _ := time.Parse(time.RFC3339, scope.FreezeAt)
+		if freeze.After(now) {
+			return nil, invalid("当日23点前不启动日评分")
+		}
+		return scope, nil
 	case "week":
 		if a.Weekday() != time.Monday {
 			return nil, invalid("周评分必须从周一开始")
@@ -63,7 +73,7 @@ func readyWorkdayWindow(kind, start string, now time.Time) (*WorkdayScope, error
 		}
 		b = a.AddDate(0, 1, 0)
 	default:
-		return nil, invalid("周期类型必须为week或month")
+		return nil, invalid("周期类型必须为day、week或month")
 	}
 	scope, err := workdayWindow(start, b.Format("2006-01-02"), "")
 	if err != nil {
@@ -318,8 +328,16 @@ func (s *Store) ResumeJob(ctx context.Context, id int64) (Job, error) {
 	return j, tx.Commit()
 }
 
-// ImportJob 限定Worker只能为当前任务接入候选，不能发布或写入别人的周期。
+// ImportJob 限定任务人员和周期；新日评校验通过后直接发布，旧周月候选仍保留原发布操作。
 func (s *Store) ImportJob(ctx context.Context, id int64, bundle Bundle) (Run, error) {
+	return s.importJob(ctx, id, bundle, false)
+}
+
+func (s *Store) ImportDayJobDraft(ctx context.Context, id int64, bundle Bundle) (Run, error) {
+	return s.importJob(ctx, id, bundle, true)
+}
+
+func (s *Store) importJob(ctx context.Context, id int64, bundle Bundle, draftOnly bool) (Run, error) {
 	j, err := scanJob(s.db.QueryRowContext(ctx, `SELECT `+jobFields+` FROM zhiyongli_jobs j JOIN users u ON u.id=j.user_id WHERE j.id=$1`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Run{}, ErrNotFound
@@ -327,7 +345,7 @@ func (s *Store) ImportJob(ctx context.Context, id int64, bundle Bundle) (Run, er
 	if err != nil {
 		return Run{}, err
 	}
-	if j.State != "running" || j.RulesVersion != RulesVersion || len(bundle.Reports) != 1 {
+	if j.State != "running" || j.RulesVersion != RulesVersion || len(bundle.Reports) != 1 || (draftOnly && j.PeriodType != "day") {
 		return Run{}, ErrConflict
 	}
 	r := bundle.Reports[0]
@@ -339,5 +357,26 @@ func (s *Store) ImportJob(ctx context.Context, id int64, bundle Bundle) (Run, er
 	if err = s.db.QueryRowContext(ctx, `SELECT created_by FROM zhiyongli_jobs WHERE id=$1`, j.ID).Scan(&actor); err != nil {
 		return Run{}, err
 	}
-	return s.Import(ctx, bundle, actor)
+	run, err := s.Import(ctx, bundle, actor)
+	if err != nil || j.PeriodType != "day" {
+		return run, err
+	}
+	var reportID int64
+	var revision int
+	var status string
+	if err = s.db.QueryRowContext(ctx, `SELECT id,revision,publication_status FROM zhiyongli_reports WHERE run_id=$1`, run.ID).Scan(&reportID, &revision, &status); err != nil {
+		return Run{}, err
+	}
+	if draftOnly {
+		if status != "draft" {
+			return Run{}, ErrConflict
+		}
+		return run, nil
+	}
+	if status != "published" {
+		if _, err = s.Publish(ctx, reportID, revision, actor); err != nil {
+			return Run{}, err
+		}
+	}
+	return run, nil
 }

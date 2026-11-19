@@ -14,6 +14,29 @@ def array(items):
     return {'type': 'array', 'items': items}
 
 
+def check_local_schema(schema):
+    """发送前核对格式与根引用，阻止嵌套的压缩schema引用不存在的根定义。"""
+    import jsonschema
+    jsonschema.Draft202012Validator.check_schema(schema)
+
+    def walk(node):
+        if isinstance(node, list):
+            for value in node: walk(value)
+        elif isinstance(node, dict):
+            if '$ref' in node:
+                ref = node['$ref']
+                if not isinstance(ref, str) or not ref.startswith('#/'):
+                    raise ValueError('模型输出schema仅允许本地根引用')
+                target = schema
+                try:
+                    for part in ref[2:].split('/'):
+                        target = target[part.replace('~1','/').replace('~0','~')]
+                except (KeyError, TypeError):
+                    raise ValueError('模型输出schema引用不存在，未发送请求') from None
+            for value in node.values(): walk(value)
+    walk(schema)
+
+
 def compact(schema):
     """把重复出现的相同子结构集中到$defs并原位引用；约束内容不变，只缩小请求体。
 
@@ -50,13 +73,21 @@ def compact(schema):
     return result
 
 
-def schema(unit, rubric, version):
-    text = {'type': 'string'}
+def schema(unit, rubric, version, *, evidence=None):
+    text = dict(type='string', **({'minLength': 1} if evidence is not None else {}))
     refs = array(text)
     required_refs = dict(refs, minItems=1)
     # 来源前缀由结构合同约束；本人动作字段不能选择AI/工具背景引文。
     person_refs = dict(type='array', items=dict(type='string', pattern='^person-[A-Za-z0-9_-]+$'), minItems=1)
     supplied_refs = dict(type='array', items=dict(type='string', pattern='^(person|supplied)-[A-Za-z0-9_-]+$'), minItems=1)
+    if evidence is not None:
+        # 会话链路已由坐标生成固定证据账；模型只能选择实际交付的ID。
+        def bound(values, required=False):
+            return dict(type='array', items=enum(*values), **({'minItems': 1} if required else {})) if values else dict(type='array', items=text, maxItems=0)
+        refs=bound([row['id'] for row in evidence])
+        required_refs=dict(refs,minItems=1)
+        person_refs=bound([row['id'] for row in evidence if row['origin'] in {'direct_expression','explicit_adoption'}],True)
+        supplied_refs=bound([row['id'] for row in evidence if row['origin'] in {'direct_expression','explicit_adoption','quoted_or_forwarded'}],True)
     # 原生核验要求这里引用实际事件键；person-/context-是证据键，二者不能混用。
     event_ids=[e['event'] for e in unit['events']]
     event_schema=enum(*event_ids) if event_ids else dict(type='string',maxLength=0)
@@ -79,7 +110,10 @@ def schema(unit, rubric, version):
               ('M', [key for key in rubric['items'] if key.startswith('M')]),
               ('JE', [key for key in rubric['items'] if key.startswith(('J', 'E'))])]
     for item, item_codes in groups:
+        if not item_codes:continue
         for state in ('observed', 'no_opportunity', 'related', 'unobservable', 'attribution_unclear', 'not_applicable'):
+            if evidence is not None and state=='observed' and not (supplied_refs if item=='P' else person_refs).get('minItems'):
+                continue
             fields = dict(item=enum(*item_codes), state=enum(state), reason=text,
                           opportunity=obj(dict(description=text, refs=refs)))
             if state == 'observed':
@@ -100,7 +134,7 @@ def schema(unit, rubric, version):
                 if state == 'observed':
                     handling.append(obj(dict(status=enum('confirmed'), reason=text, refs=person_refs, issue=text)))
                 if state not in ('no_opportunity', 'related', 'not_applicable'):
-                    handling.append(obj(dict(status=enum('unresolved'), reason=text, refs=refs)))
+                    handling.append(obj(dict(status=enum('unresolved'), reason=text, refs=required_refs)))
                 fields['challenge_handling'] = {'anyOf': handling}
             if state == 'observed':
                 # 质量与表现是同一个原生判断合同，不能让两个独立枚举生成矛盾组合。
@@ -143,7 +177,7 @@ def schema(unit, rubric, version):
     needs = dict(type='array',items=enum(*readable),maxItems=24) if readable else dict(type='array',items=text,maxItems=0)
     result = obj(dict(version=enum(version), review_policy=enum(REVIEW_POLICY), key=enum(unit['key']),
                     evidence=array({'anyOf': evidence}) if evidence else dict(array(text),maxItems=0),
-                    period_reviews=array(obj(dict(period_ids=refs, context=obj(context), cells=dict(array({'anyOf': cells}), minItems=12, maxItems=12)))),
+                    period_reviews=array(obj(dict(period_ids=array(enum(*(p['period_id'] for p in unit['periods']))), context=obj(context), cells=dict(array({'anyOf': cells}), minItems=12, maxItems=12)))),
                     needs_events=needs))
     if unit.get('context_access'):
         from navigation_access import query_schema

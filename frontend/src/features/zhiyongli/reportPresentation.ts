@@ -10,6 +10,17 @@ const dimensionNames: Record<string, string> = {
   P: '提示词质量', M: '任务驾驭度', J: '判断核验', E: '使用效率'
 }
 
+// 临时结果不作为完整评审展示，原始数据保留供追溯。
+export function reviewPending(report: Pick<Report, 'sample_initial' | 'task_review'>) {
+  return !!report.sample_initial || report.task_review?.status === 'initial'
+}
+
+// 案例复查只覆盖代表案例，不能替换十二分项的整周判断。
+export function checkedWeekJudgment(report: Report, code: string) {
+  if (report.period_type !== 'week' || report.task_review?.status !== 'week_checked') return undefined
+  return report.task_review.week_judgments?.find(judgment => judgment.item_code === code)
+}
+
 export const scoreStatusLabel = (report: Pick<Report, 'score_status'>) => ({
   scored: '暂无综合分', observation_only: '暂未形成总分', insufficient_evidence: '资料不足',
   no_activity: '暂无可评记录', data_pending: '评分待完成'
@@ -150,3 +161,21 @@ export function sourceContext(evidence: Evidence) {
 }
 
 export { dimensionNames }
+
+// 档位使用低饱和度的不同色相，保留文字对比度；维度、分项和列表共享分段。
+function scoreBand(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === '' || !Number.isFinite(Number(value))) return 'gray'
+  const score = Number(value)
+  if (score >= 90) return 'emerald'
+  if (score >= 80) return 'violet'
+  if (score >= 70) return 'amber'
+  if (score >= 60) return 'orange'
+  return 'rose'
+}
+export function scoreTone(value: string | number | null | undefined): string {
+  return {
+    emerald: 'text-[#40705f] dark:text-[#8ab8a6]', violet: 'text-[#715c90] dark:text-[#b1a0c7]',
+    amber: 'text-[#7e653f] dark:text-[#c6b18a]', orange: 'text-[#8e5e47] dark:text-[#c89f88]',
+    rose: 'text-[#915a67] dark:text-[#c59ba6]', gray: 'text-gray-400 dark:text-gray-500'
+  }[scoreBand(value)]
+}

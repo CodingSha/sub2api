@@ -16,6 +16,9 @@ type Store struct{ db *sql.DB }
 func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 
 func (s *Store) Import(ctx context.Context, b Bundle, actor int64) (Run, error) {
+	if err := validateJSONBText(b.SourceName); err != nil {
+		return Run{}, err
+	}
 	if b.SchemaVersion != 1 || strings.TrimSpace(b.SourceName) == "" || len(b.SourceName) > 120 || len(b.Reports) == 0 || len(b.Reports) > 100 {
 		return Run{}, invalid("结果包须为v1，包含来源名称和1至100份报告")
 	}
@@ -79,6 +82,16 @@ func (s *Store) Import(ctx context.Context, b Bundle, actor int64) (Run, error) 
 		for i := range r.Items {
 			r.Items[i].Evidence = nil
 		}
+		var cases []TaskCase
+		if r.TaskReview != nil {
+			cases = r.TaskReview.Cases
+			summary := *r.TaskReview
+			summary.Cases = append([]TaskCase(nil), cases...)
+			for i := range summary.Cases {
+				summary.Cases[i].Records = nil
+			}
+			r.TaskReview = &summary
+		}
 		body, e := json.Marshal(r)
 		if e != nil {
 			return Run{}, e
@@ -88,6 +101,15 @@ func (s *Store) Import(ctx context.Context, b Bundle, actor int64) (Run, error) 
             SELECT $1,$2,$3,$4::date,$5::date,COALESCE(MAX(revision),0)+1,$6::jsonb FROM zhiyongli_reports WHERE user_id=$2 AND period_type=$3 AND period_start=$4::date RETURNING id`, run.ID, uid, r.PeriodType, r.PeriodStart, r.PeriodEnd, string(body)).Scan(&id)
 		if e != nil {
 			return Run{}, e
+		}
+		for _, c := range cases {
+			body, err := json.Marshal(c)
+			if err != nil {
+				return Run{}, err
+			}
+			if _, err = tx.ExecContext(ctx, `INSERT INTO zhiyongli_task_cases(report_id,case_key,body) VALUES($1,$2,$3::jsonb)`, id, c.ID, string(body)); err != nil {
+				return Run{}, err
+			}
 		}
 		for _, it := range items {
 			for _, ev := range it.Evidence {
@@ -173,6 +195,8 @@ func (s *Store) List(ctx context.Context, f Filter) ([]Report, int64, error) {
 		}
 		r.Items = nil
 		r.WeeklyReports = nil
+		r.TaskReview = nil
+		r.DailyReview = nil
 		items = append(items, r)
 	}
 	return items, total, rows.Err()
@@ -254,7 +278,10 @@ func publishReportTx(ctx context.Context, tx *sql.Tx, id int64, revision int, ac
 	if r.PublicationStatus == "published" {
 		return nil
 	}
-	if r.PolicyVersions.Rules == RulesVersion && r.WorkdayScope == nil {
+	if r.SampleInitial != nil {
+		return invalid("抽样初评仅供管理员查看，不能作为正式周期评分发布")
+	}
+	if r.PeriodType != "day" && r.PolicyVersions.Rules == RulesVersion && r.WorkdayScope == nil {
 		return invalid("该候选为历史自然周范围，请按当前工作日范围重评后发布")
 	}
 	var latest int

@@ -15,6 +15,35 @@ class CheckpointTests(unittest.TestCase):
     packet=fixtures.ReadingCacheTests.packet
     read=fixtures.ReadingCacheTests.read
 
+    def test_only_registered_disjoint_capture_page_can_be_excluded_without_replaying_unknown(self):
+        from bounded_read import excluded_scope_page,read_all,plan
+        from workday_scope import DEFAULT,window
+        import os,copy
+        path=self.root/'registry.json';registry=json.loads(DEFAULT.read_text())
+        registry['weeks']['2026-11-02']['evaluation_dates']=['2026-11-04','2026-11-05','2026-11-06'];atomic(path,registry)
+        with patch.dict(os.environ,{'ZHIYONGLI_WORKDAY_REGISTRY':str(path)}):
+            scope=window('2026-11-02','2026-11-09')
+            packet=self.packet(1);packet.update(workday_scope=scope,source_scope='registered_person_workdays')
+            packet['events'][0].update(at='2026-11-04T12:00:00+08:00',timestamp_basis='audit_capture')
+            old=copy.deepcopy(packet);old['events'][0].update(event='old',at='2026-11-02T12:00:00+08:00')
+            previous=plan(old,include_text=False);base=self.root/'plans';receipt=base/'old/0.receipt.json'
+            atomic(receipt,dict(status='unknown',request_sha256='old-request'))
+            atomic(receipt.parent/'plan.json',previous);original=receipt.read_bytes()
+            client=self.client('new');events={e['event']:e for e in packet['events']}
+            self.assertTrue(excluded_scope_page(packet,previous,receipt,events))
+            result=read_all(packet,base,client=client,limit=10)
+            self.assertEqual('reading_complete_pending_reconciliation',result['state'])
+            self.assertEqual(1,self.calls);self.assertEqual(original,receipt.read_bytes())
+            self.assertEqual(1,len(result['excluded_scope_unknown']))
+            for change in (dict(event_id='e0'),dict(at='2026-11-04T12:00:00+08:00'),dict(timestamp_basis=None)):
+                changed=copy.deepcopy(previous);changed['pages'][0]['fragments'][0].update(change)
+                self.assertFalse(excluded_scope_page(packet,changed,receipt,events))
+            unregistered=copy.deepcopy(packet);unregistered['workday_scope']['evaluation_dates']=['2026-11-05']
+            with self.assertRaises(ValueError):excluded_scope_page(unregistered,previous,receipt,events)
+            full=dict(packet,source_scope='full_person_window')
+            blocked=read_all(full,base,client=client,limit=10)
+            self.assertEqual('reading_blocked',blocked['state']);self.assertEqual(1,self.calls)
+
     def test_resume_rechecks_but_does_not_rewrite_fixed_plan_and_completed_pages(self):
         packet=self.packet(49);client=self.client('review')
         first=self.read(packet,client)

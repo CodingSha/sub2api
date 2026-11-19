@@ -12,6 +12,39 @@ from runtime import atomic
 
 
 class ModelFlowTests(unittest.TestCase):
+    def test_daily_budget_spans_midnight_and_renews_at_23_without_erasing_history(self):
+        from datetime import datetime
+        self.now=datetime.fromisoformat('2026-11-18T23:00:00+08:00').timestamp()
+        flow=self.flow(budget_period='daily',max_requests=1)
+        self.call(flow,'first')
+        self.assertEqual('synthetic-cycle:2026-11-18',flow.budget_key())
+        self.now=datetime.fromisoformat('2026-11-19T08:00:00+08:00').timestamp()
+        self.assertEqual('global_budget_exhausted',flow.blocked())
+        self.assertEqual(0,flow.remaining_requests()['remaining'])
+        self.now=datetime.fromisoformat('2026-11-19T22:59:59+08:00').timestamp()
+        with self.assertRaises(Paused):self.call(flow,'second')
+        self.now+=1
+        self.call(flow,'second')
+        self.assertEqual('synthetic-cycle:2026-11-19',flow.snapshot()['budget_key'])
+        self.assertEqual(1,flow.snapshot()['request_budget']['used'])
+        self.assertEqual([dict(status='received',count=2)],flow.snapshot()['states'])
+        with flow.connect() as db:
+            self.assertEqual(2,db.execute('SELECT count(DISTINCT budget_key) FROM attempts').fetchone()[0])
+
+    def test_daily_budget_renewal_does_not_release_prior_active_request_or_rate_limit(self):
+        from datetime import datetime
+        self.now=datetime.fromisoformat('2026-11-18T22:59:59+08:00').timestamp()
+        flow=self.flow(budget_period='daily',max_concurrency=1,requests_per_minute=1)
+        path=self.root/'crossing.receipt.json'
+        with flow.slot('first',path,b'x',1):
+            self.now+=1
+            self.assertEqual('concurrency_full',flow.blocked())
+            with self.assertRaises(Paused):self.call(flow,'second')
+            atomic(path,dict(status='received'))
+        self.assertEqual('minute_quota_full',flow.blocked())
+        self.now+=61
+        self.call(flow,'second')
+
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.root=Path(self.tmp.name);self.now=10000
@@ -55,6 +88,18 @@ class ModelFlowTests(unittest.TestCase):
         with self.assertRaises(Paused):self.call(flow,'other')
         self.now+=180;self.call(flow,'other')
         self.assertEqual('rejected',json.loads((self.root/'limited.receipt.json').read_text())['status'])
+
+    def test_stream_gateway_limit_cools_new_requests_and_preserves_failed_terminal(self):
+        flow=self.flow();response=dict(status='failed',output=[],error=dict(code='gateway_concurrency_limit',
+            message='Concurrency limit exceeded for account, please retry later'))
+        self.call(flow,'limited','received',response=response)
+        original=(self.root/'limited.receipt.json').read_bytes()
+        self.assertEqual('service_cooldown',flow.blocked())
+        with self.assertRaises(Paused):self.call(flow,'other')
+        self.now+=121;self.call(flow,'other')
+        self.assertEqual(original,(self.root/'limited.receipt.json').read_bytes())
+        stages=flow.snapshot()['measurements']['stages']
+        self.assertTrue(any(s['terminal_state']=='failed' and s['requests']==1 for s in stages))
 
     def test_unknown_circuit_and_orphan_reservation_are_persistent(self):
         flow=self.flow();self.call(flow,'unknown1','unknown');self.call(flow,'unknown2','unknown')

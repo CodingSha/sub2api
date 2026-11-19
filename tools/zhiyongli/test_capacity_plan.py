@@ -79,4 +79,57 @@ class CapacityTests(unittest.TestCase):
         with self.assertRaises(ValueError):Simulation(spec)
 
 
+class CapacityV2Tests(unittest.TestCase):
+    def spec(self):
+        spec = plan(users=2, requests=2, latency=10)
+        spec.update(version=2, initial_used_requests=0,
+                    budget_groups={'person': dict(limit=4, used=0)})
+        for index, job in enumerate(spec['jobs']):
+            job.update(release_after_seconds=index*100, deadline_seconds=200,
+                       depends_on=[] if index == 0 else ['synthetic-0'], budget_group='person')
+        return spec
+
+    def test_release_and_preparation_dependency_hold_weekend_work(self):
+        result = Simulation(self.spec()).run()
+        self.assertEqual([20, 120], [j['finished_seconds'] for j in result['job_results']])
+        self.assertTrue(result['all_within_window'])
+
+    def test_group_budget_is_not_reset_between_daily_and_weekly_jobs(self):
+        spec = self.spec(); spec['budget_groups']['person']['used'] = 1
+        result = Simulation(spec).run()
+        self.assertEqual(3, result['requests_sent'])
+        self.assertEqual('group_budget_exhausted', result['jobs_not_completed'][0]['state'])
+        self.assertFalse(result['all_within_window'])
+        spec = self.spec(); spec['budget_groups']['person']['used'] = 4
+        result = Simulation(spec).run()
+        self.assertEqual(0, result['requests_sent'])
+        self.assertEqual({'group_budget_exhausted', 'dependency_not_completed'},
+                         {j['state'] for j in result['jobs_not_completed']})
+
+    def test_existing_global_usage_and_deadline_are_not_hidden(self):
+        spec = self.spec(); spec['initial_used_requests'] = spec['limits']['max_requests']-1
+        result = Simulation(spec).run()
+        self.assertEqual(1, result['requests_sent']); self.assertFalse(result['all_within_window'])
+        spec = self.spec(); spec['jobs'][1]['deadline_seconds'] = 110
+        result = Simulation(spec).run()
+        self.assertEqual(2, result['completed_jobs'])
+        self.assertEqual(['synthetic-1'], result['late_job_deadlines'])
+        self.assertFalse(result['all_within_window'])
+
+    def test_unknown_dependencies_and_cycles_rejected(self):
+        for deps in [['unknown'], ['synthetic-1']]:
+            spec = self.spec(); spec['jobs'][0]['depends_on'] = deps
+            with self.assertRaises(ValueError):Simulation(spec)
+        spec = self.spec(); spec['jobs'][0]['release_after_seconds'] = -1
+        with self.assertRaises(ValueError):Simulation(spec)
+
+    def test_same_group_across_independent_jobs_and_exact_deadline(self):
+        spec = self.spec()
+        for job in spec['jobs']:
+            job.update(release_after_seconds=0, depends_on=[], deadline_seconds=20)
+        result = Simulation(spec).run()
+        self.assertTrue(result['all_within_window'])
+        self.assertEqual(4, result['budget_groups']['person']['used'])
+
+
 if __name__=='__main__':unittest.main()

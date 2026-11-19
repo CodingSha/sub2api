@@ -1,6 +1,5 @@
 """本地运维核对入口：有理由修订、逐项人工/Codex处置；不越过unknown或发布权限。"""
 import argparse
-import copy
 import fcntl
 import hashlib
 import json
@@ -96,7 +95,8 @@ def model_receipt(root,unit):
         for field in ('native_input','model_context'):
             if root not in Path(value[field]['path']).resolve().parents:raise ValueError('模型视图引用越出本轮目录')
         stamp=read_ref(value['native_input']);view=read_ref(value['model_context'])
-        native=copy.deepcopy(unit);appended=set(stamp['appended_event_ids'])
+        # 本地校验只替换顶层事件列表；下游只读，hydrate仍独立复制其返回材料。
+        native=dict(unit);appended=set(stamp['appended_event_ids'])
         native['events']=[e for e in native['events'] if e['event'] not in appended]
         if digest(native)!=stamp['native_sha256']:raise ValueError('原生评分输入签名不符')
         packet=json.loads((root/'packet.json').read_text())

@@ -27,6 +27,7 @@ func RegisterUserRoutes(
 	if h.Zhiyongli != nil {
 		authenticated.GET("/zhiyongli/me/reports", h.Zhiyongli.MyReports)
 		authenticated.GET("/zhiyongli/me/reports/:id", h.Zhiyongli.MyReport)
+		authenticated.GET("/zhiyongli/me/reports/:id/task-cases/:case_id", h.Zhiyongli.MyTaskCase)
 	}
 	{
 		// 用户接口

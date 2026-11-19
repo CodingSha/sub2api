@@ -13,6 +13,33 @@ INPUT_BYTES=120_000
 CONTRACT_RETRIES=2
 
 
+def bounded_context(unit,review,packet,root,current):
+    """候选与必要原文一起计量；未先展示的背景仍保留在完整导航中。"""
+    from context_navigation import Navigation
+    from navigation_access import Access,set_remaining
+    from model_view import create,refresh,verify
+    overhead=raw_size(dict(unit={},review=review,contract_feedback=None))-2
+    maximum=INPUT_BYTES-overhead
+    if maximum<=0:raise ValueError('候选本身已超过复查容量，原候选保留待核')
+    events={e['event']:e for e in current['events']}
+    required={e['event'] for e in review.get('evidence',[])}
+    for part in review.get('period_reviews',[]):
+        for cell in part.get('cells',[]):
+            for obj in (cell,cell.get('quality',{})):
+                required.update(obj.get('missing',{}).get('checked_events',[]))
+    if not required<=set(events):raise ValueError('复查候选引用或缺失检查不在评分已提供原文中')
+    access=Access(Navigation(root/'context-navigation',packet),root/'audit-capacity-access',native=unit,unit_bytes=maximum)
+    base=create(unit,seeds=[e for e in current['events'] if e['event'] in required])
+    result=access.start(base)
+    for event in current['events']:
+        if event['event'] in required:continue
+        candidate=copy.deepcopy(result);candidate['events'].append(copy.deepcopy(event))
+        refresh(unit,candidate);set_remaining(candidate,maximum)
+        if raw_size(candidate)<=maximum:result=candidate
+    verify(unit,result,packet);access.remember(result)
+    return result,access
+
+
 def preserve_judgments(previous,value):
     """格式修复不能撤销既有判断或异议；需要改判断时须走有效复查后的评分修订。"""
     if not isinstance(previous,dict):return
@@ -26,7 +53,7 @@ def preserve_judgments(previous,value):
                 from semantic_audit import STATES
                 valid=isinstance(old,str) and old in STATES
             elif key=='problem_codes':valid=isinstance(old,list) and all(isinstance(v,str) for v in old)
-            else:valid=isinstance(old,str) and bool(old)
+            else:valid=isinstance(old,str) and bool(old.strip())
             if valid and value.get('items',{}).get(item,{}).get(key)!=old:
                 raise ValueError('复查格式修复改变原有判断或异议：'+item+'.'+key)
     issues=previous.get('global_issues')
@@ -40,7 +67,12 @@ def checked(unit,current,review,receipt,client,receive,check_request=None):
     for attempt in range(CONTRACT_RETRIES+1):
         quote_fix=feedback is not None and 'quote_slot' in feedback
         path=receipt if not attempt else receipt.with_name('audit.'+('quote' if quote_fix else 'fix')+str(attempt)+'.receipt.json')
-        if raw_size(dict(unit=current,review=review,contract_feedback=feedback))>INPUT_BYTES:
+        # 单槽引文修复只发送该事件及原引文；不能按未实际发送的整份前序复查误判超容量。
+        if quote_fix and callable(getattr(client,'audit_payload',None)):
+            from bounded_read import REQUEST_BYTES
+            exceeds=raw_size(client.audit_payload(current,review,feedback))>REQUEST_BYTES
+        else:exceeds=raw_size(dict(unit=current,review=review,contract_feedback=feedback))>INPUT_BYTES
+        if exceeds:
             raise ValueError('复查材料连同候选及格式修复反馈超过容量，本轮不发送，保留待核')
         record=(client.audit_review(current,review,path) if feedback is None
             else client.audit_review(current,review,path,feedback))
@@ -50,6 +82,10 @@ def checked(unit,current,review,receipt,client,receive,check_request=None):
             if not isinstance(value,dict):raise ValueError('复查输出须为对象')
             if quote_fix:
                 # 只应用模型选择的新引文；所有分项判断、异议和其他引用均从原复查复制。
+                if 'quote_candidates' in feedback:
+                    from quote_candidates import resolve
+                    try:value=resolve(current,feedback,value)
+                    except ValueError as ex:raise ContractError(str(ex)) from None
                 if set(value)!={'event','quote'}:raise ValueError('引用修正只接受event与quote')
                 corrected=copy.deepcopy(previous);slot=feedback['quote_slot']
                 corrected['items'][slot['item']]['source_quotes'][slot['index']]=value
@@ -60,10 +96,12 @@ def checked(unit,current,review,receipt,client,receive,check_request=None):
                     raise ValueError('复查格式修复须保留原逐项结论，不改为补读请求')
             else:
                 if feedback and feedback.get('readback_request'):raise ValueError('超容量补读修正须返回合法补读请求，不能跳过所需原文直接提交结论')
-                result=validate(unit,review,value,RUBRIC['items'],context=current)
+                result=validate(unit,review,value,RUBRIC['items'],context=current,require_facts=True)
                 return record,value,result,path
         except (ValueError,KeyError,TypeError) as ex:
             if hasattr(ex,'state'):raise
+            # 候选选择拒绝/不符仍是待核，不能再退回自由抄写或重判来绕过。
+            if quote_fix and 'quote_candidates' in feedback:raise ContractError(str(ex)) from None
             if attempt>=CONTRACT_RETRIES or not getattr(client,'accepts_revision_feedback',False):
                 raise ContractError(str(ex)) from None
             if isinstance(ex,QuoteError):previous=copy.deepcopy(value)
@@ -71,7 +109,12 @@ def checked(unit,current,review,receipt,client,receive,check_request=None):
             request_repair=bool(feedback and feedback.get('readback_request'))
             feedback=dict(attempt=attempt+1,error=(type(ex).__name__+': '+str(ex))[:2000],previous_audit=previous)
             if request_repair:feedback['readback_request']=True
-            if isinstance(ex,QuoteError):feedback['quote_slot']=ex.slot
+            if isinstance(ex,QuoteError):
+                feedback['quote_slot']=ex.slot
+                if getattr(client,'supports_quote_candidates',False):
+                    from quote_candidates import propose
+                    candidates=propose(current,ex.slot,previous)
+                    if candidates:feedback['quote_candidates']=candidates
             error_suffix='.quote.contract-error.json' if isinstance(ex,QuoteError) else '.contract-error.json'
             freeze(path.with_name(path.name.replace('.receipt.json',error_suffix)),
                 dict(feedback=feedback,unit_sha256=digest(unit),review_sha256=digest(review),response_sha256=digest(record)))
@@ -119,8 +162,15 @@ def complete(unit, review, packet, directory, client, receive, progress=lambda *
                 prepared.append(access.expand(current,nodes,'audit-'+stage))
             else:
                 if event_rounds>=MAX_ROUNDS:raise ValueError('复查原文补读达到执行上限，保留待核')
+                if access is not None:access.verify(current)
                 prepared.append(expand(current,packet,events))
-                if access is not None:access.remember(prepared[-1])
+                if access is not None:
+                    from navigation_access import set_remaining
+                    if access.directory_mode is not None:
+                        set_remaining(prepared[-1],access.unit_bytes)
+                        if raw_size(prepared[-1])>access.unit_bytes:
+                            raise ReadbackCapacity('完整事件补读超过当前复查实例容量，保留原状态与原文，不发送后续请求')
+                    access.remember(prepared[-1])
         record,value,result,final_receipt=checked(unit,current,review,receipt,client,receive,check_request)
         events=value.get('needs_events',[]);nodes=value.get('needs_nodes',[])
         if not events and not nodes:

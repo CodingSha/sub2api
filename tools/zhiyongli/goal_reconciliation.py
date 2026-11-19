@@ -3,8 +3,8 @@ import copy
 import json
 from pathlib import Path
 
-from bounded_read import raw_size
-from runtime import atomic, digest
+from bounded_read import raw_size,checkpoint
+from runtime import digest
 from review_schema import obj, array, enum
 from task_identification import resend
 
@@ -28,17 +28,19 @@ def plan(data, max_bytes=INPUT_BYTES):
     sizes = [raw_size([g]) for g in goals]
     largest = max(sizes);half = (max_bytes - base_bytes + 3) // 2
     allowance = min(half,max_bytes - base_bytes - largest + 3)
-    groups = [];current = []
+    groups = [];current = [];current_bytes=2
     for goal,size in zip(goals,sizes):
         if size > half:
             if base_bytes + size - 2 > max_bytes:
                 raise ValueError('单个目标的完整表达超出比较容量，须分层核对，不裁掉原句')
-            if current:groups.append(current);current=[]
+            if current:groups.append(current);current=[];current_bytes=2
             groups.append([copy.deepcopy(goal)]);continue
         if size > allowance:
             raise ValueError('两目标的完整表达无法共同装配，须分层核对，不裁掉原句')
-        if current and raw_size(current + [goal]) > allowance:
-            groups.append(current);current = []
+        # size含单项数组的两括号；完整组只再计新增记录与一枚逗号。
+        if current and current_bytes+size-1 > allowance:
+            groups.append(current);current = [];current_bytes=2
+        current_bytes+=size-2+bool(current)
         current.append(copy.deepcopy(goal))
     if current:groups.append(current)
     largest_groups = sorted((raw_size(g) for g in groups),reverse=True)[:2]
@@ -144,7 +146,9 @@ def reconcile(data, directory, client, receive, progress=lambda *args:None, max_
     path = root/'plan.json'
     if path.exists() and json.loads(path.read_text()) != stamp:
         raise ValueError('全局目标比较来源或容量合同变化，原回执保留，须显式修订')
-    atomic(path, stamp)
+    checkpoint(path, stamp)
+    if hasattr(client, 'preflight_goal_merge'):
+        client.preflight_goal_merge(base, groups, root, receive)
     decisions = [];completed = 0
     for left in range(len(groups)):
         for right in range(left, len(groups)):
@@ -160,6 +164,6 @@ def reconcile(data, directory, client, receive, progress=lambda *args:None, max_
             completed += 1
             progress('identifying',completed,stamp['comparisons'],'有界比较跨批目标，完整表达及边界冲突均保留')
     merged = combine(data, decisions)
-    atomic(root/'result.json',dict(value=merged,input_sha256=digest(data),
+    checkpoint(root/'result.json',dict(value=merged,input_sha256=digest(data),
         comparisons=stamp['comparisons'],limitation='全对比较只证明执行覆盖；语义有效性仍须完整真实材料验收，不按任务数计分'))
     return merged

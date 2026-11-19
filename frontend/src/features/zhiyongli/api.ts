@@ -28,17 +28,68 @@ export interface Item {
   limitations: string[] | null
 }
 export interface Dimension { code: string; name: string; exact: string | null; score: string | null }
+export interface TaskRecord {
+  id: string
+  source_hash: string
+  text_hash: string
+  occurred_at: string | null
+  role: 'user' | 'assistant' | 'tool_call' | 'tool_result' | 'context'
+  origin: 'direct_expression' | 'mixed_material' | 'assistant_output' | 'recorded_tool' | 'unattributed'
+  text: string
+  limitations: string[] | null
+}
+export interface TaskClaim {
+  text: string
+  item_codes: string[] | null
+  record_ids: string[]
+  limitations: string[] | null
+  assessment?: { kind: 'support' | 'shortfall' | 'unresolved'; reason: string }
+}
+export interface TaskCase {
+  id: string
+  task_key: string
+  title: string
+  goal: string
+  outcome: string
+  context_status: 'available_records' | 'source_incomplete'
+  record_count: number
+  claims: TaskClaim[]
+  limitations: string[] | null
+}
+export interface TaskCasePage extends TaskCase { records: TaskRecord[]; page: number; page_size: number; total: number }
+export interface TaskReview {
+  version: string
+  status: 'initial' | 'source_linked' | 'case_checked' | 'week_checked' | 'generated'
+  task_keys: string[]
+  checked_task_keys: string[]
+  scope_note: string
+  cases: TaskCase[]
+  week_judgments: { item_code: string; reason: string; task_keys: string[]; case_ids: string[] | null; limitations: string[] | null }[] | null
+}
 export interface WorkdayScope {
   version: string; registry_sha256: string; calendar_sha256: string
   period_start: string; period_end: string; working_dates: string[]
+  evaluation_dates?: string[]
   observed_until: string; freeze_at: string; candidate_due_at: string | null
 }
+export interface DailyReview {
+  version: string
+  model: string
+  request_digest: string
+  window_start: string
+  window_end: string
+  source_labels: Record<string, string>
+  source_sessions: Record<string, string>
+  behaviors: Record<string, { primary_item: string; source_ref: string; claim: string }>
+  conversations: Record<string, import('./AssessmentReader.vue').AssessmentTask>
+}
 export interface Report {
+  daily_review?: DailyReview
   id: number
   user_id: number
   user_email: string
   revision: number
-  period_type: 'week' | 'month'
+  period_type: 'day' | 'week' | 'month'
   period_start: string
   period_end: string
   publication_status: 'draft' | 'published' | 'superseded'
@@ -55,6 +106,12 @@ export interface Report {
   limitations: string[] | null
   created_at: string
   workday_scope?: WorkdayScope
+  task_review?: TaskReview
+  sample_initial?: {
+    version: string; sample_digest: string; audit_status: 'not_reviewed'
+    method: 'observed_dimension_weights'; exact: string | null; score: string | null
+    covered_weight: number; missing_dimensions: string[]
+  }
   eligibility?: {
     version: string
     eligible: boolean
@@ -86,6 +143,9 @@ export async function listReports(admin: boolean, params: Filters) {
 export async function getReport(admin: boolean, id: number) {
   return (await apiClient.get<Report>(`${base(admin)}/reports/${id}`)).data
 }
+export async function getTaskCase(admin: boolean, reportId: number, caseId: string, page = 1) {
+  return (await apiClient.get<TaskCasePage>(`${base(admin)}/reports/${reportId}/task-cases/${encodeURIComponent(caseId)}`, { params: { page, page_size: 50 } })).data
+}
 export async function publishReport(report: Report) {
   return (await apiClient.post<Report>(`/admin/zhiyongli/reports/${report.id}/publish`, { revision: report.revision })).data
 }
@@ -100,14 +160,14 @@ export async function listRuns(page: number) {
 }
 export interface ReviewJob {
   id: number; user_id: number; user_email: string
-  period_type: 'week' | 'month'; period_start: string; period_end: string; rules_version: string
+  period_type: 'day' | 'week' | 'month'; period_start: string; period_end: string; rules_version: string
   state: 'queued' | 'running' | 'needs_review' | 'unknown' | 'failed' | 'completed' | 'no_activity'
   active: boolean
   phase: string; completed_units: number; total_units: number; message: string
   created_at: string; updated_at: string
   scope_key: string; workday_scope?: WorkdayScope
 }
-export async function startJobs(input: {user_ids: number[]; period_type: 'week' | 'month'; period_start: string}) {
+export async function startJobs(input: {user_ids: number[]; period_type: 'day' | 'week' | 'month'; period_start: string}) {
   return (await apiClient.post<ReviewJob[]>('/admin/zhiyongli/jobs', input)).data
 }
 // 全员周评审：周期（最近已封口工作周）和参评人员由服务端确定，不传参数。
@@ -122,10 +182,10 @@ export async function resumeJob(id: number) {
 }
 export const statusText = { draft: '待发布', published: '已发布', superseded: '历史版本' }
 export const stateText: Record<string, string> = {
-  observed: '已评分', no_opportunity: '无处理机会', unobservable: '不可观察',
-  attribution_unclear: '归属未明', pending: '待复核', no_activity: '本期无可评记录', insufficient_evidence: '证据不足',
+  observed: '已评分', no_opportunity: '无处理机会', unobservable: '未评分',
+  attribution_unclear: '未评分', pending: '未评分', no_activity: '本期无可评记录', insufficient_evidence: '证据不足',
   related: '关联其他分项', not_applicable: '不适用', mixed_unscored: '本月无可评数值',
   observation_only: '观察不足，保留分维评价', data_pending: '数据或评测待完成',
   excluded_week: '未计入月分（无正式周评）'
 }
-export const periodLabel = (r: Report) => `${r.period_start} — ${new Date(new Date(`${r.period_end}T00:00:00Z`).getTime() - 86400000).toISOString().slice(0, 10)}`
+export const periodLabel = (r: Report) => r.period_type === 'day' ? r.period_start : `${r.period_start} — ${new Date(new Date(`${r.period_end}T00:00:00Z`).getTime() - 86400000).toISOString().slice(0, 10)}`

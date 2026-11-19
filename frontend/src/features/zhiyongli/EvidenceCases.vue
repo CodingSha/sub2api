@@ -1,7 +1,7 @@
 <template>
   <section v-if="cases.length" class="pt-7" aria-label="评分依据与任务解读">
     <h2 class="mb-4 text-lg font-semibold">评分依据与任务解读</h2>
-    <details v-for="(entry, index) in visibleCases" :key="entry.key" :open="index === 0" class="border-b border-gray-200 dark:border-dark-700">
+    <details v-for="(entry, index) in visibleCases" :key="entry.key" class="border-b border-gray-200 dark:border-dark-700">
       <summary class="flex cursor-pointer items-start gap-3 py-4 focus-visible:outline-primary-500">
         <span class="w-6 shrink-0 text-sm tabular-nums text-gray-400">{{ page * pageSize + index + 1 }}</span>
         <span class="min-w-0 flex-1 font-medium">{{ entry.record.task_title }}</span>

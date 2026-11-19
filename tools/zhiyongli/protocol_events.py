@@ -93,7 +93,11 @@ def extract(packet):
                     issues.append(dict(frame=frame['frame'], pointer=pointer, code='non_text_material_not_read'))
                 if role == 'unknown':
                     issues.append(dict(frame=frame['frame'], pointer=pointer, code='unknown_protocol_role'))
+    frames={frame['frame']:frame for frame in packet['frames']}
     for event in events:
+        frame=frames[event['source']['frame']]
+        if 'api_key_id' in frame:
+            event['api_key_id']=frame['api_key_id']
         # 采集定位时间不是逐条历史消息的发送时刻，响应也可能沿用请求采集时间。
         event['timestamp_basis']='audit_capture'
         event['field']=event['source']['frame'].split(':')[2]

@@ -27,6 +27,8 @@ func NewZhiyongliHandler(db *sql.DB) *ZhiyongliHandler {
 func zhiyongliError(c *gin.Context, e error) {
 	var bad *zhiyongli.InvalidError
 	switch {
+	case errors.Is(e, zhiyongli.ErrTaskCaseForbidden):
+		response.Error(c, http.StatusForbidden, e.Error())
 	case errors.Is(e, zhiyongli.ErrNotFound):
 		response.NotFound(c, e.Error())
 	case errors.Is(e, zhiyongli.ErrConflict):
@@ -67,7 +69,7 @@ func (h *ZhiyongliHandler) list(c *gin.Context, owner int64) {
 			return
 		}
 	}
-	if f.PeriodType != "" && f.PeriodType != "week" && f.PeriodType != "month" || f.Status != "" && f.Status != "draft" && f.Status != "published" && f.Status != "superseded" || len(f.Search) > 200 {
+	if f.PeriodType != "" && f.PeriodType != "day" && f.PeriodType != "week" && f.PeriodType != "month" || f.Status != "" && f.Status != "draft" && f.Status != "published" && f.Status != "superseded" || len(f.Search) > 200 {
 		response.BadRequest(c, "筛选参数无效")
 		return
 	}
@@ -108,6 +110,31 @@ func (h *ZhiyongliHandler) MyReport(c *gin.Context) {
 	h.get(c, s.UserID)
 }
 func (h *ZhiyongliHandler) AdminReport(c *gin.Context) { h.get(c, 0) }
+func (h *ZhiyongliHandler) taskCase(c *gin.Context, owner int64) {
+	id, ok := zhiyongliID(c)
+	if !ok {
+		return
+	}
+	p, n, ok := zhiyongliPage(c)
+	if !ok {
+		return
+	}
+	r, err := h.store.GetTaskCase(c.Request.Context(), id, owner, c.Param("case_id"), p, n)
+	if err != nil {
+		zhiyongliError(c, err)
+		return
+	}
+	response.Success(c, r)
+}
+func (h *ZhiyongliHandler) MyTaskCase(c *gin.Context) {
+	s, ok := middleware.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "请先登录")
+		return
+	}
+	h.taskCase(c, s.UserID)
+}
+func (h *ZhiyongliHandler) AdminTaskCase(c *gin.Context) { h.taskCase(c, 0) }
 func (h *ZhiyongliHandler) Import(c *gin.Context) {
 	actor, ok := middleware.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -285,6 +312,14 @@ func zhiyongliWorkerAuthorized(c *gin.Context) bool {
 }
 
 func (h *ZhiyongliHandler) ImportJob(c *gin.Context) {
+	h.importJob(c, false)
+}
+
+func (h *ZhiyongliHandler) ImportDayJobDraft(c *gin.Context) {
+	h.importJob(c, true)
+}
+
+func (h *ZhiyongliHandler) importJob(c *gin.Context, draftOnly bool) {
 	if !zhiyongliWorkerAuthorized(c) {
 		return
 	}
@@ -305,7 +340,11 @@ func (h *ZhiyongliHandler) ImportJob(c *gin.Context) {
 		response.BadRequest(c, "候选报告只能包含一个JSON对象")
 		return
 	}
-	run, e := h.store.ImportJob(c.Request.Context(), id, bundle)
+	importBundle := h.store.ImportJob
+	if draftOnly {
+		importBundle = h.store.ImportDayJobDraft
+	}
+	run, e := importBundle(c.Request.Context(), id, bundle)
 	if e != nil {
 		zhiyongliError(c, e)
 		return

@@ -5,13 +5,38 @@ from ..common import moment, require
 WORKFLOW_VERSION = 'task-whole-context-20261105.01'
 
 
-def task_context(unit, *, task_person_events=None):
+class TaskContextIndex:
+    """单次只读装配内复用事件索引及时间排序，不缓存任务判断或输出。"""
+    def __init__(self, unit):
+        self._unit = unit
+        self._source = None
+        self._mapping = self._ordered = None
+
+    def mapping(self, events):
+        if self._source is None:
+            self._source = self._unit['events']
+        if events is not self._source or self._unit['events'] is not self._source:
+            raise ValueError('任务过程索引不属于当前来源事件')
+        if self._mapping is None:
+            self._mapping = {e['event']: e for e in events}
+        return self._mapping
+
+    def ordered(self):
+        # 到原排序位置才解析时间，保留本期本人及成员验证的异常优先级。
+        if self._ordered is None:
+            dated = [(e, moment(e['at'])) for e in self.mapping(self._unit['events']).values()]
+            self._ordered = tuple(sorted(dated, key=lambda row: (row[1], row[0]['event'])))
+        return self._ordered
+
+
+def task_context(unit, *, task_person_events=None, context_index=None):
     """保留截至评价时点的任务过程；其他会话上下文仍可按索引补读。"""
     require(len(unit['periods']) == 1, '任务过程阅读须明确单一评价时窗')
     period = unit['periods'][0]
     start, end = moment(period['start']), moment(period['end'])
     require(start < end, '评价时窗错误')
-    events = {e['event']: e for e in unit['events']}
+    events = ({e['event']: e for e in unit['events']} if context_index is None
+              else context_index.mapping(unit['events']))
     current = set(unit['person_events'])
     require(current and current <= set(events), '本人事件缺失')
     require(all(start <= moment(events[e]['at']) < end for e in current), '本人动作跨评价时窗')
@@ -27,8 +52,10 @@ def task_context(unit, *, task_person_events=None):
 
     requests = {request_key(events[e]) for e in members} - {None}
     chosen, other, withheld = [], [], []
-    for event in sorted(events.values(), key=lambda e: (moment(e['at']), e['event'])):
-        if moment(event['at']) >= end:
+    ordered = (((e, moment(e['at'])) for e in sorted(events.values(), key=lambda e: (moment(e['at']), e['event'])))
+               if context_index is None else context_index.ordered())
+    for event, occurred_at in ordered:
+        if occurred_at >= end:
             continue
         linked = event['event'] in members or request_key(event) in requests
         if event.get('actor_class') != 'human' and event.get('response_timestamp_unknown'):

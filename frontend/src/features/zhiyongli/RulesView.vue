@@ -3,7 +3,7 @@
     <div class="mx-auto max-w-6xl">
       <header class="mb-6 flex items-center justify-between gap-4">
         <h2 class="text-2xl font-semibold">评分规则</h2>
-        <div class="flex items-center gap-4"><RouterLink :to="auth.isAdmin ? '/admin/zhiyongli' : '/zhiyongli'" class="text-sm text-primary-700 hover:underline dark:text-primary-400">返回报告</RouterLink><a v-if="supported" :href="downloadUrl" :download="`智用力评分规则-v${version}.md`" class="btn btn-secondary">下载规则</a></div>
+        <div class="flex items-center gap-4"><RouterLink :to="auth.isAdmin ? '/admin/zhiyongli' : '/zhiyongli'" class="text-sm text-primary-700 hover:underline dark:text-primary-400">返回报告</RouterLink><a v-if="supported" :href="downloadUrl" :download="`智用力${daily ? '每日' : ''}评分规则-v${version}.md`" class="btn btn-secondary">下载规则</a></div>
       </header>
       <p v-if="supported" class="mb-6 text-sm text-gray-500 dark:text-gray-400" role="status">
         <template v-if="version === latestVersion">当前规则 · v{{ version }} · 按对话上下文综合评审</template>
@@ -32,13 +32,15 @@ import rules13 from '../../../../docs/ZHIYONGLI_SCORING_RULES_V1_3.md?raw'
 import rules14 from '../../../../docs/ZHIYONGLI_SCORING_RULES_V1_4.md?raw'
 import rules15 from '../../../../docs/ZHIYONGLI_SCORING_RULES_V1_5.md?raw'
 import rules16 from '../../../../docs/ZHIYONGLI_SCORING_RULES_V1_6.md?raw'
+import dailyRules from '../../../../docs/ZHIYONGLI_SCORING_RULES_V1_6_DAILY.md?raw'
 const latestVersion = '1.6'
 const route=useRoute()
 const auth=useAuthStore()
 const versions: Record<string,string> = { '1.1':rules11,'1.2':rules12,'1.3':rules13,'1.4':rules14,'1.5':rules15,'1.6':rules16 }
 const version=computed(()=>route.query.version === undefined ? latestVersion : String(route.query.version))
 const supported=computed(()=>Object.prototype.hasOwnProperty.call(versions,version.value))
-const rules=computed(()=>supported.value ? versions[version.value] : '')
+const daily=computed(()=>version.value === '1.6' && route.query.period_type === 'day')
+const rules=computed(()=>supported.value ? versions[version.value] + (daily.value ? '\n\n' + dailyRules : '') : '')
 const rendered=computed(()=>{
   const sections: {id:string;title:string}[] = []
   const renderer = new Renderer()

@@ -3,8 +3,8 @@ import copy
 import json
 from pathlib import Path
 
-from bounded_read import raw_size
-from runtime import atomic, digest, moment, VERSION, REVIEW_POLICY
+from bounded_read import raw_size, checkpoint
+from runtime import digest, moment, VERSION, REVIEW_POLICY
 
 # 仅限制后台执行量；达到上限保留待核，不转换成员工材料不足或低分。
 MAX_ROUNDS = 3
@@ -26,6 +26,8 @@ def expand(unit, packet, requested):
     if len(source) != len(packet['events']) or len(present) != len(unit['events']):
         raise ValueError('原文补读来源事件重复')
     result = copy.deepcopy(unit)
+    from navigation_contract import discard_directory
+    discard_directory(result)
     added = []
     for eid in requested:
         if eid not in source:
@@ -43,11 +45,12 @@ def expand(unit, packet, requested):
         packet_sha256=digest(packet), requested_events=added,
         limitation='补入完整已保存原文；不证明上游未截断，不改变本人归属、目标或计分范围'))
     if raw_size(result) > UNIT_BYTES:
-        raise ValueError('完整补读超出当前评分容量，保留请求待分层处理，不裁掉原文或反证')
+        from navigation_access import ReadbackCapacity
+        raise ReadbackCapacity('完整补读超出当前评分容量，保留请求待分层处理，不裁掉原文或反证')
     return result
 
 
-def complete(unit, packet, directory, client, receive, progress=lambda *args: None, navigation_access=None, feedback=None):
+def complete(unit, packet, directory, client, receive, progress=lambda *args: None, navigation_access=None, feedback=None, validate_final=None):
     """每轮独立绑定输入和回执；恢复时重验同一链，不覆盖前序候选。"""
     root = Path(directory)
     if str(unit.get('user_id')) != str(packet['user_id']):
@@ -57,13 +60,40 @@ def complete(unit, packet, directory, client, receive, progress=lambda *args: No
     state = root/'context-readback'/'input.json'
     if state.exists() and json.loads(state.read_text()) != base:
         raise ValueError('补读的冻结来源或评审对象变化，不能沿用旧链')
-    atomic(state, base)
+    checkpoint(state, base)
     current = unit
     receipt = root/'review.receipt.json'
     event_rounds=node_rounds=0
     for index in range(MAX_ROUNDS + MAX_NODE_ROUNDS + 1):
         # 仅自动修订轮携带前一候选与复查意见；补读各轮沿用同一份，保证请求可复验。
-        record = client.call(current, receipt) if feedback is None else client.call(current, receipt, feedback=feedback)
+        from review_protocol import active as protocol_active, call_checked
+        protocol=protocol_active(client)
+        def prepare(value):
+            requested=value.get('needs_events',[]);nodes=value.get('needs_nodes',[])
+            if nodes:
+                if navigation_access is None:raise ValueError('当前未提供分层导航，不接受节点补读')
+                if node_rounds>=MAX_NODE_ROUNDS:
+                    from pipeline import Paused
+                    raise Paused('failed','分层补读达到本轮执行上限',reason_code='request_capacity_exceeded')
+                return navigation_access.expand(current,nodes,str(index+1))
+            if event_rounds>=MAX_ROUNDS:
+                from pipeline import Paused
+                raise Paused('failed','事件补读达到本轮执行上限',reason_code='request_capacity_exceeded')
+            if navigation_access is not None:navigation_access.verify(current)
+            result=expand(current,packet,requested)
+            if navigation_access is not None:
+                from navigation_access import set_remaining, ReadbackCapacity
+                if navigation_access.directory_mode is not None:
+                    set_remaining(result,navigation_access.unit_bytes)
+                    if raw_size(result)>navigation_access.unit_bytes:
+                        raise ReadbackCapacity('完整事件补读超过当前实例容量，保留原状态与原文，不发送后续请求')
+                navigation_access.remember(result)
+            return result
+        if protocol:
+            record,receipt,next_unit=call_checked(current,receipt,client,receive,feedback=feedback,
+                validate_final=validate_final,prepare_readback=prepare)
+        else:
+            record = client.call(current, receipt) if feedback is None else client.call(current, receipt, feedback=feedback)
         value = receive(record)
         requested = value.get('needs_events')
         nodes=value.get('needs_nodes',[])
@@ -72,6 +102,10 @@ def complete(unit, packet, directory, client, receive, progress=lambda *args: No
         if value.get('evidence') or value.get('period_reviews'):
             raise InvalidReadback('补读请求不能同时提交评分；原回执保留，禁止部分评分冒充已完成')
         fields={'version','review_policy','key','evidence','period_reviews','needs_events'}
+        from single_pass import active
+        if active(client):
+            fields.add('presentation')
+            if value.get('presentation') is not None:raise InvalidReadback('补读时不能同时提交评分说明')
         if navigation_access is not None:fields.add('needs_nodes')
         if (set(value) != fields
                 or value.get('version') != VERSION or value.get('review_policy') != REVIEW_POLICY
@@ -82,16 +116,17 @@ def complete(unit, packet, directory, client, receive, progress=lambda *args: No
             if navigation_access is None:raise ValueError('当前未提供分层导航，不接受节点补读')
             if node_rounds>=MAX_NODE_ROUNDS:raise ValueError('分层补读达到本轮执行上限，保留原回执待核')
             from navigation_access import ReadbackCapacity
-            try:next_unit=navigation_access.expand(current,nodes,str(index+1))
+            try:
+                if not protocol:next_unit=prepare(value)
             except ReadbackCapacity as ex:raise InvalidReadback(str(ex)) from None
             node_rounds+=1
         else:
             if event_rounds>=MAX_ROUNDS:raise ValueError('补读达到本轮执行上限，保留全部回执待核，不无限追加模型请求')
-            next_unit=expand(current,packet,requested);event_rounds+=1
-            if navigation_access is not None:navigation_access.remember(next_unit)
+            if not protocol:next_unit=prepare(value)
+            event_rounds+=1
         stage = root/'context-readback'/str(index + 1)
-        atomic(stage/'unit.json', next_unit)
-        atomic(stage/'request.json', dict(previous_unit_sha256=digest(current),
+        checkpoint(stage/'unit.json', next_unit)
+        checkpoint(stage/'request.json', dict(previous_unit_sha256=digest(current),
             previous_response_sha256=digest(record), requested_events=requested,requested_nodes=nodes,
             next_unit_sha256=digest(next_unit)))
         progress('reviewing', index + 1, MAX_ROUNDS + (MAX_NODE_ROUNDS if navigation_access else 0),

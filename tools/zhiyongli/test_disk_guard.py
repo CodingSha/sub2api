@@ -41,13 +41,16 @@ class DiskGuardTests(unittest.TestCase):
 
     def test_pause_prevents_new_reservation_without_touching_existing_receipts(self):
         from worker import JobClient
+        from model_config import ModelConfig
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)
-            client=object.__new__(JobClient);client.root=root/'1'
+            client=JobClient(ModelConfig('https://ai.apsatcom.com',root/'unused'),root/'1',1)
             (root/'pause-new-requests').touch()
             with self.assertRaises(Paused):
                 with client.send_slot({},root/'receipt.json','synthetic',b''):
                     self.fail('暂停后不得获得新请求发送许可')
+            self.assertEqual(0,client.budget.used())
+            self.assertFalse(list(root.rglob('*.receipt.json')))
 
 
 if __name__=='__main__':unittest.main()

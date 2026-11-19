@@ -24,6 +24,7 @@ func RegisterAdminRoutes(
 	v1.GET("/plugin-ui/:token/*path", h.Admin.Plugin.ServeUIAsset)
 	if h.Zhiyongli != nil {
 		v1.POST("/internal/zhiyongli/jobs/:id/import", h.Zhiyongli.ImportJob)
+		v1.POST("/internal/zhiyongli/jobs/:id/import-draft", h.Zhiyongli.ImportDayJobDraft)
 		v1.POST("/internal/zhiyongli/schedule", h.Zhiyongli.Schedule)
 	}
 
@@ -37,6 +38,7 @@ func RegisterAdminRoutes(
 	if h.Zhiyongli != nil {
 		admin.GET("/zhiyongli/reports", h.Zhiyongli.AdminReports)
 		admin.GET("/zhiyongli/reports/:id", h.Zhiyongli.AdminReport)
+		admin.GET("/zhiyongli/reports/:id/task-cases/:case_id", h.Zhiyongli.AdminTaskCase)
 		admin.POST("/zhiyongli/reports/:id/publish", h.Zhiyongli.Publish)
 		admin.POST("/zhiyongli/reports/batch-publish", h.Zhiyongli.BatchPublish)
 		admin.POST("/zhiyongli/imports", h.Zhiyongli.Import)

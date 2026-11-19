@@ -26,7 +26,7 @@ class MonthTests(unittest.TestCase):
 
     def test_all_empty_month_visits_every_week_and_never_calls_model(self):
         client=Mock();ranges=[]
-        def source(_root,_user,start,end):ranges.append((start,end));return packet(start,end)
+        def source(_root,_user,start,end,metadata_cache=None):ranges.append((start,end));return packet(start,end)
         with tempfile.TemporaryDirectory() as tmp,patch('pipeline.prepare',side_effect=source):
             with self.assertRaises(Paused) as caught:
                 evaluate_month('unused','test','2026-09-01T00:00:00+08:00','2026-10-01T00:00:00+08:00',tmp,client)

@@ -25,7 +25,7 @@ type BatchPublishResult struct {
 func (s *Store) BatchPublish(ctx context.Context, input BatchPublishInput, actor int64) (BatchPublishResult, error) {
 	result := BatchPublishResult{ReportIDs: []int64{}}
 	start, err := time.Parse("2006-01-02", input.PeriodStart)
-	if err != nil || start.Format("2006-01-02") != input.PeriodStart || (input.PeriodType != "week" && input.PeriodType != "month") || len(input.Reports) < 1 || len(input.Reports) > 100 {
+	if err != nil || start.Format("2006-01-02") != input.PeriodStart || (input.PeriodType != "day" && input.PeriodType != "week" && input.PeriodType != "month") || len(input.Reports) < 1 || len(input.Reports) > 100 {
 		return result, invalid("请选择同一周期的1至100份报告")
 	}
 	seen := map[int64]bool{}

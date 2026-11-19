@@ -23,8 +23,11 @@ def response_text(response):
             if content.get('type') == 'refusal':
                 raise ModelError('model_refusal')
             if content.get('type') == 'output_text':
-                parts.append(content['text'])
-    if not parts:
+                text = content.get('text')
+                if not isinstance(text, str):
+                    raise ModelError('malformed_model_output')
+                parts.append(text)
+    if not parts or not ''.join(parts).strip():
         raise ModelError('empty_model_output')
     return ''.join(parts)
 

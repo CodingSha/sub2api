@@ -51,13 +51,15 @@ class FixtureClient:
                 effective_request='合成请求',necessary_scope='合成范围',observed_execution='合成反馈',boundary='consistent',boundary_reason='仅测试',refs=['person-P1']))]),receipt)
     def audit_review(self,u,r,receipt):
         self.calls+=1
-        return record(dict(items={i:dict(verdict='supported',reason='合成复查夹具',source_quotes=[dict(event=r['evidence'][0]['event'],quote=r['evidence'][0]['quote'])],
+        return record(dict(items={i:dict(verdict='supported',reason='合成复查夹具',person_act='合成本人事实'+i,
+            own_state=next(c['state'] for c in r['period_reviews'][0]['cells'] if c['item']==i),
+            source_quotes=[dict(event=r['evidence'][0]['event'],quote=r['evidence'][0]['quote'])],
             problem_codes=[]) for i in RUBRIC['items']},global_issues=[]),receipt)
 
 
 class ExecutionTests(unittest.TestCase):
     def test_mixed_empty_month_three_actual_week_contracts_and_shared_reuse(self):
-        with tempfile.TemporaryDirectory() as tmp,patch('pipeline.prepare',side_effect=lambda _,__,a,b:packet(a,b)):
+        with tempfile.TemporaryDirectory() as tmp,patch('pipeline.prepare',side_effect=lambda _,__,a,b,metadata_cache=None:packet(a,b)):
             root=Path(tmp);client=FixtureClient()
             result=evaluate_month('test','test','2026-09-01T00:00:00+08:00','2026-10-01T00:00:00+08:00',root/'month',client,shared_root=root/'shared')
             report=result['reports'][0]

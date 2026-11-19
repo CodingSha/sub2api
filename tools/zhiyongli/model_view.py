@@ -7,7 +7,7 @@ from runtime import digest, moment
 VERSION = 'model-view-20261111.4'
 INPUT_BYTES = 120_000
 SEED_BYTES = 30_000
-FIELDS = ('version', 'key', 'user_id', 'title', 'evaluation_scope', 'periods', 'workday_scope')
+FIELDS = ('version', 'key', 'user_id', 'title', 'evaluation_scope', 'periods', 'workday_scope', 'source_issue_summary')
 
 
 def manifest(unit):

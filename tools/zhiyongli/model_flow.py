@@ -1,5 +1,6 @@
 """状态卷内统一模型配额与熔断；预留额度是保守预算，不冒充实测吞吐。"""
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -16,10 +17,12 @@ class ModelFlow:
         self.read_only=read_only
         expected={'version','budget_key','approved_by','reason','max_concurrency','requests_per_minute',
             'reserved_tokens_per_minute','max_requests','transient_failure_limit','cooldown_seconds'}
-        if (set(config)-{'max_429_retries','max_interrupted_retries'}!=expected or config['version']!=1 or any(not isinstance(config[k],str) or not config[k].strip()
+        if (set(config)-{'max_429_retries','max_interrupted_retries','budget_period'}!=expected or config['version']!=1 or any(not isinstance(config[k],str) or not config[k].strip()
                 for k in ('budget_key','approved_by','reason')) or any(type(config[k]) is not int or config[k]<1
                 for k in expected-{'version','budget_key','approved_by','reason'})):
             raise ValueError('全局模型配额须显式指定范围、确认人与全部正整数限制')
+        if config.get('budget_period','lifetime') not in ('lifetime','daily'):
+            raise ValueError('模型累计预算周期仅支持lifetime或daily')
         if type(config.get('max_429_retries',0)) is not int or not 0<=config.get('max_429_retries',0)<=3:
             raise ValueError('429续跑次数须显式设置为0至3；每次仍计入全部预算')
         if type(config.get('max_interrupted_retries',0)) is not int or not 0<=config.get('max_interrupted_retries',0)<=3:
@@ -38,6 +41,14 @@ class ModelFlow:
                 db.execute('ALTER TABLE attempts ADD COLUMN owner_pid INTEGER')
             from flow_measurements import initialize
             initialize(db)
+
+    def budget_key(self, now=None):
+        """日常运行以北京时间23点开启下一批额度，原诊断账簿默认仍为累计额度。"""
+        if self.config.get('budget_period','lifetime')=='lifetime':
+            return self.config['budget_key']
+        local=datetime.fromtimestamp(self.now() if now is None else now,timezone(timedelta(hours=8)))
+        day=(local-timedelta(hours=23)).date().isoformat()
+        return self.config['budget_key']+':'+day
 
     @contextmanager
     def connect(self):
@@ -88,12 +99,14 @@ class ModelFlow:
             (status,now,tokens,error,aid))
         from flow_measurements import save
         save(db,aid,record)
-        if status=='received':
+        from request_retry import gateway_limited
+        limited=error=='http_429' or gateway_limited(record)
+        if status=='received' and not limited:
             db.execute('UPDATE circuit SET failures=0 WHERE id=1')
-        elif status=='unknown' or error=='http_429':
+        elif status=='unknown' or limited:
             row=db.execute('SELECT * FROM circuit WHERE id=1').fetchone();failures=row['failures']+1
             until=row['until_at']
-            if error=='http_429' or failures>=self.config['transient_failure_limit']:
+            if limited or failures>=self.config['transient_failure_limit']:
                 until=max(until,now+self.config['cooldown_seconds'],record.get('retry_after_at',0))
             db.execute('UPDATE circuit SET failures=?,until_at=? WHERE id=1',(failures,until))
 
@@ -102,13 +115,14 @@ class ModelFlow:
         from pipeline import Paused
         # UTF-8字节加最大输出是保守预留，不宣称等于模型tokenizer的实际用量。
         reserve=len(body)+max_output;now=self.now();c=self.config;aid=uuid.uuid4().hex
+        budget_key=self.budget_key(now)
         if reserve>c['reserved_tokens_per_minute']:
-            raise Paused('needs_review','单请求保守预留超过全局每分钟预算；须分批或核对已获配额，不截断原文')
+            raise Paused('needs_review','单请求保守预留超过全局每分钟预算；须分批或核对已获配额，不截断原文',reason_code='request_capacity_exceeded')
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE');self.recover(db,now)
             active=db.execute("SELECT count(*) FROM attempts WHERE status='active'").fetchone()[0]
             recent=db.execute("SELECT count(*),coalesce(sum(coalesce(actual_tokens,reserved_tokens)),0) FROM attempts WHERE (started>? OR status='active') AND status!='cancelled'",(now-60,)).fetchone()
-            total=db.execute("SELECT count(*) FROM attempts WHERE budget_key=? AND status!='cancelled'",(c['budget_key'],)).fetchone()[0]
+            total=db.execute("SELECT count(*) FROM attempts WHERE budget_key=? AND status!='cancelled'",(budget_key,)).fetchone()[0]
             circuit=db.execute('SELECT until_at FROM circuit WHERE id=1').fetchone()[0]
             # 配额等待不占用任务预算；事务必须先提交恢复结果，再返回等待。
             reason=None;state='queued'
@@ -119,8 +133,8 @@ class ModelFlow:
                 reason='达到全局每分钟请求或保守token预留预算，等待配额窗口'
             if not reason:
                 db.execute('INSERT INTO attempts VALUES(?,?,?,?,?,?,?,NULL,NULL,NULL,?)',
-                    (aid,c['budget_key'],request_sha,str(Path(receipt).resolve()),now,reserve,'active',os.getpid()))
-        if reason:raise Paused(state,reason)
+                    (aid,budget_key,request_sha,str(Path(receipt).resolve()),now,reserve,'active',os.getpid()))
+        if reason:raise Paused(state,reason,reason_code='global_budget_exhausted' if total>=c['max_requests'] else 'model_flow_wait')
         entered=False
         try:
             yield
@@ -136,27 +150,38 @@ class ModelFlow:
             with self.connect() as db:
                 db.execute('BEGIN IMMEDIATE');self.finish(db,aid,record,self.now())
 
+    def remaining_requests(self):
+        """只读累计余额；不回收活动、不清账、不预留，发送时仍须原子申请配额。"""
+        budget_key=self.budget_key()
+        with self.connect() as db:
+            used=db.execute("SELECT count(*) FROM attempts WHERE budget_key=? AND status!='cancelled'",
+                (budget_key,)).fetchone()[0]
+        return dict(budget_key=budget_key,used=used,limit=self.config['max_requests'],
+            remaining=max(0,self.config['max_requests']-used))
+
     def snapshot(self):
+        budget_key=self.budget_key()
         with self.connect() as db:
             from flow_measurements import snapshot
             db.execute('BEGIN')
             rows=[dict(row) for row in db.execute('SELECT status,count(*) AS count FROM attempts GROUP BY status')]
             measured=db.execute('SELECT count(*),sum(actual_tokens),max(finished-started) FROM attempts WHERE actual_tokens IS NOT NULL').fetchone()
-            used=db.execute("SELECT count(*) FROM attempts WHERE budget_key=? AND status!='cancelled'",(self.config['budget_key'],)).fetchone()[0]
-            return dict(budget_key=self.config['budget_key'],states=rows,measured_usage_requests=measured[0],
+            used=db.execute("SELECT count(*) FROM attempts WHERE budget_key=? AND status!='cancelled'",(budget_key,)).fetchone()[0]
+            return dict(budget_key=budget_key,states=rows,measured_usage_requests=measured[0],
                 actual_tokens=measured[1],longest_measured_seconds=measured[2],
                 longest_measured_seconds_meaning='既有字段：预留到终态落账的墙钟间隔，可能包含重启后核账等待，不可当作API延迟。',
                 request_budget=dict(used=used,limit=self.config['max_requests'],remaining=max(0,self.config['max_requests']-used)),
-                measurements=snapshot(db,self.config['budget_key']),
+                measurements=snapshot(db,budget_key),
                 circuit=dict(db.execute('SELECT until_at,failures FROM circuit WHERE id=1').fetchone()))
 
     def blocked(self):
         """轻量状态检查；只调节轮询等待，不能拦住无需新请求的候选接入。"""
         now=self.now();c=self.config
+        budget_key=self.budget_key(now)
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE');self.recover(db,now)
             circuit=db.execute('SELECT until_at FROM circuit WHERE id=1').fetchone()[0]
-            total=db.execute("SELECT count(*) FROM attempts WHERE budget_key=? AND status!='cancelled'",(c['budget_key'],)).fetchone()[0]
+            total=db.execute("SELECT count(*) FROM attempts WHERE budget_key=? AND status!='cancelled'",(budget_key,)).fetchone()[0]
             active=db.execute("SELECT count(*) FROM attempts WHERE status='active'").fetchone()[0]
             recent=db.execute("SELECT count(*),coalesce(sum(coalesce(actual_tokens,reserved_tokens)),0) FROM attempts WHERE (started>? OR status='active') AND status!='cancelled'",(now-60,)).fetchone()
             if total>=c['max_requests']:return 'global_budget_exhausted'

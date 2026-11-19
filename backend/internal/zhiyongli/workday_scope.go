@@ -17,21 +17,23 @@ const WorkdayScopeVersion = "workday-scope-20261109.1"
 var defaultWorkdayRegistry []byte
 
 type WorkdayScope struct {
-	Version        string   `json:"version"`
-	RegistrySHA    string   `json:"registry_sha256"`
-	CalendarSHA    string   `json:"calendar_sha256"`
-	PeriodStart    string   `json:"period_start"`
-	PeriodEnd      string   `json:"period_end"`
-	WorkingDates   []string `json:"working_dates"`
-	ObservedUntil  string   `json:"observed_until"`
-	FreezeAt       string   `json:"freeze_at"`
-	CandidateDueAt *string  `json:"candidate_due_at"`
+	Version         string   `json:"version"`
+	RegistrySHA     string   `json:"registry_sha256"`
+	CalendarSHA     string   `json:"calendar_sha256"`
+	PeriodStart     string   `json:"period_start"`
+	PeriodEnd       string   `json:"period_end"`
+	WorkingDates    []string `json:"working_dates"`
+	EvaluationDates []string `json:"evaluation_dates,omitempty"`
+	ObservedUntil   string   `json:"observed_until"`
+	FreezeAt        string   `json:"freeze_at"`
+	CandidateDueAt  *string  `json:"candidate_due_at"`
 }
 type workdayPlan struct {
-	CalendarSHA    string   `json:"calendar_sha256"`
-	WorkingDates   []string `json:"working_dates"`
-	FreezeAt       *string  `json:"freeze_at"`
-	CandidateDueAt *string  `json:"candidate_due_at"`
+	CalendarSHA     string          `json:"calendar_sha256"`
+	WorkingDates    []string        `json:"working_dates"`
+	FreezeAt        *string         `json:"freeze_at"`
+	CandidateDueAt  *string         `json:"candidate_due_at"`
+	EvaluationDates json.RawMessage `json:"evaluation_dates,omitempty"`
 }
 type workdayRegistry struct {
 	Version     string                 `json:"version"`
@@ -102,6 +104,26 @@ func workdayWindow(start, end, expected string) (*WorkdayScope, error) {
 				s.WorkingDates = append(s.WorkingDates, d)
 			}
 		}
+		if p.EvaluationDates != nil {
+			var selected []string
+			if json.Unmarshal(p.EvaluationDates, &selected) != nil || len(selected) == 0 ||
+				b.Sub(a) != 7*24*time.Hour || !a.Equal(cursor) || len(selected) >= len(p.WorkingDates) {
+				return nil, invalid("局部评估须为受信登记的单周工作日真子集，不用于月评")
+			}
+			for i, d := range selected {
+				found := false
+				for _, day := range p.WorkingDates {
+					if d == day {
+						found = true
+						break
+					}
+				}
+				if !found || i > 0 && selected[i-1] >= d {
+					return nil, invalid("局部评估日期须为有序且不重复的工作日子集")
+				}
+			}
+			s.EvaluationDates = selected
+		}
 		f := cursor.AddDate(0, 0, 7).Add(2 * time.Hour)
 		if p.FreezeAt != nil {
 			f, err = time.Parse(time.RFC3339, *p.FreezeAt)
@@ -142,6 +164,16 @@ func workdayWindow(start, end, expected string) (*WorkdayScope, error) {
 }
 
 func (s *WorkdayScope) validate(start, end string) error {
+	if s != nil && s.Version == DailyReviewVersion {
+		want, err := dailyWindow(start)
+		if err != nil {
+			return err
+		}
+		if s.PeriodEnd != end || !reflect.DeepEqual(s, want) {
+			return invalid("日评范围与每日固定窗口不一致")
+		}
+		return nil
+	}
 	if s == nil || s.Version != WorkdayScopeVersion || s.PeriodStart != start || s.PeriodEnd != end {
 		return invalid("缺少当前工作日范围合同")
 	}
@@ -156,8 +188,17 @@ func (s *WorkdayScope) validate(start, end string) error {
 }
 
 func (s *WorkdayScope) contains(t time.Time) bool {
+	if s.Version == DailyReviewVersion {
+		start, _ := time.Parse(time.RFC3339, s.PeriodStart+"T08:00:00+08:00")
+		end, _ := time.Parse(time.RFC3339, s.ObservedUntil)
+		return !t.Before(start) && t.Before(end)
+	}
 	d := t.In(time.FixedZone("CST", 8*3600)).Format("2006-01-02")
-	for _, day := range s.WorkingDates {
+	dates := s.WorkingDates
+	if s.EvaluationDates != nil {
+		dates = s.EvaluationDates
+	}
+	for _, day := range dates {
 		if day == d {
 			return true
 		}

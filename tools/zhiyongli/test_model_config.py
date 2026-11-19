@@ -6,10 +6,18 @@ import unittest
 from unittest.mock import patch
 import urllib.request
 
-from model_config import MODEL, ModelConfig, NoRedirect
+from model_config import MODEL, ModelConfig, ModelError, NoRedirect, response_text
 
 
 class ModelConfigTests(unittest.TestCase):
+    def test_completed_envelope_without_text_is_execution_failure(self):
+        # 真实服务曾返回 completed 和用量，但 output_text 连 text 字段都没有。
+        for content in ({'type':'output_text'}, {'type':'output_text','text':None},
+                        {'type':'output_text','text':''}, {'type':'output_text','text':'  '}):
+            with self.subTest(content=content), self.assertRaises(ModelError):
+                response_text(dict(status='completed',output=[dict(type='message',content=[content])]))
+        self.assertEqual('完整正文', response_text(dict(status='completed',output=[dict(content=[dict(type='output_text',text='完整正文')])])))
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)

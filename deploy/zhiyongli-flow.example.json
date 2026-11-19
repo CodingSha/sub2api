@@ -1,6 +1,7 @@
 {
   "version": 1,
   "budget_key": "填写本次已批准的运行周期",
+  "budget_period": "lifetime",
   "approved_by": "填写模型专用配额确认人",
   "reason": "填写配额及累计调用预算的确认依据",
   "max_concurrency": null,

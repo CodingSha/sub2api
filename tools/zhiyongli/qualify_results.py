@@ -65,7 +65,9 @@ def qualify(report, weekly_reports=(), *, rules='1.6'):
             if key in valid:
                 raise ValueError('月周评来源重复')
             if any(i['state'] in {'pending','attribution_unclear'} for i in w['items']):
-                raise ValueError('关键未决周不可剔除后发布月分')
+                if r.get('assessment',{}).get('version')!='scope-disclosure-20261118.3' or not any(
+                        issue['status']=='blocking' for issue in r['assessment']['issues']):
+                    raise ValueError('关键未决周不可剔除后发布月分')
             valid[key] = w['score_status'] == 'scored'
             if not w['eligibility']['sources_complete']:
                 g['sources_complete'] = False
@@ -131,7 +133,7 @@ def qualify(report, weekly_reports=(), *, rules='1.6'):
         if g['valid_weeks']<3:
             g['route']='insufficient_week_coverage'
             g['reasons'].append(f"本月有效周评{g['valid_weeks']}周，不足3周，暂不形成月评分及评级")
-    if any(i['state'] in {'pending','attribution_unclear'} for i in r['items']): g['reasons'].append('存在待复核或本人归属未决的判断')
+    if any(i['state'] in {'pending','attribution_unclear'} for i in r['items']): g['reasons'].append('本期含证据或归属不足而不计分的分项')
     if any(i['status']=='blocking' for i in r.get('assessment',{}).get('issues',[])): g['reasons'].append('存在尚未解决的关键资料或判断问题')
     g['eligible']=not g['reasons']
     g['source_digest']=signature(g)

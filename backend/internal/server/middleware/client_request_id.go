@@ -36,7 +36,11 @@ func ClientRequestID() gin.HandlerFunc {
 			return
 		}
 
-		id := uuid.New().String()
+		// 保留合法的调用方关联标识，便于对账；它不承担鉴权或幂等判定。
+		id, valid := normalizeCorrelationID(c.GetHeader(clientRequestIDHeader))
+		if !valid {
+			id = uuid.New().String()
+		}
 		c.Header(clientRequestIDHeader, id)
 		ctx := context.WithValue(c.Request.Context(), ctxkey.ClientRequestID, id)
 		requestLogger := logger.FromContext(ctx).With(zap.String("client_request_id", strings.TrimSpace(id)))

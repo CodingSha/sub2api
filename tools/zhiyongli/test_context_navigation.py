@@ -136,6 +136,22 @@ class NavigationTests(unittest.TestCase):
             notes[0]['summary']='另一个解释'
             with self.assertRaises(ValueError):nav.build(notes,Reader(),received)
 
+    def test_long_event_signature_is_shared_within_build_but_never_reused_after_raw_changes(self):
+        from runtime import digest
+        packet=self.packet(1);event=packet['events'][0];event['text']='原文失败；'*1000
+        notes=[dict(event_id='0',start=i,end=min(i+500,len(event['text'])),summary='原文仍须核对',
+            limitations=[],open_questions=[]) for i in range(0,len(event['text']),500)]
+        calls=[]
+        def counted(value):
+            if value is event:calls.append(digest(value))
+            return digest(value)
+        with tempfile.TemporaryDirectory() as tmp,patch('context_navigation.digest',side_effect=counted):
+            nav=Navigation(tmp,packet);client=Reader();nav.build(notes,client,received)
+            self.assertEqual(1,len(calls));sent=client.calls
+            event['text']=event['text'].replace('失败','成功')
+            with self.assertRaisesRegex(ValueError,'阅读结论变化'):nav.build(notes,client,received)
+            self.assertEqual(2,len(calls));self.assertNotEqual(calls[0],calls[1]);self.assertEqual(sent,client.calls)
+
     def test_unknown_receipt_is_not_resent_or_overwritten(self):
         with tempfile.TemporaryDirectory() as tmp,patch('context_navigation.INPUT_BYTES',6000):
             packet=self.packet(12);nav=Navigation(tmp,packet);notes=self.notes(packet);client=Reader()

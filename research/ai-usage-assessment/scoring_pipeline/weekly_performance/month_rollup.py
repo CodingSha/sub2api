@@ -126,7 +126,11 @@ def summarize_month(periods, *, start, end, gap_dispositions=()):
         if decision is None:
             gaps.append('/'.join(key)+'：必要缺口月末处置未核')
             continue
-        require(decision.get('status') in {'open', 'recovered'} and decision.get('reason'), '缺口处置缺状态/理由')
+        require(decision.get('status') in {'open', 'recovered', 'unresolved'} and decision.get('reason'), '缺口处置缺状态/理由')
+        if decision['status']=='unresolved':
+            require(not decision.get('recovery_period') and not decision.get('recovery_refs'), '未确定恢复不能混入恢复声明')
+            gaps.append('/'.join(key)+'：必要缺口月末恢复证据不足')
+            continue
         if decision['status'] == 'open':
             open_gaps[key[1][0]].append(value)
         else:
