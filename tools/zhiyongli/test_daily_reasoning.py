@@ -7,7 +7,7 @@ import unittest
 import jsonschema
 
 from daily_pilot import call
-from daily_reasoning import assess, allocated_schema, check_quality, judge_call, judge_schema, presentation_contract, read_asset_evidence
+from daily_reasoning import allocate, assess, allocated_schema, check_quality, judge_call, judge_schema, presentation_contract, read_asset_evidence
 from daily_behaviors import source_fragments
 from runtime import atomic
 
@@ -20,7 +20,7 @@ def behavior_wire(data,rows):
 
 def fact(record_id, action):
     return dict(record_id=record_id,action=action,explicit_reason='',new_fact='',new_fact_record='',
-                claimed_completed_by_user='',selected_asset=[])
+                claimed_completed_by_user='',result_decision_quote='',selected_asset=[])
 
 
 class DailyReasoningTests(unittest.TestCase):
@@ -39,6 +39,34 @@ class DailyReasoningTests(unittest.TestCase):
                     dict(routes={**value['routes'],'action-1':[row(refs[0]),row(refs[0])]}),
                     dict(routes={**value['routes'],'action-1':row(refs[1])})):
             with self.assertRaises(jsonschema.ValidationError):jsonschema.validate(bad,schema)
+
+    def test_result_disposition_can_only_use_its_located_decision_fragment(self):
+        condition='先核对总数，相符才提交。'
+        decision='旧报告漏了撤销单，不采用旧报告，请按新口径重算。'
+        rows=[dict(id='condition',role='user',text=condition),
+              dict(id='result',role='assistant',text='已生成旧口径的报告。'),
+              dict(id='decision',role='user',text=decision)]
+        actions={'condition':fact('condition','设置了提交前的检查条件'),
+                 'decision':dict(fact('decision','明确拒绝并要求重算'),result_decision_quote=decision),
+                 'invented':dict(fact('condition','声称已验收'),result_decision_quote='总数已验收。')}
+        def send(client, root, name, data, schema, instructions):
+            self.assertEqual(set(data['decision_fragments']), {'decision'})
+            location=data['decision_fragments']['decision']
+            check=next(key for key,fragment in data['fragments'].items() if fragment['record_id']=='condition')
+            check_route=dict(primary_item='J2',origin='personal',fragment_id=check)
+            decision_route=dict(primary_item='J3',origin='personal',fragment_id=location)
+            routes=dict(condition=check_route,decision=decision_route,invented=None)
+            jsonschema.validate(dict(routes=routes),schema)
+            for invalid in (dict(routes,condition=dict(check_route,primary_item='J3')),
+                            dict(routes,invented=dict(check_route,primary_item='J3')),
+                            dict(routes,decision=dict(decision_route,origin='supplied'))):
+                with self.assertRaises(jsonschema.ValidationError):jsonschema.validate(dict(routes=invalid),schema)
+            return dict(routes=routes)
+        with tempfile.TemporaryDirectory() as path:
+            result=allocate(SimpleNamespace(),Path(path),dict(actions=actions),[dict(records=rows)],send)
+        self.assertEqual([(row['primary_item'],row['record_id']) for row in result['behaviors']],
+                         [('J2','condition'),('J3','decision')])
+        self.assertEqual(result['behaviors'][1]['quote'],decision)
 
     def test_context_references_must_be_delivered_and_cannot_use_tool_directory_ids(self):
         cell=dict(user_action='指定检查。',context_support='AI报告尚未检查。',band=70,
@@ -221,6 +249,33 @@ class DailyReasoningTests(unittest.TestCase):
                 quality = json.loads((root/'quality.json').read_text())
                 self.assertEqual(quality['dismissed_findings'][0]['reason'], 'anchor_advisory')
                 self.assertEqual(quality.get('issues', []), [actor] if actor in issues else [])
+
+    def test_actor_check_cannot_use_user_quote_as_ai_evidence(self):
+        rows=[dict(id='u',role='user',text='我已在业务端核对总数。'),
+              dict(id='a',role='assistant',text='我会根据总数检查差异。')]
+        task=dict(records=rows)
+        judgment=dict(band='reasonable',refs=['check'],basis='你在业务端核对了总数。',next_band='')
+        prose=dict(items={'J2':{key:judgment[key] for key in ('basis','next_band')}})
+        behaviors={'check':dict(primary_item='J2',source_ref='u',claim='已经核对总数')}
+        issue=dict(item='J2',kind='wrong_actor',problem='误把用户原话当成 AI 操作。',claim_quote=judgment['basis'],
+                   source_ref='a',source_quote=rows[0]['text'],behavior_ids=['check'])
+        for quote,reason in ((rows[0]['text'],None),('原件没有这句话。','没有给出真实原文反证')):
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as path:
+                root=Path(path)
+                def send(client, root, name, data, schema, instructions):
+                    self.assertEqual(name,'quality-0')
+                    result=dict(issues=[dict(issue,source_quote=quote)])
+                    jsonschema.validate(result,schema)
+                    return result
+                def audit():
+                    return check_quality(None,root,[task],behaviors,{'J2':judgment},prose,[],send,
+                                         lambda _: self.fail('错绑或缺失原文不能用于重判'))
+                if reason:
+                    with self.assertRaisesRegex(ValueError,reason):audit()
+                else:
+                    self.assertEqual(audit(),({'J2':judgment},prose))
+                    quality=json.loads((root/'quality.json').read_text())
+                    self.assertEqual(quality['dismissed_findings'][0]['reason'],'actor_counterevidence_is_user_text')
 
     def test_program_links_original_path_and_same_judgment_explanation(self):
         original='请修复 E:\\项目\\登录.py，并按原失败步骤回归。'
