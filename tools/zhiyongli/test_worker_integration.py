@@ -51,8 +51,8 @@ class WorkerIntegrationTests(unittest.TestCase):
                     request_id text,request_count bigint,platform text,endpoint text,method text,model text,status_code int,
                     request_body text,response_body text,request_truncated boolean,response_truncated boolean,created_at timestamptz)''')
                 root = Path(__file__).resolve().parents[2]
-                db.execute((root/'backend/migrations/245_zhiyongli_jobs.sql').read_text())
-                db.execute((root/'backend/migrations/246_zhiyongli_workday_scope.sql').read_text())
+                for name in ('241_zhiyongli_reports.sql','245_zhiyongli_jobs.sql','246_zhiyongli_workday_scope.sql','249_zhiyongli_day_rechecks.sql'):
+                    db.execute((root/'backend/migrations'/name).read_text())
                 db.execute("""INSERT INTO zhiyongli_jobs(user_id,period_type,period_start,period_end,rules_version,created_by)
                     VALUES(2,'week','2026-09-07','2026-09-14','1.6',1)""")
                 from workday_scope import window

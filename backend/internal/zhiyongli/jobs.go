@@ -12,23 +12,25 @@ import (
 
 // Job 不返回缓存路径、凭证、原始请求或模型响应。
 type Job struct {
-	ID             int64         `json:"id"`
-	UserID         int64         `json:"user_id"`
-	UserEmail      string        `json:"user_email"`
-	PeriodType     string        `json:"period_type"`
-	PeriodStart    string        `json:"period_start"`
-	PeriodEnd      string        `json:"period_end"`
-	RulesVersion   string        `json:"rules_version"`
-	ScopeKey       string        `json:"scope_key"`
-	WorkdayScope   *WorkdayScope `json:"workday_scope,omitempty"`
-	State          string        `json:"state"`
-	Active         bool          `json:"active"`
-	Phase          string        `json:"phase"`
-	CompletedUnits int           `json:"completed_units"`
-	TotalUnits     int           `json:"total_units"`
-	Message        string        `json:"message"`
-	CreatedAt      time.Time     `json:"created_at"`
-	UpdatedAt      time.Time     `json:"updated_at"`
+	ID              int64         `json:"id"`
+	UserID          int64         `json:"user_id"`
+	UserEmail       string        `json:"user_email"`
+	PeriodType      string        `json:"period_type"`
+	PeriodStart     string        `json:"period_start"`
+	PeriodEnd       string        `json:"period_end"`
+	RulesVersion    string        `json:"rules_version"`
+	ScopeKey        string        `json:"scope_key"`
+	RecheckReportID *int64        `json:"recheck_report_id"`
+	ResultReportID  *int64        `json:"result_report_id"`
+	WorkdayScope    *WorkdayScope `json:"workday_scope,omitempty"`
+	State           string        `json:"state"`
+	Active          bool          `json:"active"`
+	Phase           string        `json:"phase"`
+	CompletedUnits  int           `json:"completed_units"`
+	TotalUnits      int           `json:"total_units"`
+	Message         string        `json:"message"`
+	CreatedAt       time.Time     `json:"created_at"`
+	UpdatedAt       time.Time     `json:"updated_at"`
 }
 
 type StartJobs struct {
@@ -91,12 +93,13 @@ func readyWorkdayWindow(kind, start string, now time.Time) (*WorkdayScope, error
 
 // Worker在执行任务期间持有(245,任务ID)会话锁；历史running标记不能代表实际活动。
 const jobActive = `(j.state='running' AND EXISTS(SELECT 1 FROM pg_locks l WHERE l.locktype='advisory' AND l.database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND l.classid=245 AND l.objid=j.id::oid AND l.objsubid=2 AND l.mode='ExclusiveLock' AND l.granted))`
-const jobFields = `j.id,j.user_id,u.email,j.period_type,j.period_start::text,j.period_end::text,j.rules_version,j.state,j.phase,j.completed_units,j.total_units,j.message,j.created_at,j.updated_at,j.scope_key,j.workday_scope,` + jobActive
+const jobFields = `j.id,j.user_id,u.email,j.period_type,j.period_start::text,j.period_end::text,j.rules_version,j.state,j.phase,j.completed_units,j.total_units,j.message,j.created_at,j.updated_at,j.scope_key,j.workday_scope,j.recheck_report_id,` +
+	`(SELECT r.id FROM zhiyongli_reports r WHERE r.user_id=j.user_id AND r.period_type=j.period_type AND r.period_start=j.period_start AND r.run_id=j.recheck_run_id),` + jobActive
 
 func scanJob(row interface{ Scan(...any) error }) (Job, error) {
 	var j Job
 	var raw []byte
-	err := row.Scan(&j.ID, &j.UserID, &j.UserEmail, &j.PeriodType, &j.PeriodStart, &j.PeriodEnd, &j.RulesVersion, &j.State, &j.Phase, &j.CompletedUnits, &j.TotalUnits, &j.Message, &j.CreatedAt, &j.UpdatedAt, &j.ScopeKey, &raw, &j.Active)
+	err := row.Scan(&j.ID, &j.UserID, &j.UserEmail, &j.PeriodType, &j.PeriodStart, &j.PeriodEnd, &j.RulesVersion, &j.State, &j.Phase, &j.CompletedUnits, &j.TotalUnits, &j.Message, &j.CreatedAt, &j.UpdatedAt, &j.ScopeKey, &raw, &j.RecheckReportID, &j.ResultReportID, &j.Active)
 	if err == nil && len(raw) > 0 {
 		err = json.Unmarshal(raw, &j.WorkdayScope)
 	}
@@ -318,6 +321,19 @@ func (s *Store) ResumeJob(ctx context.Context, id int64) (Job, error) {
 	if j.RulesVersion != RulesVersion || (j.State != "failed" && j.State != "needs_review") {
 		return Job{}, ErrConflict
 	}
+	if j.RecheckReportID != nil {
+		if err = lockRecheckUser(ctx, tx, j.UserID); err != nil {
+			return Job{}, err
+		}
+		var newer bool
+		err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM zhiyongli_jobs WHERE user_id=$1 AND period_start=$2::date AND recheck_report_id IS NOT NULL AND id>$3)`, j.UserID, j.PeriodStart, j.ID).Scan(&newer)
+		if err != nil {
+			return Job{}, err
+		}
+		if newer {
+			return Job{}, fmt.Errorf("该人员当天已有更新的复评，请查看新任务：%w", ErrConflict)
+		}
+	}
 	_, err = tx.ExecContext(ctx, `UPDATE zhiyongli_jobs SET state='queued',message='等待从已有回执继续校验；不重新发送已发请求',updated_at=now() WHERE id=$1`, id)
 	if err != nil {
 		return Job{}, err
@@ -345,7 +361,7 @@ func (s *Store) importJob(ctx context.Context, id int64, bundle Bundle, draftOnl
 	if err != nil {
 		return Run{}, err
 	}
-	if j.State != "running" || j.RulesVersion != RulesVersion || len(bundle.Reports) != 1 || (draftOnly && j.PeriodType != "day") {
+	if j.State != "running" || j.RulesVersion != RulesVersion || len(bundle.Reports) != 1 || (draftOnly && j.PeriodType != "day") || (j.RecheckReportID != nil && !draftOnly) {
 		return Run{}, ErrConflict
 	}
 	r := bundle.Reports[0]
@@ -357,7 +373,11 @@ func (s *Store) importJob(ctx context.Context, id int64, bundle Bundle, draftOnl
 	if err = s.db.QueryRowContext(ctx, `SELECT created_by FROM zhiyongli_jobs WHERE id=$1`, j.ID).Scan(&actor); err != nil {
 		return Run{}, err
 	}
-	run, err := s.Import(ctx, bundle, actor)
+	var recheckJobID int64
+	if j.RecheckReportID != nil {
+		recheckJobID = j.ID
+	}
+	run, err := s.importBundle(ctx, bundle, actor, recheckJobID)
 	if err != nil || j.PeriodType != "day" {
 		return run, err
 	}

@@ -152,7 +152,8 @@ def prepare(packet,day,root,limit=5):
         if at.tzinfo is None:
             raise ValueError('来源时间缺少时区，不能确定日评分日期')
         local=at.astimezone(timezone(timedelta(hours=8)))
-        if local.date().isoformat()!=day:continue
+        if local.date().isoformat()!=day or local.hour>=18:continue
+        if local.hour<8:e=dict(e,actor_class='context')
         if e.get('session_id'):
             key=(e['session_id'],e.get('api_key_id'),e.get('group_id'))
         elif e.get('request_id'):

@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const DailyReviewVersion = "daily-task-review-20261119.1"
+const DailyReviewVersion = "daily-task-review-20261120.2"
 const DailyAggregationVersion = "daily-observed-weighted-20261119.2"
 
 // DailyReview 保存实际交给模型的任务上下文；列表接口不返回正文。
@@ -77,8 +77,8 @@ func (r *Result) validateDaily() error {
 	if err != nil {
 		return err
 	}
-	if !b.Equal(a.AddDate(0, 0, 1)) || d.WindowStart != r.PeriodStart+"T08:00:00+08:00" || d.WindowEnd != r.PeriodStart+"T21:00:00+08:00" {
-		return invalid("日评分须对应北京时间当日08至21点，结束日期为次日")
+	if !b.Equal(a.AddDate(0, 0, 1)) || d.WindowStart != r.PeriodStart+"T08:00:00+08:00" || d.WindowEnd != r.PeriodStart+"T18:00:00+08:00" {
+		return invalid("日评分须对应北京时间当日08至18点，结束日期为次日")
 	}
 	if r.WorkdayScope == nil || r.PolicyVersions.Scope != DailyReviewVersion {
 		return invalid("日评分缺少固定采集窗口合同")
@@ -296,5 +296,5 @@ func dailyWindow(start string) (*WorkdayScope, error) {
 		return nil, invalid("日评分日期无效")
 	}
 	due := day.AddDate(0, 0, 1).Add(8 * time.Hour).Format(time.RFC3339)
-	return &WorkdayScope{Version: DailyReviewVersion, RegistrySHA: bytesSHA([]byte(DailyReviewVersion + ":08:00-21:00:23:00:08:00")), PeriodStart: start, PeriodEnd: day.AddDate(0, 0, 1).Format("2006-01-02"), WorkingDates: []string{start}, ObservedUntil: day.Add(21 * time.Hour).Format(time.RFC3339), FreezeAt: day.Add(23 * time.Hour).Format(time.RFC3339), CandidateDueAt: &due}, nil
+	return &WorkdayScope{Version: DailyReviewVersion, RegistrySHA: bytesSHA([]byte(DailyReviewVersion + ":08:00-18:00:23:00:08:00")), PeriodStart: start, PeriodEnd: day.AddDate(0, 0, 1).Format("2006-01-02"), WorkingDates: []string{start}, ObservedUntil: day.Add(18 * time.Hour).Format(time.RFC3339), FreezeAt: day.Add(23 * time.Hour).Format(time.RFC3339), CandidateDueAt: &due}, nil
 }

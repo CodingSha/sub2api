@@ -9,7 +9,7 @@ from pathlib import Path
 from work_calendar import Calendar,TZ
 
 VERSION='workday-scope-20261109.1'
-DAILY_VERSION='daily-task-review-20261119.1'
+DAILY_VERSION='daily-task-review-20261120.2'
 REGISTRY_VERSION='workday-registry-20261109.1'
 ROOT=Path(__file__).resolve().parents[2]
 DEFAULT=ROOT/'backend/internal/zhiyongli/workday-registry.json'
@@ -85,9 +85,9 @@ def daily_window(start):
         raise ValueError('日评分日期格式无效')
     end=day+timedelta(days=1)
     return dict(version=DAILY_VERSION,
-        registry_sha256=hashlib.sha256((DAILY_VERSION+':08:00-21:00:23:00:08:00').encode()).hexdigest(),
+        registry_sha256=hashlib.sha256((DAILY_VERSION+':08:00-18:00:23:00:08:00').encode()).hexdigest(),
         calendar_sha256='',period_start=start,period_end=str(end),working_dates=[start],
-        observed_until=datetime.combine(day,time(21),TZ).isoformat(),
+        observed_until=datetime.combine(day,time(18),TZ).isoformat(),
         freeze_at=datetime.combine(day,time(23),TZ).isoformat(),
         candidate_due_at=datetime.combine(end,time(8),TZ).isoformat())
 

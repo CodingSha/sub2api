@@ -13,7 +13,8 @@
     <DataTable class="review-jobs-table" :columns="columns" :data="jobs" :loading="loading">
       <template #cell-user_email="{value}"><span class="block whitespace-normal break-all">{{ value }}</span></template>
       <template #cell-period_start="{row}">
-        <span class="tabular-nums">{{ row.period_start }} · {{ row.period_type === 'week' ? '周' : '月' }} · {{ row.rules_version }}</span>
+        <span class="tabular-nums">{{ row.period_start }} · {{ periodNames[row.period_type as ReviewJob['period_type']] }} · {{ row.rules_version }}</span>
+        <span v-if="row.recheck_report_id" class="ml-2 text-xs text-primary-700 dark:text-primary-400">复评 #{{ row.id }}</span>
         <WorkdayRange v-if="row.workday_scope" :scope="row.workday_scope" class="mt-1" />
         <span v-else class="block text-xs text-gray-500">{{ row.period_type === 'week' ? '历史自然周范围' : '历史自然月范围' }}</span>
       </template>
@@ -25,7 +26,7 @@
       <template #cell-updated_at="{value}"><span class="tabular-nums text-xs">{{ formatTime(value) }}</span></template>
       <template #cell-actions="{row}">
         <button v-if="row.state === 'failed' || row.state === 'needs_review'" class="text-sm text-primary-700 dark:text-primary-400" :disabled="resuming === row.id" @click="resume(row)">{{ resuming === row.id ? '恢复中…' : '恢复校验' }}</button>
-        <button v-else-if="row.state === 'completed'" class="text-sm text-primary-700 dark:text-primary-400" @click="$emit('reports', row.user_email)">查看结果</button>
+        <button v-else-if="row.state === 'completed'" class="text-sm text-primary-700 dark:text-primary-400" @click="$emit('reports', row)">{{ row.recheck_report_id ? '查看复评结果' : '查看结果' }}</button>
         <span v-else class="text-gray-400">—</span>
       </template>
       <template #empty><p class="text-sm">暂无评审任务</p></template>
@@ -70,19 +71,20 @@ import WorkdayRange from './WorkdayRange.vue'
 import { list as listUsers } from '@/api/admin/users'
 import { useAppStore } from '@/stores/app'
 import { listJobs, startJobs, startLastWeekJobs, resumeJob, type ReviewJob } from './api'
-const props = defineProps<{startOpen:boolean}>()
-const emit = defineEmits<{close:[];reports:[email:string]}>()
+const props = defineProps<{startOpen:boolean;initialSearch?:string}>()
+const emit = defineEmits<{close:[];reports:[job:ReviewJob]}>()
 const app=useAppStore()
 const jobs=ref<ReviewJob[]>([]),page=ref(1),total=ref(0),loading=ref(false),error=ref(''),resuming=ref<number|null>(null)
-const state=ref(''),searchInput=ref(''),search=ref('')
+const state=ref(''),searchInput=ref(props.initialSearch??''),search=ref(searchInput.value)
 const kind=ref<'week'|'month'>('week'),startDate=ref(''),starting=ref(false),startError=ref('')
 const users=ref<{id:number;email:string}[]>([]),selected=ref<{id:number;email:string}[]>([]),userSearch=ref(''),userTotal=ref(0),finding=ref(false)
 const periods=[{value:'week',label:'周评分'},{value:'month',label:'月评分'}]
+const periodNames={day:'日',week:'周',month:'月'}
 const states:Record<ReviewJob['state'],string>={queued:'等待执行',running:'评审中',needs_review:'待复核',unknown:'请求结果不明',failed:'执行失败',completed:'候选已生成',no_activity:'本期无记录'}
 const stateOptions=[{value:'',label:'全部状态'},...Object.entries(states).map(([value,label])=>({value,label:value==='running'?'执行及待续评':label}))]
 const stateClasses:Record<ReviewJob['state'],string>={queued:'bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200',running:'bg-teal-100 text-teal-800 dark:bg-teal-900/50 dark:text-teal-200',needs_review:'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200',unknown:'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-200',failed:'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200',completed:'badge-success',no_activity:'badge-gray'}
 const stateClass=(job:ReviewJob)=>job.state==='running'&&!job.active?'badge-gray':stateClasses[job.state]
-const phases:Record<string,string>={collecting:'采集来源',reading:'阅读来源',identifying:'识别目标',reviewing:'分项评审',checking:'核对依据',importing:'接入候选',done:'已完成',paused:'已暂停'}
+const phases:Record<string,string>={collecting:'采集来源',reading:'阅读来源',identifying:'识别目标',evaluating:'当日评审',reviewing:'分项评审',checking:'核对依据',importing:'接入候选',done:'已完成',paused:'已暂停'}
 const columns=[{key:'user_email',label:'成员',class:'w-48'},{key:'period_start',label:'周期 / 规则',class:'w-[34%]'},{key:'state',label:'状态',class:'w-32 whitespace-nowrap'},{key:'phase',label:'进度与问题'},{key:'updated_at',label:'最近更新',class:'w-40'},{key:'actions',label:'操作',class:'w-24 whitespace-nowrap'}]
 let request=0,findRequest=0,alive=true,timer:ReturnType<typeof setTimeout>|undefined
 async function load(silent=false){const current=++request;if(!silent)loading.value=true;try{const value=await listJobs(page.value,{state:state.value,search:search.value});if(alive&&current===request){jobs.value=value.items;total.value=value.total;error.value=''}}catch(e){if(alive&&current===request)error.value=(e as Error).message}finally{if(current===request)loading.value=false}}

@@ -84,7 +84,9 @@ def prepare(source_root, user_id, start, end,workday_scope=None,preparation=Fals
         return frame.get('session_id') or 'audit:'+frame['frame'].split(':')[1]
     def within_usage(at):
         local=moment(at).astimezone(TZ)
-        return 8<=local.hour<21
+        return 8<=local.hour<usage_end
+    from workday_scope import DAILY_VERSION
+    usage_end=18 if workday_scope and workday_scope['version']==DAILY_VERSION else 21
     # 先只扫元数据确定活跃会话，再逐帧提取；历史先出现也不会漏掉。
     # 两遍均验来源签名。首遍不保留整周帧正文，第二遍不解析无关会话协议。
     active={group(f) for f,_ in iter_frames(source_root,snapshot,include_at=include_at,
@@ -126,12 +128,12 @@ def prepare(source_root, user_id, start, end,workday_scope=None,preparation=Fals
             and moment(e['at']).astimezone(TZ).date().isoformat() not in workday_scope.get('evaluation_dates',workday_scope['working_dates'])):
             e.update(actor_class='context',workday_exclusion='non_workday_context_only')
         if session_review and e['actor_class']=='candidate_user' and not e['timestamp_unknown'] and not within_usage(e['at']):
-            e.update(actor_class='context',usage_window_exclusion='outside_0800_2100_context_only')
+            e.update(actor_class='context',usage_window_exclusion=f'outside_0800_{usage_end}00_context_only')
     del known
     packet.update(user_id=str(user_id),user_email=user['email'],since=start,until=end,
         source_scope='registered_person_workdays' if dates is not None else 'full_person_window',source_snapshot=latest)
     if session_review:
-        packet['usage_window']=dict(timezone='Asia/Shanghai',start='08:00',end='21:00',end_exclusive=True,
+        packet['usage_window']=dict(timezone='Asia/Shanghai',start='08:00',end=f'{usage_end}:00',end_exclusive=True,
             time_basis='保留原事件timestamp_basis；audit_capture只界定审计调用时窗，不证明历史消息发送时间',
             background_policy='同活跃会话的既有上下文保留；窗外已知候选仅作背景，不计本人表现')
     # 稳定排序不能用哈希事件ID打散同请求的输入/返回或协议内原有顺序。

@@ -105,7 +105,7 @@ func TestDailyImportPublishPrivacyAndIdempotency(t *testing.T) {
 	r.WorkdayScope, _ = dailyWindow(r.PeriodStart)
 	r.PeriodEnd = "2026-11-18"
 	r.DailyReview.WindowStart = "2026-11-17T08:00:00+08:00"
-	r.DailyReview.WindowEnd = "2026-11-17T21:00:00+08:00"
+	r.DailyReview.WindowEnd = "2026-11-17T18:00:00+08:00"
 	for i := range r.Items {
 		for j := range r.Items[i].Evidence {
 			r.Items[i].Evidence[j].OccurredAt = r.Items[i].Evidence[j].OccurredAt.AddDate(0, 0, -1)

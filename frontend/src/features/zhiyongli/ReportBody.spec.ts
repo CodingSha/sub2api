@@ -28,8 +28,8 @@ const report: Report = {
 describe('报告的用户依据与管理员评审记录', () => {
   it('正式日评使用新阅读布局，分数后直接展示依据和任务上下文入口', () => {
     const wrapper = mount(ReportBody, { props: { report: { ...report, period_type: 'day', period_start: '2026-11-18', period_end: '2026-11-19', daily_review: {
-      version: 'daily-task-review-20261119.1', model: 'deepseek-v4.1-flash-local', request_digest: 'a', behaviors: {},
-      window_start: '2026-11-18T08:00:00+08:00', window_end: '2026-11-18T21:00:00+08:00',
+      version: 'daily-task-review-20261120.2', model: 'deepseek-v4.1-flash-local', request_digest: 'a', behaviors: {},
+      window_start: '2026-11-18T08:00:00+08:00', window_end: '2026-11-18T18:00:00+08:00',
       source_labels: { 'person:message-1': '页面说明调整' }, source_sessions: {}, conversations: {}
     } } } })
     expect(wrapper.find('.assessment-reader').exists()).toBe(true)

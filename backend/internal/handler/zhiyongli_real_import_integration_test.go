@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -18,11 +19,108 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/zhiyongli"
 	"github.com/Wei-Shaw/sub2api/migrations"
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
 )
+
+func TestZhiyongliDayRecheckHTTP(t *testing.T) {
+	dsn := os.Getenv("ZHIYONGLI_TEST_DSN")
+	if dsn == "" {
+		t.Skip("需要显式本地专用测试库")
+	}
+	url, err := url.Parse(dsn)
+	if err != nil || url.Hostname() != "127.0.0.1" || url.Port() != "55414" || url.Path != "/zhiyongli_test" {
+		t.Fatal("只能使用专用本地验收数据库")
+	}
+	admin, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("zy_day_recheck_%d", time.Now().UnixNano())
+	if _, err = admin.Exec("CREATE SCHEMA " + schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Exec("DROP SCHEMA " + schema + " CASCADE")
+	query := url.Query()
+	query.Set("search_path", schema)
+	url.RawQuery = query.Encode()
+	db, err := sql.Open("postgres", url.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.Exec(`CREATE TABLE users(id BIGINT PRIMARY KEY,email TEXT UNIQUE,deleted_at TIMESTAMPTZ);
+		CREATE TABLE audit_whitelist_users(user_id BIGINT PRIMARY KEY);
+		INSERT INTO users(id,email) VALUES(1,'admin@example.test'),(2,'person@example.test')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"241_zhiyongli_reports.sql", "245_zhiyongli_jobs.sql", "246_zhiyongli_workday_scope.sql", "248_zhiyongli_daily_reports.sql", "249_zhiyongli_day_rechecks.sql"} {
+		migration, err := migrations.FS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = db.Exec(string(migration)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = db.Exec(`INSERT INTO zhiyongli_runs(digest,source_name,report_count,created_by) VALUES('synthetic','synthetic',1,1);
+		INSERT INTO zhiyongli_reports(run_id,user_id,period_type,period_start,period_end,revision,body,publication_status)
+		VALUES(1,2,'day','2026-11-18','2026-11-19',1,'{}','published')`); err != nil {
+		t.Fatal(err)
+	}
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handler := NewZhiyongliHandler(db)
+	router.POST("/api/v1/admin/zhiyongli/reports/:id/recheck", func(c *gin.Context) {
+		if c.GetHeader("X-Local-Test-Admin") == "1" {
+			c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 1})
+		}
+		handler.StartDayRecheck(c)
+	})
+	server := httptest.NewServer(router)
+	defer server.Close()
+	var jobID int64
+	for _, tc := range []struct {
+		id, actor, body string
+		status          int
+	}{
+		{"1", "", "", http.StatusUnauthorized},
+		{"1", "1", `{"user_id":3}`, http.StatusBadRequest},
+		{"999", "1", "", http.StatusNotFound},
+		{"1", "1", "", http.StatusOK},
+		{"1", "1", "", http.StatusOK},
+	} {
+		request, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/admin/zhiyongli/reports/"+tc.id+"/recheck", strings.NewReader(tc.body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("X-Local-Test-Admin", tc.actor)
+		reply, err := server.Client().Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var body struct {
+			Message string        `json:"message"`
+			Data    zhiyongli.Job `json:"data"`
+		}
+		err = json.NewDecoder(reply.Body).Decode(&body)
+		reply.Body.Close()
+		if err != nil || reply.StatusCode != tc.status {
+			t.Fatalf("复评响应不符合预期：%d != %d，%s，%v", reply.StatusCode, tc.status, body.Message, err)
+		}
+		if tc.status == http.StatusOK {
+			job := body.Data
+			if job.ID <= 0 || job.UserID != 2 || job.PeriodStart != "2026-11-18" || job.State != "queued" || job.RecheckReportID == nil || *job.RecheckReportID != 1 || jobID != 0 && jobID != job.ID {
+				t.Fatalf("复评登记响应不符合任务契约：%+v", job)
+			}
+			jobID = job.ID
+		}
+	}
+}
 
 // 真实冻结候选经当前HTTP入口和Worker导入函数入库；不会调用模型或连接生产。
 func TestZhiyongliRealCandidateHTTPImport(t *testing.T) {
@@ -84,7 +182,7 @@ func TestZhiyongliRealCandidateHTTPImport(t *testing.T) {
 	if _, err = db.Exec(`INSERT INTO users(id,email) VALUES(1,'acceptance-admin@example.test'),(2,$1)`, want.UserEmail); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"241_zhiyongli_reports.sql", "245_zhiyongli_jobs.sql", "246_zhiyongli_workday_scope.sql", "247_zhiyongli_task_cases.sql", "248_zhiyongli_daily_reports.sql"} {
+	for _, name := range []string{"241_zhiyongli_reports.sql", "245_zhiyongli_jobs.sql", "246_zhiyongli_workday_scope.sql", "247_zhiyongli_task_cases.sql", "248_zhiyongli_daily_reports.sql", "249_zhiyongli_day_rechecks.sql"} {
 		migration, e := migrations.FS.ReadFile(name)
 		if e != nil {
 			t.Fatal(e)

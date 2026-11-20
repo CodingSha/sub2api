@@ -282,6 +282,28 @@ func (h *ZhiyongliHandler) Jobs(c *gin.Context) {
 	response.Paginated(c, jobs, total, p, n)
 }
 
+func (h *ZhiyongliHandler) StartDayRecheck(c *gin.Context) {
+	actor, ok := middleware.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "请先登录")
+		return
+	}
+	id, ok := zhiyongliID(c)
+	if !ok {
+		return
+	}
+	if c.Request.ContentLength != 0 {
+		response.BadRequest(c, "复评不接受请求参数，人员和日期由原报告确定")
+		return
+	}
+	job, err := h.store.StartDayRecheck(c.Request.Context(), id, actor.UserID)
+	if err != nil {
+		zhiyongliError(c, err)
+		return
+	}
+	response.Success(c, job)
+}
+
 func (h *ZhiyongliHandler) ResumeJob(c *gin.Context) {
 	id, ok := zhiyongliID(c)
 	if !ok {

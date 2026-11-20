@@ -1,13 +1,14 @@
 """本地真实PG日评队列与模拟模型/接入HTTP的续跑检查，不声称真实模型质量通过。"""
 import json
 import os
-from pathlib import Path
 import time
 import unittest
 from unittest.mock import patch
 
 from daily_pilot import RUBRIC
 from runtime import atomic, digest
+from source_frames import read_signed
+from source_snapshot import collect
 from workday_scope import daily_window
 from worker import importer, tick
 
@@ -19,9 +20,6 @@ class DailyWorkerTests(unittest.TestCase):
         case=CycleFixture()
         self.addCleanup(case.doCleanups)
         case.setUp()
-        root=Path(__file__).resolve().parents[2]
-        for name in ('241_zhiyongli_reports.sql','248_zhiyongli_daily_reports.sql'):
-            case.db.execute((root/'backend/migrations'/name).read_text())
         case.db.execute("INSERT INTO users VALUES(3,'local-pilot@example.test',NULL),(4,'local-bystander@example.test',NULL)")
         scope=daily_window('2026-11-18')
         jobs={user:case.db.execute('''INSERT INTO zhiyongli_jobs(user_id,period_type,period_start,period_end,rules_version,created_by,scope_key,workday_scope)
@@ -52,7 +50,10 @@ class DailyWorkerTests(unittest.TestCase):
     def test_pilot_saves_draft_and_cannot_be_restarted_in_publish_mode(self):
         self.check_day_dispatch(pilot=True, draft_available=True)
 
-    def check_day_dispatch(self, *, pilot=False, draft_available=False):
+    def test_recheck_collects_late_rows_once_and_only_imports_draft(self):
+        self.check_day_dispatch(recheck=True)
+
+    def check_day_dispatch(self, *, pilot=False, draft_available=False, recheck=False):
         from test_worker_fullcycle import WorkerFullCycleTests as CycleFixture
         case=CycleFixture()
         self.addCleanup(case.doCleanups)
@@ -63,14 +64,29 @@ class DailyWorkerTests(unittest.TestCase):
             case.send=importer(regular_send.base_url,case.worker_key_file,draft_only=True)
             if draft_available:
                 case.import_suffix='/import-draft'
-        root=Path(__file__).resolve().parents[2]
-        for name in ('241_zhiyongli_reports.sql','248_zhiyongli_daily_reports.sql'):
-            case.db.execute((root/'backend/migrations'/name).read_text())
         scope=daily_window('2026-11-18')
         case.db.execute("UPDATE zhiyongli_jobs SET period_type='day',period_start='2026-11-18',period_end='2026-11-19',workday_scope=%s::jsonb",(json.dumps(scope),))
         request=json.dumps(dict(audit_events=[dict(kind='user',text='请比较两份报价，说明差异原因。')]),ensure_ascii=False)
         response=json.dumps(dict(audit_events=[dict(kind='assistant',text='两份报价的差异和原因已整理。')]),ensure_ascii=False)
+        if recheck:
+            original_id=case.job_id
+            prior_root=case.state/str(original_id)/'sources'
+            self.assertEqual(0,collect(case.source,prior_root,[999],'2026-11-18T00:00:00+08:00',[2])['rows'])
+            run_id=case.db.execute("INSERT INTO zhiyongli_runs(digest,source_name,report_count,created_by) VALUES('original','original',1,1) RETURNING id").fetchone()[0]
+            report_id=case.db.execute("""INSERT INTO zhiyongli_reports(run_id,user_id,period_type,period_start,period_end,revision,body)
+                VALUES(%s,2,'day','2026-11-18','2026-11-19',1,'{}') RETURNING id""",(run_id,)).fetchone()[0]
+            case.db.execute("UPDATE zhiyongli_jobs SET state='completed' WHERE id=%s",(original_id,))
+            case.job_id=case.db.execute("""INSERT INTO zhiyongli_jobs(user_id,period_type,period_start,period_end,rules_version,created_by,scope_key,workday_scope,recheck_report_id)
+                VALUES(2,'day','2026-11-18','2026-11-19','1.6',1,'daily-scope:recheck:2',%s::jsonb,%s) RETURNING id""",
+                (json.dumps(scope),report_id)).fetchone()[0]
+            case.client.daily_first_day='2026-11-19'
+            os.environ['ZHIYONGLI_ACTIVE_SCOPE_KEY']='daily-scope'
+            case.import_suffix='/import-draft'
         case.db.execute("UPDATE llm_audit_logs SET request_body=%s,response_body=%s,created_at='2026-11-18T10:00:00+08:00',updated_at='2026-11-18T10:00:01+08:00'",(request,response))
+        if recheck:
+            case.db.execute("UPDATE llm_audit_logs SET updated_at='2026-11-20T10:00:00+08:00' WHERE id=101")
+        def job_state():
+            return case.db.execute('SELECT state,phase FROM zhiyongli_jobs WHERE id=%s',(case.job_id,)).fetchone()
         calls=[]
         def model(client,payload,path,*,before_send=None):
             signature=digest(dict(endpoint=client.config.responses_url,payload=payload))
@@ -88,7 +104,7 @@ class DailyWorkerTests(unittest.TestCase):
                             new_fact_record='',claimed_completed_by_user='',result_decision_quote='',selected_asset=[])
                 value=dict(task_summaries={task['id']:dict(title=task['title'],goal=task['goal'],outcome='已说明报价差异。',workflow=[])},actions=[action],no_action_refs=[])
             elif path.stem.startswith('behaviors.'):
-                value=dict(routes={'action-1':dict(fragment_id=next(iter(data['fragments'])),primary_item='P1',origin='personal')})
+                value=dict(routes={'action-1':dict(fragment_id=next(iter(data['fragments'])),primary_item='P1',origin='personal',asset_query='')})
             elif path.stem.startswith('judge-P-0.'):
                 identity=next(iter(data['behaviors']))
                 value=dict(needs_records=[],items=dict(P1=dict(user_action='要求比较报价。',context_support='明确了比较对象与交付内容。',band=70,basis='你明确了比较对象和解释差异的目标。',next_band='本次尚未呈现目标细化的具体优势。',refs=[identity],context_refs=[],negative=None)))
@@ -104,12 +120,16 @@ class DailyWorkerTests(unittest.TestCase):
                 calls.append(path.name)
                 return saved
         with patch('runtime.CompanyClient._call',model),patch('worker.evaluate_month',side_effect=AssertionError('日评不能进入月评')),patch('worker.evaluate_week',side_effect=AssertionError('日评不能进入周评')):
-            for _ in range(4):
+            for turn in range(4):
                 self.assertTrue(tick(case.db,case.source,case.state,case.client,case.send,[999],20,1))
-                self.assertEqual('queued',case.db.execute('SELECT state FROM zhiyongli_jobs').fetchone()[0])
+                self.assertEqual('queued',job_state()[0])
+                if recheck and turn==0:
+                    fresh=case.state/str(case.job_id)/'sources'
+                    self.assertEqual([101],[row['id'] for row in read_signed(fresh,json.loads((fresh/'latest.json').read_text()))['rows']])
+                    case.db.execute("UPDATE llm_audit_logs SET request_body='不应出现在冻结评审中' WHERE id=101")
             self.assertTrue(tick(case.db,case.source,case.state,case.client,case.send,[999],20,1))
             expected=('failed','paused') if pilot and not draft_available else ('completed','done')
-            self.assertEqual(expected,case.db.execute('SELECT state,phase FROM zhiyongli_jobs').fetchone())
+            self.assertEqual(expected,job_state())
             self.assertFalse(tick(case.db,case.source,case.state,case.client,case.send,[999],20,1))
             if pilot:
                 case.db.execute("UPDATE zhiyongli_jobs SET state='queued' WHERE id=%s",(case.job_id,))
@@ -118,7 +138,7 @@ class DailyWorkerTests(unittest.TestCase):
                 self.assertEqual('failed',case.db.execute('SELECT state FROM zhiyongli_jobs').fetchone()[0])
         self.assertEqual(calls,['task-plan.receipt.json','facts.receipt.json','behaviors.receipt.json','judge-P-0.receipt.json','quality-0.receipt.json'])
         self.assertEqual(len(case.import_requests),1)
-        self.assertEqual(case.import_requests[0][0].rsplit('/',1)[1],'import-draft' if pilot else 'import')
+        self.assertEqual(case.import_requests[0][0].rsplit('/',1)[1],'import-draft' if pilot or recheck else 'import')
         exported=case.import_requests[0][2]['reports'][0]
         self.assertEqual(exported['period_type'],'day')
         self.assertEqual(exported['period_start'],'2026-11-18')

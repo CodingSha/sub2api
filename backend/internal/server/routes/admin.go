@@ -40,6 +40,7 @@ func RegisterAdminRoutes(
 		admin.GET("/zhiyongli/reports/:id", h.Zhiyongli.AdminReport)
 		admin.GET("/zhiyongli/reports/:id/task-cases/:case_id", h.Zhiyongli.AdminTaskCase)
 		admin.POST("/zhiyongli/reports/:id/publish", h.Zhiyongli.Publish)
+		admin.POST("/zhiyongli/reports/:id/recheck", h.Zhiyongli.StartDayRecheck)
 		admin.POST("/zhiyongli/reports/batch-publish", h.Zhiyongli.BatchPublish)
 		admin.POST("/zhiyongli/imports", h.Zhiyongli.Import)
 		admin.GET("/zhiyongli/runs", h.Zhiyongli.Runs)

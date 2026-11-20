@@ -37,7 +37,7 @@ def check_local_schema(schema):
     walk(schema)
 
 
-def compact(schema):
+def compact(schema, *, minimum=120):
     """把重复出现的相同子结构集中到$defs并原位引用；约束内容不变，只缩小请求体。
 
     分项变体里的事件枚举和公共子对象会重复数十次，事件越多请求体越大。"""
@@ -56,7 +56,7 @@ def compact(schema):
 
     count(schema)
     # 短结构引用后并不更小，保持内联。
-    names = {key: 's' + str(index) for index, key in enumerate(sorted(k for k, n in counts.items() if n > 1 and len(k) > 120))}
+    names = {key: 's' + str(index) for index, key in enumerate(sorted(k for k, n in counts.items() if n > 1 and len(k) > minimum))}
 
     def rewrite(node, top=False):
         if not top:

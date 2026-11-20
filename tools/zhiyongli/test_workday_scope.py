@@ -21,13 +21,26 @@ class WorkdayScopeTests(unittest.TestCase):
         self.assertEqual(validate(scope),scope)
         self.assertEqual(scope['period_end'],'2026-11-19')
         self.assertEqual(scope['working_dates'],['2026-11-18'])
-        self.assertEqual(scope['observed_until'],'2026-11-18T21:00:00+08:00')
+        self.assertEqual(scope['observed_until'],'2026-11-18T18:00:00+08:00')
         self.assertEqual(scope['freeze_at'],'2026-11-18T23:00:00+08:00')
         self.assertEqual(scope['candidate_due_at'],'2026-11-19T08:00:00+08:00')
         for field,value in [('period_end','2026-11-20'),('working_dates',['2026-11-17']),
-                ('freeze_at','2026-11-18T22:00:00+08:00'),('registry_sha256','0'*64)]:
+                ('freeze_at','2026-11-18T22:00:00+08:00'),('registry_sha256','0'*64),
+                ('observed_until','2026-11-18T21:00:00+08:00')]:
             with self.assertRaisesRegex(ValueError,'固定北京时间'):
                 validate(dict(scope,**{field:value}))
+
+    def test_daily_source_window_excludes_1800_without_changing_the_week_window(self):
+        times=['2026-11-18T07:59:59+08:00','2026-11-18T08:00:00+08:00',
+            '2026-11-18T17:59:59+08:00','2026-11-18T18:00:00+08:00','2026-11-18T20:00:00+08:00']
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            self.source(root,times,'2026-11-18T23:01:00+08:00')
+            packet=prepare(root,2,'2026-11-18T00:00:00+08:00','2026-11-19T00:00:00+08:00',
+                workday_scope=daily_window('2026-11-18'),session_review=True)
+        self.assertEqual(times[1:3],[e['at'] for e in packet['events'] if e['actor_class']=='candidate_user'])
+        self.assertEqual(packet['usage_window']['end'],'18:00')
+        self.assertTrue(all(e['at']<times[3] for e in packet['events']))
 
     def test_session_usage_window_keeps_only_0800_to_before_2100_as_person_candidates(self):
         with tempfile.TemporaryDirectory() as tmp:

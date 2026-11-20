@@ -9,7 +9,7 @@ import (
 func dailyFixture() Result {
 	text := "请比较两份报价，说明差异原因。先计算再整理。逐项检查单价。沿用刚才提供的上下文。"
 	sha := bytesSHA([]byte(text))
-	d := &DailyReview{Version: DailyReviewVersion, Model: "deepseek-v4.1-flash-local", RequestDigest: strings.Repeat("a", 64), WindowStart: "2026-11-18T08:00:00+08:00", WindowEnd: "2026-11-18T21:00:00+08:00", SourceLabels: map[string]string{"u": "报价比较"}, SourceSessions: map[string]string{"u": "task-1"}, Conversations: map[string]DailyTask{"task-1": {Title: "报价比较", Goal: "比较报价差异", Records: []DailyRecord{{ID: "u", Role: "user", Text: text, SourceOrder: 0, SourceHash: sha}}}}}
+	d := &DailyReview{Version: DailyReviewVersion, Model: "deepseek-v4.1-flash-local", RequestDigest: strings.Repeat("a", 64), WindowStart: "2026-11-18T08:00:00+08:00", WindowEnd: "2026-11-18T18:00:00+08:00", SourceLabels: map[string]string{"u": "报价比较"}, SourceSessions: map[string]string{"u": "task-1"}, Conversations: map[string]DailyTask{"task-1": {Title: "报价比较", Goal: "比较报价差异", Records: []DailyRecord{{ID: "u", Role: "user", Text: text, SourceOrder: 0, SourceHash: sha}}}}}
 	r := Result{UserEmail: "test@example.test", PeriodType: "day", PeriodStart: "2026-11-18", PeriodEnd: "2026-11-19", ScoreStatus: "scored", ScoreReason: "目标清楚，按安排推进。", SourceDigest: strings.Repeat("c", 64), DailyReview: d, PolicyVersions: Versions{Scale: ScaleVersion, Aggregation: DailyAggregationVersion, Review: DailyReviewVersion, Rules: RulesVersion, Rating: "G2-proposal28"}}
 	r.WorkdayScope, _ = dailyWindow(r.PeriodStart)
 	r.PolicyVersions.Scope = DailyReviewVersion
@@ -65,7 +65,7 @@ func TestDailyRejectsBrokenEvidenceAndWrongWindow(t *testing.T) {
 			r.Items[0].Evidence[0].OccurredAt = r.Items[0].Evidence[0].OccurredAt.AddDate(0, 0, -1)
 		},
 		"窗口外引文": func(r *Result) {
-			r.Items[0].Evidence[0].OccurredAt, _ = time.Parse(time.RFC3339, "2026-11-18T21:00:00+08:00")
+			r.Items[0].Evidence[0].OccurredAt, _ = time.Parse(time.RFC3339, "2026-11-18T18:00:00+08:00")
 		},
 		"工具冒认本人":  func(r *Result) { r.Items[0].Evidence[0].Role = "tool" },
 		"未登记模型":   func(r *Result) { r.DailyReview.Model = "other" },

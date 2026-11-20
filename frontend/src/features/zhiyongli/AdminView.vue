@@ -23,7 +23,7 @@
       <div v-if="error" class="flex items-center gap-3 text-sm text-red-600"><span>{{ error }}</span><button class="btn btn-secondary" @click="load">重试</button></div>
       <DataTable v-if="activeTab === 'reports'" :columns="columns" :data="reports" :loading="loading">
         <template #cell-user_email="{row}"><button class="max-w-48 whitespace-normal break-all text-left font-medium text-primary-700 hover:underline focus-visible:outline-primary-500 dark:text-primary-400" @click="openReport(row.id)">{{ row.user_email }}</button></template>
-        <template #cell-period_start="{row}"><div class="text-xs leading-5 tabular-nums"><div>{{ row.period_start }}</div><div class="text-gray-500 dark:text-gray-400">至 {{ periodLabel(row).split(' — ')[1] }}</div></div></template>
+        <template #cell-period_start="{row}"><div class="text-xs leading-5 tabular-nums"><div>{{ row.period_start }}</div><div v-if="row.period_type !== 'day'" class="text-gray-500 dark:text-gray-400">至 {{ periodLabel(row).split(' — ')[1] }}</div></div></template>
         <template #cell-score="{row}">
           <span v-if="row.score !== null" class="font-semibold tabular-nums">{{ row.score }}</span>
           <HelpTooltip v-else width-class="w-80">
@@ -47,17 +47,23 @@
         <template #cell-digest="{value}"><HelpTooltip width-class="w-80"><template #trigger="{open, tooltipId}"><button type="button" class="min-h-8 font-mono text-xs text-gray-600 focus-visible:outline-primary-500 dark:text-gray-300" aria-label="查看完整校验值" :aria-describedby="open ? tooltipId : undefined">{{ value.slice(0,16) }}</button></template><span class="break-all">{{ value }}</span></HelpTooltip></template>
         <template #empty><p class="text-sm">暂无接入记录</p></template>
       </DataTable>
-      <ReviewJobs v-if="activeTab === 'jobs'" :start-open="startOpen" @close="startOpen=false" @reports="showJobReports" />
+      <ReviewJobs v-if="activeTab === 'jobs'" :start-open="startOpen" :initial-search="jobSearch" @close="startOpen=false" @reports="showJobReports" />
       <div v-if="activeTab !== 'jobs' && total > 20" class="flex items-center justify-end gap-3 text-sm"><button class="btn btn-secondary" :disabled="page === 1 || loading" @click="changePage(-1)">上一页</button><span>{{ page }} / {{ Math.ceil(total/20) }}</span><button class="btn btn-secondary" :disabled="page*20 >= total || loading" @click="changePage(1)">下一页</button></div>
-      <BaseDialog :show="detailOpen" :title="detail ? detail.user_email : '评分报告'" width="extra-wide" @close="detailOpen=false">
+      <BaseDialog :show="detailOpen" :title="detail ? detail.user_email : '评分报告'" :width="confirmRecheck ? 'normal' : 'extra-wide'" :close-on-escape="!rechecking" :show-close-button="!rechecking" @close="closeDetail">
         <LoadingSpinner v-if="detailLoading" class="mx-auto my-12" />
         <p v-else-if="detailError" class="text-red-600">{{ detailError }}</p>
+        <div v-else-if="detail && confirmRecheck" class="space-y-2 text-sm">
+          <h3 class="font-medium">重新采集并评审 · {{ detail.period_start }}</h3>
+          <p>重新读取该日北京时间 08:00–18:00 的对话，纳入目前已采集到的补录记录。复评结果仅保存为草稿，不会自动替换已发布评分。</p>
+          <p v-if="recheckError" role="alert" class="text-red-600">{{ recheckError }}</p>
+        </div>
         <template v-else-if="detail">
           <div class="mb-5 flex items-center justify-between gap-4 text-sm"><span>{{ periodLabel(detail) }} · {{ statusText[detail.publication_status] }}</span><RouterLink :to="{path:'/zhiyongli/rules',query:{version:detail.policy_versions.rules}}" class="text-primary-700 dark:text-primary-400">评分规则</RouterLink></div>
           <ReportBody :key="detail.id" :report="detail" review-details />
         </template>
         <template #footer>
-          <div class="flex items-center justify-end gap-3"><span v-if="detail?.publication_status === 'draft'" class="mr-auto text-sm text-gray-500">检查评分与依据后发布，用户即可查看。</span><button class="btn btn-secondary" @click="detailOpen=false">关闭</button><button v-if="detail?.publication_status === 'draft'" class="btn btn-primary" :disabled="publishing" @click="publish">{{ publishing ? '发布中…' : '确认发布' }}</button></div>
+          <div v-if="confirmRecheck" class="flex justify-end gap-3"><button class="btn btn-secondary" :disabled="rechecking" @click="confirmRecheck=false">返回报告</button><button class="btn btn-primary" :disabled="rechecking" @click="recheck">{{ rechecking ? '提交中…' : '确认复评' }}</button></div>
+          <div v-else class="flex flex-wrap items-center justify-end gap-3"><span v-if="detail?.publication_status === 'draft'" class="mr-auto text-sm text-gray-500">检查评分与依据后发布，用户即可查看。</span><button class="btn btn-secondary" @click="closeDetail">关闭</button><button v-if="canRecheck" class="btn btn-secondary" :disabled="publishing" @click="beginRecheck">重新采集并评审</button><button v-if="detail?.publication_status === 'draft'" class="btn btn-primary" :disabled="publishing" @click="publish">{{ publishing ? '发布中…' : '确认发布' }}</button></div>
         </template>
       </BaseDialog>
       <BaseDialog :show="batchOpen" title="批量发布" width="normal" :close-on-escape="!batchPublishing" :show-close-button="!batchPublishing" @close="closeBatch">
@@ -86,20 +92,22 @@ import { useAppStore } from '@/stores/app'
 import ReportBody from './ReportBody.vue'
 import ScoreExplanation from './ScoreExplanation.vue'
 import ReviewJobs from './ReviewJobs.vue'
-import { listReports, getReport, listRuns, importResults, publishReport, batchPublishReports, periodLabel, statusText, type Dimension, type Report, type Run } from './api'
+import { listReports, getReport, listRuns, importResults, publishReport, batchPublishReports, startDayRecheck, periodLabel, statusText, type Dimension, type Report, type ReviewJob, type Run } from './api'
 import { dimensionNames, scoreNeedsAttention, scoreStatusLabel } from './reportPresentation'
 const app = useAppStore()
 const tabs=[{value:'reports',label:'评分结果'},{value:'jobs',label:'评审进度'},{value:'runs',label:'接入记录'}]
 const startOpen=ref(false)
-const activeTab=ref('reports'),periodType=ref('week'),status=ref(''),search=ref(''),page=ref(1),total=ref(0)
+const activeTab=ref('reports'),periodType=ref('day'),status=ref(''),search=ref(''),page=ref(1),total=ref(0)
 const periodStart=ref('')
 const reports=ref<Report[]>([]),runs=ref<Run[]>([]),loading=ref(false),error=ref(''),fileInput=ref<HTMLInputElement|null>(null),importing=ref(false)
 const detail=ref<Report|null>(null),detailOpen=ref(false),detailLoading=ref(false),detailError=ref(''),publishing=ref(false)
+const confirmRecheck=ref(false),rechecking=ref(false),recheckError=ref(''),jobSearch=ref('')
+const canRecheck=computed(()=>detail.value?.period_type==='day'&&detail.value.publication_status!=='superseded')
 const preparingBatch=ref(false),batchPublishing=ref(false),batchOpen=ref(false),batchError=ref(''),batchStart=ref(''),batchCandidates=ref<Report[]>([])
 const batchPeriods=computed(()=>[...new Set(batchCandidates.value.map(report=>report.period_start))].map(start=>({value:start,label:periodLabel(batchCandidates.value.find(report=>report.period_start===start)!)})))
 const batchReports=computed(()=>batchCandidates.value.filter(report=>report.period_start===batchStart.value))
 const batchScoredCount=computed(()=>batchReports.value.filter(report=>report.score!==null).length)
-const periodOptions=[{value:'week',label:'周评分'},{value:'month',label:'月评分'}]
+const periodOptions=[{value:'day',label:'日评分'},{value:'week',label:'周评分'},{value:'month',label:'月评分'}]
 const statusOptions=[{value:'',label:'当前结果'},{value:'draft',label:'待发布'},{value:'published',label:'已发布'},{value:'superseded',label:'历史版本'}]
 const dimensionCodes = ['P','M','J','E']
 const columns=computed(()=>[{key:'user_email',label:'成员'},{key:'period_start',label:'周期'},{key:'score',label:'总分',class:'text-right'},...(periodType.value==='month'?[{key:'rating',label:'月评级'}]:[]),...dimensionCodes.map(code=>({key:code,label:dimensionNames[code],class:'text-right'})),{key:'publication_status',label:'发布状态'},{key:'actions',label:'操作'}])
@@ -107,7 +115,21 @@ const runColumns=[{key:'source_name',label:'评测来源'},{key:'report_count',l
 let request=0,detailRequest=0
 async function load(){const current=++request;loading.value=true;error.value='';try{if(activeTab.value==='reports'){const data=await listReports(true,{period_type:periodType.value,period_start:periodStart.value,publication_status:status.value,search:search.value,page:page.value});if(current===request){reports.value=data.items;total.value=data.total}}else if(activeTab.value==='runs'){const data=await listRuns(page.value);if(current===request){runs.value=data.items;total.value=data.total}}}catch(e){if(current===request)error.value=(e as {message:string}).message}finally{if(current===request)loading.value=false}}
 function beginReview(){switchTab('jobs');startOpen.value=true}
-function showJobReports(email:string){search.value=email;periodStart.value='';status.value='';switchTab('reports')}
+function showJobReports(job:ReviewJob){
+  if(job.result_report_id!==null){void openReport(job.result_report_id);return}
+  search.value=job.user_email;periodType.value=job.period_type;periodStart.value=job.period_start;status.value='';switchTab('reports')
+}
+function closeDetail(){if(!rechecking.value){detailOpen.value=false;confirmRecheck.value=false}}
+function beginRecheck(){recheckError.value='';confirmRecheck.value=true}
+async function recheck(){
+  if(!detail.value||!canRecheck.value||rechecking.value)return
+  rechecking.value=true;recheckError.value=''
+  try{
+    const job=await startDayRecheck(detail.value.id)
+    detailOpen.value=false;confirmRecheck.value=false;jobSearch.value=job.user_email
+    switchTab('jobs');app.showSuccess(`复评任务 #${job.id} 已登记，请查看评审进度`)
+  }catch(e){recheckError.value=(e as Error).message}finally{rechecking.value=false}
+}
 function resetList(){page.value=1;void load()}
 function switchTab(tab:string){activeTab.value=tab;total.value=0;resetList()}
 function changePage(delta:number){page.value+=delta;void load()}

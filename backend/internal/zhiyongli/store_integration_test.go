@@ -79,6 +79,13 @@ func testStore(t *testing.T) *Store {
 	if _, e = scoped.Exec(string(migration)); e != nil {
 		t.Fatal(e)
 	}
+	migration, e = migrations.FS.ReadFile("249_zhiyongli_day_rechecks.sql")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = scoped.Exec(string(migration)); e != nil {
+		t.Fatal(e)
+	}
 	return NewStore(scoped)
 }
 

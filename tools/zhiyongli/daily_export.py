@@ -38,7 +38,7 @@ def bundle(packet, day, root, model):
             raise ValueError('日评含未完成模型请求，禁止导出人员评分')
         receipts.append(dict(request_sha256=receipt['request_sha256'],response_sha256=digest(receipt['response'])))
     review=dict(version=DAILY_VERSION,model=model,request_digest=digest(receipts),
-        window_start=day+'T08:00:00+08:00',window_end=day+'T21:00:00+08:00',
+        window_start=day+'T08:00:00+08:00',window_end=scope['observed_until'],
         source_labels={},source_sessions={},conversations={},behaviors={})
     report=dict(user_email=packet['user_email'],period_type='day',period_start=day,period_end=scope['period_end'],
         source_digest=digest(packet),workday_scope=scope,policy_versions=dict(scale='pmje-performance-20261105.023-proposal1.control28',

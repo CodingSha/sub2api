@@ -16,6 +16,10 @@ type Store struct{ db *sql.DB }
 func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 
 func (s *Store) Import(ctx context.Context, b Bundle, actor int64) (Run, error) {
+	return s.importBundle(ctx, b, actor, 0)
+}
+
+func (s *Store) importBundle(ctx context.Context, b Bundle, actor, recheckJobID int64) (Run, error) {
 	if err := validateJSONBText(b.SourceName); err != nil {
 		return Run{}, err
 	}
@@ -38,6 +42,9 @@ func (s *Store) Import(ctx context.Context, b Bundle, actor int64) (Run, error) 
 	if e != nil {
 		return Run{}, e
 	}
+	if recheckJobID != 0 {
+		raw = fmt.Appendf(raw, "\nrecheck:%d", recheckJobID)
+	}
 	hash := sha256.Sum256(raw)
 	digest := hex.EncodeToString(hash[:])
 	tx, e := s.db.BeginTx(ctx, nil)
@@ -56,6 +63,16 @@ func (s *Store) Import(ctx context.Context, b Bundle, actor int64) (Run, error) 
 	}
 	if !errors.Is(e, sql.ErrNoRows) {
 		return Run{}, e
+	}
+	if recheckJobID != 0 {
+		var linked sql.NullInt64
+		e = tx.QueryRowContext(ctx, `SELECT recheck_run_id FROM zhiyongli_jobs WHERE id=$1 AND recheck_report_id IS NOT NULL FOR UPDATE`, recheckJobID).Scan(&linked)
+		if e != nil {
+			return Run{}, e
+		}
+		if linked.Valid {
+			return Run{}, ErrConflict
+		}
 	}
 	e = tx.QueryRowContext(ctx, `INSERT INTO zhiyongli_runs(digest,source_name,report_count,created_by) VALUES($1,$2,$3,$4) RETURNING id,digest,source_name,report_count,created_at`, digest, b.SourceName, len(b.Reports), actor).Scan(&run.ID, &run.Digest, &run.SourceName, &run.ReportCount, &run.CreatedAt)
 	if e != nil {
@@ -121,6 +138,11 @@ func (s *Store) Import(ctx context.Context, b Bundle, actor int64) (Run, error) 
 					return Run{}, e
 				}
 			}
+		}
+	}
+	if recheckJobID != 0 {
+		if _, e = tx.ExecContext(ctx, `UPDATE zhiyongli_jobs SET recheck_run_id=$1 WHERE id=$2`, run.ID, recheckJobID); e != nil {
+			return Run{}, e
 		}
 	}
 	if e = tx.Commit(); e != nil {
@@ -277,6 +299,16 @@ func publishReportTx(ctx context.Context, tx *sql.Tx, id int64, revision int, ac
 	}
 	if r.PublicationStatus == "published" {
 		return nil
+	}
+	if r.PeriodType == "day" {
+		var unfinished bool
+		e = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM zhiyongli_jobs j JOIN zhiyongli_reports r ON r.run_id=j.recheck_run_id WHERE r.id=$1 AND j.state<>'completed')`, id).Scan(&unfinished)
+		if e != nil {
+			return e
+		}
+		if unfinished {
+			return fmt.Errorf("复评任务尚未完成，请先查看评审进度：%w", ErrConflict)
+		}
 	}
 	if r.SampleInitial != nil {
 		return invalid("抽样初评仅供管理员查看，不能作为正式周期评分发布")

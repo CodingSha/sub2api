@@ -49,13 +49,14 @@ describe('管理员评审入口',()=>{
   it('请求结果不明不给恢复入口；候选生成才允许查看报告',async()=>{
     api.listJobs.mockResolvedValue({...empty,items:[
       {id:1,user_email:'a@example.test',state:'unknown',phase:'paused',message:'结果不明',period_start:'2026-09-07',period_type:'week',rules_version:'1.6',total_units:0,completed_units:0,updated_at:'2026-11-09T00:00:00Z'},
-      {id:2,user_email:'b@example.test',state:'completed',phase:'done',message:'候选已生成',period_start:'2026-09-07',period_type:'week',rules_version:'1.6',total_units:1,completed_units:1,updated_at:'2026-11-09T00:00:00Z'}],total:2})
+      {id:2,user_email:'b@example.test',state:'completed',phase:'done',message:'候选已生成',period_start:'2026-09-07',period_type:'day',rules_version:'1.6',total_units:1,completed_units:1,updated_at:'2026-11-09T00:00:00Z',recheck_report_id:7,result_report_id:8}],total:2})
     const wrapper=mountView();await flushPromises()
     expect(wrapper.text()).toContain('请求结果不明')
     expect(wrapper.text()).not.toContain('恢复校验')
-    const button=wrapper.findAll('button').find(b=>b.text()==='查看结果')!
+    expect(wrapper.text()).toContain('2026-09-07 · 日 · 1.6')
+    const button=wrapper.findAll('button').find(b=>b.text()==='查看复评结果')!
     await button.trigger('click')
-    expect(wrapper.emitted('reports')).toEqual([['b@example.test']])
+    expect(wrapper.emitted('reports')).toEqual([[expect.objectContaining({user_email:'b@example.test',result_report_id:8})]])
     wrapper.unmount();const count=api.listJobs.mock.calls.length;await vi.advanceTimersByTimeAsync(10000)
     expect(api.listJobs).toHaveBeenCalledTimes(count)
   })

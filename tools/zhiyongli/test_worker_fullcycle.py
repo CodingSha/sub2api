@@ -34,7 +34,8 @@ class WorkerFullCycleTests(unittest.TestCase):
             request_id text,request_count bigint,platform text,endpoint text,method text,model text,status_code int,
             request_body text,response_body text,request_truncated boolean,response_truncated boolean,created_at timestamptz)''')
         root=Path(__file__).resolve().parents[2]
-        for migration in ('245_zhiyongli_jobs.sql','246_zhiyongli_workday_scope.sql'):
+        for migration in ('241_zhiyongli_reports.sql','245_zhiyongli_jobs.sql','246_zhiyongli_workday_scope.sql',
+                          '248_zhiyongli_daily_reports.sql','249_zhiyongli_day_rechecks.sql'):
             self.db.execute((root/'backend/migrations'/migration).read_text())
         from workday_scope import window
         scope=window('2026-09-07','2026-09-14')

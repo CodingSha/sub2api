@@ -8,6 +8,22 @@ from unittest.mock import Mock,patch
 from daily_pilot import normalized,prepare,chunks,check_quotes,report,call,RUBRIC,MEMORY_TRANSCRIPT_SUFFIX
 
 class DailyPilotTests(unittest.TestCase):
+    def test_daily_selection_keeps_only_0800_to_before_1800_personal_actions(self):
+        base=dict(session_id='s',api_key_id=1,group_id=1,actor_class='candidate_user',
+            protocol_role='user',truncated=False,source=dict(frame='f'))
+        events=[dict(base,event='before',at='2026-11-19T07:59:59+08:00',text='先前背景。'),
+            dict(base,event='start',at='2026-11-19T00:00:00Z',text='比较这两份报价。'),
+            dict(base,event='reply',at='2026-11-19T08:01:00+08:00',protocol_role='assistant',text='已整理报价差异。'),
+            dict(base,event='last',at='2026-11-19T17:59:59+08:00',text='按交付日期解释差异。'),
+            dict(base,event='end',at='2026-11-19T18:00:00+08:00',text='窗外新任务。'),
+            dict(base,event='late',at='2026-11-19T20:00:00+08:00',protocol_role='assistant',text='窗外回复。')]
+        with tempfile.TemporaryDirectory() as target:
+            groups,_,_=prepare(dict(user_id=8,events=events),'2026-11-19',Path(target))
+        rows=groups[0]['records']
+        self.assertEqual([r['text'] for r in rows if r['role']=='user'],['比较这两份报价。','按交付日期解释差异。'])
+        self.assertEqual(rows[0]['role'],'context')
+        self.assertFalse(any(r['text'] in ('窗外新任务。','窗外回复。') for r in rows))
+
     def test_client_background_notifications_are_not_personal_task_requests(self):
         bodies=[
             'background job pwsh-abc (pwsh: run task) finished [status: completed, exit code: 0]. Output:\n处理结果',

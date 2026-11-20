@@ -87,13 +87,17 @@ def import_path(job_id, draft_only):
     return '/api/v1/internal/zhiyongli/jobs/'+str(job_id)+('/import-draft' if draft_only else '/import')
 
 
+def draft_import_for(job, sender):
+    return job.get('recheck_report_id') is not None or getattr(sender,'draft_only',False) is True
+
+
 def importer(base_url,key_file,*,draft_only=False):
     url=urlsplit(base_url)
     if (url.username or url.password or url.query or url.fragment or url.path not in {'','/'}
         or not (url.scheme=='https' or url.scheme=='http' and url.hostname in {'127.0.0.1','localhost','sub2api'})):
         raise ValueError('报告接入端点须为HTTPS或明确的本地/容器内部服务')
     def send(job,bundle):
-        request=urllib.request.Request(base_url.rstrip('/')+import_path(job['id'],draft_only),
+        request=urllib.request.Request(base_url.rstrip('/')+import_path(job['id'],draft_import_for(job,send)),
             data=json.dumps(bundle,ensure_ascii=False).encode(),headers={'Content-Type':'application/json',
                 'X-Zhiyongli-Worker-Key':private_key(key_file)})
         with urllib.request.build_opener(NoRedirect()).open(request,timeout=60) as stream:
@@ -110,7 +114,7 @@ def import_candidate(root,job,bundle,send):
     from bounded_read import checkpoint
     root=Path(root);receipt=root/'import.json';input_path=root/'import-input.json';checked=root/'import-checked.json'
     if not isinstance(getattr(send,'base_url',None),str):raise ValueError('候选导入缺少明确端点身份')
-    intent=dict(version=1,job_id=job['id'],endpoint=send.base_url+import_path(job['id'],getattr(send,'draft_only',False) is True),
+    intent=dict(version=1,job_id=job['id'],endpoint=send.base_url+import_path(job['id'],draft_import_for(job,send)),
         bundle_sha256=digest(bundle))
     if (receipt.exists() or checked.exists()) and not input_path.exists():raise ValueError('旧导入回执缺少事前任务及结果包绑定，须先核对，禁止补签完成')
     checkpoint(input_path,intent)
@@ -192,8 +196,8 @@ def process(db,job,state,source,client,send,excluded_keys,max_requests=100,new_r
         require_space(root)
         last[:]=[phase,done,total];update(db,job['id'],'running',phase,done,total,message)
     try:
-        draft_import=getattr(send,'draft_only',False) is True
-        if pilot!=draft_import or (not pilot and (root/'pilot-draft.json').exists()):
+        draft_import=draft_import_for(job,send)
+        if pilot!=(getattr(send,'draft_only',False) is True) or (not pilot and (root/'pilot-draft.json').exists()):
             raise ValueError('日评试评与正式导入隔离，禁止切换同一任务的发布方式')
         if pilot:
             from bounded_read import checkpoint
@@ -313,9 +317,9 @@ def process(db,job,state,source,client,send,excluded_keys,max_requests=100,new_r
                 shared_root=Path(state)/('shared-session-weeks' if session_review else 'shared-weeks'),workday_scope=scope)
         else:
             raise ValueError('未登记的评审周期，禁止猜测执行路径')
-        progress('importing',0,1,'保存并发布日评分' if daily_review and not pilot else '接入已核候选；等待管理员确认发布')
+        progress('importing',0,1,'保存并发布日评分' if daily_review and not draft_import else '接入已核候选；等待管理员确认发布')
         import_candidate(root,job,bundle,send)
-        update(db,job['id'],'completed','done',1,1,'日评分已保存并发布' if daily_review and not pilot else '候选报告已生成，等待管理员确认发布')
+        update(db,job['id'],'completed','done',1,1,'日评分已保存并发布' if daily_review and not draft_import else '候选报告已生成，等待管理员确认发布')
     except Paused as ex:
         if evidence_first or session_review:
             from review_protocol import failure
@@ -362,18 +366,20 @@ def tick(db,source,state,client,send,excluded_keys,max_requests=100,new_request_
     with db.cursor(row_factory=dict_row) as cursor:
         jobs=cursor.execute("""SELECT j.*,u.email AS user_email FROM zhiyongli_jobs j
             JOIN users u ON u.id=j.user_id
-            WHERE (j.state IN ('queued','running') OR (%s AND j.state='failed')) AND j.rules_version=%s
-            AND (%s::text IS NULL OR j.scope_key=%s) AND (%s::date IS NULL OR j.period_start>=%s::date)
-            AND (%s::date IS NULL OR (j.period_type='day' AND j.period_start>=%s::date))
-            AND (%s::bigint[] IS NULL OR (j.period_type='day' AND j.id=ANY(%s::bigint[])))
-            ORDER BY j.updated_at,j.id LIMIT 100""",(recovery_enabled,RULES,scope_key,scope_key,first_week,first_week,first_day,first_day,pilot_jobs,pilot_jobs)).fetchall()
+            WHERE (j.state IN ('queued','running') OR (%(recovery)s AND j.state='failed' AND j.recheck_report_id IS NULL))
+            AND j.rules_version=%(rules)s
+            AND (%(scope)s::text IS NULL OR j.scope_key=%(scope)s OR (j.recheck_report_id IS NOT NULL AND split_part(j.scope_key,':recheck:',1)=%(scope)s))
+            AND (%(week)s::date IS NULL OR j.period_start>=%(week)s::date)
+            AND (%(day)s::date IS NULL OR (j.period_type='day' AND (j.period_start>=%(day)s::date OR j.recheck_report_id IS NOT NULL)))
+            AND (%(pilot)s::bigint[] IS NULL OR (j.period_type='day' AND j.recheck_report_id IS NULL AND j.id=ANY(%(pilot)s::bigint[])))
+            ORDER BY j.updated_at,j.id LIMIT 100""",dict(recovery=recovery_enabled,rules=RULES,scope=scope_key,week=first_week,day=first_day,pilot=pilot_jobs)).fetchall()
     for job in jobs:
         locked=db.execute('SELECT pg_try_advisory_lock(245,%s::int)',(job['id'],)).fetchone()[0]
         if not locked:continue
         try:
             # 拿锁后重读，避免等待期间已完成的同一任务再次执行。
             current=db.execute('SELECT state FROM zhiyongli_jobs WHERE id=%s',(job['id'],)).fetchone()[0]
-            if current=='failed' and recovery_enabled:
+            if current=='failed' and recovery_enabled and job['recheck_report_id'] is None:
                 from execution_recovery import reserve
                 if not reserve(Path(state)/str(job['id'])):continue
             elif current not in {'queued','running'}:continue

@@ -6,16 +6,18 @@ from types import SimpleNamespace
 import unittest
 import jsonschema
 
-from daily_pilot import call
-from daily_reasoning import allocate, assess, allocated_schema, check_fact_coverage, check_quality, judge_call, judge_schema, presentation_contract, read_asset_evidence
+from daily_pilot import call, RUBRIC
+from daily_reasoning import allocate, assess, allocated_schema, check_fact_coverage, check_quality, judge_call, judge_schema, normalize_facts, presentation_contract, read_asset_evidence
 from daily_behaviors import source_fragments
 from runtime import atomic
 
 
 def behavior_wire(data,rows):
+    sources={record['id']:record['text'] for task in data['tasks'] for record in task['records']}
     return {identity:dict(primary_item=row['primary_item'],origin='personal',fragment_id=next(key for key,fragment
-        in data['fragments'].items() if fragment['record_id']==action['record_id'] and row['quote'] in fragment['quote']),
-        **({'asset_query':''} if row['primary_item']=='E3' else {})) for (identity,action),row in zip(data['actions'].items(),rows)}
+        in data['fragments'].items() if fragment[0]==action['record_id'] and row['quote'] in
+        sources[fragment[0]][fragment[1]:fragment[1]+fragment[2]]),
+        **({'asset_query':''} if row['primary_item']!='J3' else {})) for (identity,action),row in zip(data['actions'].items(),rows)}
 
 
 def fact(record_id, action):
@@ -24,11 +26,57 @@ def fact(record_id, action):
 
 
 class DailyReasoningTests(unittest.TestCase):
+    def test_autonomous_workflow_drops_only_inapplicable_user_selection_refs(self):
+        uses=[dict(name='skill',selection=selection,user_refs=['u'],tool_ref='tool')
+            for selection in ('AI自主调用','用户明确选择')]
+        facts=dict(task_summaries={'task':dict(workflow=uses)},actions=[fact('u','指定既有工作流')])
+        with tempfile.TemporaryDirectory() as path:
+            result=normalize_facts(facts,Path(path))
+            self.assertEqual(result['task_summaries']['task']['workflow'][0]['user_refs'],[])
+            self.assertEqual(result['task_summaries']['task']['workflow'][0]['selection'],'AI自主调用')
+            self.assertEqual(result['task_summaries']['task']['workflow'][1],uses[1])
+            self.assertEqual(result['actions'],facts['actions'])
+            self.assertEqual(uses[0]['user_refs'],['u'])
+            self.assertEqual(len(json.loads((Path(path)/'facts-normalization.json').read_text())['changes']),1)
+
+    def test_full_material_and_forty_actions_fit_without_repeating_evidence(self):
+        from daily_pilot import request_payload
+        from daily_reasoning import OBJECTS
+        from daily_tasks import MAIN_BYTES, size
+        rows=[];actions={}
+        for index in range(40):
+            ref='u'+str(index)
+            text='目标，安排，核对，反馈。' * 20
+            rows.append(dict(id=ref,role='user',text=text))
+            actions['action-'+str(index)]=dict(fact(ref,'安排核对并根据反馈继续处理。' * 8),
+                explicit_reason='不能遗漏已知差异。' * 10,new_fact='AI报告发现差异。' * 10)
+        rows.append(dict(id='ai',role='assistant',text=''))
+        tasks=[dict(id='task-1',records=rows)]
+        rows[-1]['text']='a'*(MAIN_BYTES-size(tasks))
+        client=SimpleNamespace(config=SimpleNamespace(model='test'))
+        def send(client,root,name,data,schema,instructions):
+            self.assertEqual(data['tasks'],tasks)
+            self.assertLessEqual(len(json.dumps(request_payload(client,data,schema,instructions),ensure_ascii=False).encode()),96000)
+            sources={row['id']:row['text'] for row in rows}
+            for fragment in data['fragments'].values():
+                self.assertEqual(len(fragment),3)
+                ref,start,chars=fragment
+                self.assertTrue(sources[ref][start:start+chars])
+            return dict(routes={identity:dict(primary_item='J2',origin='personal',asset_query='',
+                fragment_id=next(key for key,fragment in data['fragments'].items() if fragment[0]==action['record_id']))
+                for identity,action in data['actions'].items()})
+        with tempfile.TemporaryDirectory() as path:
+            value=allocate(client,Path(path),dict(tasks=tasks,actions=actions,evaluation_objects=OBJECTS,
+                anchors={k:v['reasonable'] for k,v in RUBRIC['performance_anchors'].items()},
+                counterexamples=RUBRIC['item_counterexamples']),tasks,send)
+        self.assertEqual(len(value['behaviors']),40)
+        self.assertTrue(all(row['quote'] in rows[index]['text'] for index,row in enumerate(value['behaviors'])))
+
     def test_each_fact_action_has_one_route_with_evidence_from_the_same_record(self):
         tasks=[dict(id='task-1',records=[dict(id='u1',role='user',text='启动项目。')]),
             dict(id='task-2',records=[dict(id='u2',role='user',text='按失败步骤回归。')])]
         refs=[next(iter(source_fragments({t['records'][0]['id']:t['records'][0]}))) for t in tasks]
-        row=lambda ref:dict(fragment_id=ref,primary_item='P1',origin='personal')
+        row=lambda ref:dict(fragment_id=ref,primary_item='P1',origin='personal',asset_query='')
         fragments=source_fragments({record['id']:record for task in tasks for record in task['records']})
         actions={'action-1':fact('u1','启动项目。'),'action-2':fact('u2','按失败步骤回归。')}
         schema=allocated_schema(actions,fragments)
@@ -52,8 +100,8 @@ class DailyReasoningTests(unittest.TestCase):
         def send(client, root, name, data, schema, instructions):
             self.assertEqual(set(data['decision_fragments']), {'decision'})
             location=data['decision_fragments']['decision']
-            check=next(key for key,fragment in data['fragments'].items() if fragment['record_id']=='condition')
-            check_route=dict(primary_item='J2',origin='personal',fragment_id=check)
+            check=next(key for key,fragment in data['fragments'].items() if fragment[0]=='condition')
+            check_route=dict(primary_item='J2',origin='personal',fragment_id=check,asset_query='')
             decision_route=dict(primary_item='J3',origin='personal',fragment_id=location)
             routes=dict(condition=check_route,decision=decision_route,invented=None)
             jsonschema.validate(dict(routes=routes),schema)
@@ -284,18 +332,69 @@ class DailyReasoningTests(unittest.TestCase):
                     value=dict(issues=[finding])
                     jsonschema.validate(value,schema)
                     return value
-                judgment=dict(J2=dict(refs=[] if expected=='P3-unscored' else ['check']))
+                judgment=dict(J2=dict(band='reasonable',basis=basis,next_band=next_band,
+                    refs=[] if expected=='P3-unscored' else ['check']))
                 def audit():
                     return check_quality(None,root,[task],behaviors,judgment,
                         dict(items=dict(J2=dict(basis=basis,next_band=next_band))),[],send,
-                        lambda _:self.fail('错归不能仅通过修改表述来修复'))
-                if expected=='P3':
+                        lambda _:self.fail('分类意见不应触发事实纠正'))
+                audit()
+                quality=json.loads((root/'quality.json').read_text())
+                self.assertEqual(quality['dismissed_findings'][0]['reason'],
+                    'classification_advisory' if expected=='P3' else 'invalid_wrong_item_finding')
+
+    def test_wrong_item_and_actor_findings_can_withdraw_the_same_unsupported_score_once(self):
+        task=dict(records=[dict(id='u',role='user',text='这条用例是什么问题？'),
+            dict(id='a',role='assistant',text='选中规则与详情展示是两个问题。')])
+        behaviors={'ask':dict(primary_item='J1',source_ref='u',claim='追问用例问题')}
+        old=dict(band='good',refs=['ask'],basis='你区分了选中规则和详情展示。',next_band='区分的依据还不充分。')
+        fixed=dict(band=None,refs=[],basis='本次只有追问，未体现独立的归因判断。',next_band='')
+        findings=[dict(item='J1',kind='wrong_item',problem='本人只提出问题，不能据此声称本人完成区分。',
+            claim_quote=old['basis'],source_ref='u',source_quote='这条用例是什么问题？',behavior_ids=['ask'],correct_item='P1'),
+            dict(item='J1',kind='wrong_actor',problem='区分由AI提出。',claim_quote=old['basis'],
+            source_ref='a',source_quote='选中规则与详情展示是两个问题。',behavior_ids=['ask'])]
+        for resolved in (True,False):
+            stages=[]
+            def send(client,root,name,data,schema,instructions):
+                stages.append(name)
+                value=dict(issues=findings if name=='quality-0' or not resolved else [])
+                jsonschema.validate(value,schema)
+                return value
+            def repair(issues):
+                self.assertEqual(issues,[findings[1]])
+                return {'J1':fixed if resolved else old}
+            with self.subTest(resolved=resolved),tempfile.TemporaryDirectory() as path:
+                def audit():
+                    return check_quality(None,Path(path),[task],behaviors,{'J1':old},
+                        dict(items=dict(J1=dict(basis=old['basis'],next_band=old['next_band']))),[],send,repair)
+                if resolved:
+                    judgments,_=audit()
+                    self.assertIsNone(judgments['J1']['band'])
+                    self.assertEqual(judgments['J1']['refs'],[])
+                else:
                     with self.assertRaisesRegex(ValueError,'归属检查未通过'):
                         audit()
-                else:
-                    audit()
-                    quality=json.loads((root/'quality.json').read_text())
-                    self.assertEqual(quality['dismissed_findings'][0]['reason'],'invalid_wrong_item_finding')
+                self.assertEqual(stages,['quality-0','quality-1'])
+
+    def test_classification_advisory_keeps_the_score_without_another_model_judgment(self):
+        text='只跑P0用例还包含必填项校验吗？'
+        task=dict(records=[dict(id='u',role='user',text=text)])
+        behaviors={'ask':dict(primary_item='P2',source_ref='u',claim='澄清用例集包含的内容')}
+        judgment=dict(band='reasonable',refs=['ask'],basis='你询问了P0用例集包含的内容。',next_band='本次没有进一步材料核对。')
+        finding=dict(item='P2',kind='wrong_item',correct_item='J2',problem='更接近检查范围，但不足以排除原归项。',
+            source_ref='u',source_quote=text,claim_quote=judgment['basis'],behavior_ids=['ask'])
+        stages=[]
+        def send(client,root,name,data,schema,instructions):
+            stages.append(name)
+            return dict(issues=[finding] if name=='quality-0' else [])
+        def repair(issues):
+            self.fail('分类分歧不应触发新模型调用')
+        with tempfile.TemporaryDirectory() as path:
+            judgments,_=check_quality(None,Path(path),[task],behaviors,{'P2':judgment},
+                dict(items=dict(P2=dict(basis=judgment['basis'],next_band=judgment['next_band']))),[],send,repair)
+            self.assertEqual(judgments['P2']['band'],'reasonable')
+            self.assertEqual(judgments['P2']['refs'],['ask'])
+        self.assertEqual(stages,['quality-0'])
 
     def test_fact_coverage_distinguishes_no_action_from_an_omitted_record(self):
         delivered={'u1':dict(role='user'),'u2':dict(role='user'),'a':dict(role='assistant')}
@@ -314,7 +413,7 @@ class DailyReasoningTests(unittest.TestCase):
         behaviors={'check':dict(primary_item='J2',source_ref='u',claim='已经核对总数')}
         issue=dict(item='J2',kind='wrong_actor',problem='误把用户原话当成 AI 操作。',claim_quote=judgment['basis'],
                    source_ref='a',source_quote=rows[0]['text'],behavior_ids=['check'])
-        for quote,reason in ((rows[0]['text'],None),('原件没有这句话。','没有给出真实原文反证')):
+        for quote,reason in ((rows[0]['text'],'actor_counterevidence_is_user_text'),('原件没有这句话。','unlocatable_counterevidence')):
             with self.subTest(reason=reason), tempfile.TemporaryDirectory() as path:
                 root=Path(path)
                 def send(client, root, name, data, schema, instructions):
@@ -325,12 +424,9 @@ class DailyReasoningTests(unittest.TestCase):
                 def audit():
                     return check_quality(None,root,[task],behaviors,{'J2':judgment},prose,[],send,
                                          lambda _: self.fail('错绑或缺失原文不能用于重判'))
-                if reason:
-                    with self.assertRaisesRegex(ValueError,reason):audit()
-                else:
-                    self.assertEqual(audit(),({'J2':judgment},prose))
-                    quality=json.loads((root/'quality.json').read_text())
-                    self.assertEqual(quality['dismissed_findings'][0]['reason'],'actor_counterevidence_is_user_text')
+                self.assertEqual(audit(),({'J2':judgment},prose))
+                quality=json.loads((root/'quality.json').read_text())
+                self.assertEqual(quality['dismissed_findings'][0]['reason'],reason)
 
     def test_program_links_original_path_and_same_judgment_explanation(self):
         original='请修复 E:\\项目\\登录.py。'
@@ -382,6 +478,27 @@ class DailyReasoningTests(unittest.TestCase):
         jsonschema.validate(prose,prose_schema)
         prose['items']['P1']['band']=100
         with self.assertRaises(jsonschema.ValidationError):jsonschema.validate(prose,prose_schema)
+
+    def test_omitted_inapplicable_negative_metadata_is_recovered_without_inventing_scores(self):
+        schema=judge_schema({'P1':dict(eligible_refs=['b1'])})
+        for band,valid in ((70,True),(80,True),(90,True),(100,True),(None,True),(60,False)):
+            with self.subTest(band=band),tempfile.TemporaryDirectory() as path:
+                root=Path(path);sent=[]
+                cell=dict(user_action='明确比较目标。',context_support='比较对象可定位。',band=band,basis='你明确了比较对象。',
+                    next_band='' if band in (None,100) else '本次尚未体现进一步的质量优势。',refs=[] if band is None else ['b1'],context_refs=[])
+                value=dict(needs_records=[],items=dict(P1=cell))
+                receipt=dict(status='received',request_sha256='a'*64,response=dict(status='completed',output=[dict(content=[dict(type='output_text',text=json.dumps(value))])]))
+                def model(payload,target):
+                    sent.append(target);atomic(target,receipt);return receipt
+                client=SimpleNamespace(config=SimpleNamespace(model='deepseek-v4.1-flash-local'),_call=model)
+                if valid:
+                    result=judge_call(client,root,'judge',{},schema,call)
+                    self.assertIsNone(result['items']['P1']['negative'])
+                    self.assertEqual(result['items']['P1']['band'],None if band is None else next(key for key,score in RUBRIC['performance_values'].items() if score==band))
+                else:
+                    with self.assertRaises(jsonschema.ValidationError):judge_call(client,root,'judge',{},schema,call)
+                self.assertEqual(len(sent),1)
+                self.assertEqual(json.loads((root/'judge.receipt.json').read_text()),receipt)
 
     def test_duplicate_reference_recovery_keeps_the_receipt_and_does_not_resend(self):
         schema=judge_schema({'P1':dict(eligible_refs=['b1'])})

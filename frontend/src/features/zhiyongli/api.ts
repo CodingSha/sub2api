@@ -166,6 +166,10 @@ export interface ReviewJob {
   phase: string; completed_units: number; total_units: number; message: string
   created_at: string; updated_at: string
   scope_key: string; workday_scope?: WorkdayScope
+  recheck_report_id: number | null; result_report_id: number | null
+}
+export async function startDayRecheck(reportId: number) {
+  return (await apiClient.post<ReviewJob>(`/admin/zhiyongli/reports/${reportId}/recheck`)).data
 }
 export async function startJobs(input: {user_ids: number[]; period_type: 'day' | 'week' | 'month'; period_start: string}) {
   return (await apiClient.post<ReviewJob[]>('/admin/zhiyongli/jobs', input)).data
