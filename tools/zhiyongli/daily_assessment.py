@@ -9,7 +9,7 @@ import time
 from anchored_judgment import resolve
 from daily_pilot import RUBRIC, call, prepare, report, request_payload
 from daily_tasks import directory, materialize, size, turns, windows, TASK_BYTES, MAIN_BYTES
-from daily_reasoning import assess, VERSION, FACTS, ALLOCATE, JUDGE, PROSE
+from daily_reasoning import assess, VERSION, FACTS, ALLOCATE, JUDGE, PROSE, record_source_contract
 from model_config import ModelConfig
 from model_flow import ModelFlow
 from request_retry import read_receipt
@@ -178,6 +178,7 @@ def evaluate(packet, day, root, client, plan_from=None, *, joint_candidate=False
         atomic(root/'task-selection.json',selection_result)
         client.reasoning_effort=effort
     atomic(root/'selected-tasks.json',tasks)
+    record_source_contract(tasks,records)
     delivered = {r['id']:r for task in tasks for r in task['records']}
     assessor=assess
     if joint_candidate:
@@ -192,6 +193,7 @@ def evaluate(packet, day, root, client, plan_from=None, *, joint_candidate=False
             verdict=cell['band'] or 'unresolved',basis=cell['basis'],higher_band=cell['next_band'],
             quotes=[dict(record_id=e['record_id'],quote=e['quote'],origin=e['origin']) for e in cell['evidence']]))
     result=report(final,packet,day,records,normalize_observed=True)
+    result['limitations']=list(dict.fromkeys(result.get('limitations',[])+value.get('limitations',[])))
     if result['score_status']=='observation_only' and not result['score_reason'].strip():
         result['score_reason']='当日记录形成了部分维度的评分，未形成四维总分。'
     # 正式day契约与旧周报告分开，不再用起止同日的week伪装日评。

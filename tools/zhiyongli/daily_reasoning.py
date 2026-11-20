@@ -8,7 +8,7 @@ from daily_tasks import tool_directory
 from review_schema import obj, array, enum, compact
 from runtime import RUBRIC, atomic, digest
 
-VERSION='context-first-daily-20261120.49'
+VERSION='context-first-daily-20261120.50'
 REFERENCE_CASES={
     'P':'''下面仅校准原档解释，来自用户认可的历史对话评估，不是今日证据，禁止引用其中行为或数字为今日加分。
 P1参考90：用户纠正“评分应该是AI使用表现的好坏”，要求基于完整任务过程解释哪些行为支持哪些维度。目标、对象和可接受交付能对应，而不是因为措辞长或任务复杂。P2参考90：决策文件、发布分支及绑定具体元素的批注与当前工作有明确对应，不要求把可访问原件再抄一遍。P3参考80：控制改造范围具体，但“可靠、满意、准备上线”等接受条件仍需后续澄清。
@@ -78,14 +78,43 @@ def facts_schema(tasks, *, compress=True):
     return compact(result) if compress else result
 
 
-def check_fact_coverage(facts, delivered):
+def fact_coverage(facts, delivered):
     people={ref for ref,row in delivered.items() if row['role']=='user'}
     acted={action['record_id'] for action in facts['actions']}
     skipped=set(facts['no_action_refs'])
-    if acted & skipped or acted | skipped != people or len(skipped)!=len(facts['no_action_refs']):
-        missing=sorted(people-(acted | skipped))
-        conflicts=sorted(acted & skipped)
-        raise ValueError(f'事实阅读覆盖不一致：缺失={missing}，动作与无动作冲突={conflicts}，无动作列表不得重复')
+    return dict(
+        people=sorted(people),
+        acted=sorted(acted),
+        no_action=sorted(skipped),
+        missing=sorted(people-(acted | skipped)),
+        conflicts=sorted(acted & skipped),
+        duplicate_no_action=len(skipped)!=len(facts['no_action_refs']),
+        unexpected=sorted((acted | skipped)-people),
+    )
+
+
+def check_fact_coverage(facts, delivered):
+    coverage=fact_coverage(facts,delivered)
+    if (coverage['missing'] or coverage['conflicts'] or coverage['duplicate_no_action']
+            or coverage['unexpected']):
+        raise ValueError('事实阅读覆盖不一致：缺失={missing}，动作与无动作冲突={conflicts}，'
+            '无动作列表不得重复，越界={unexpected}'.format(**coverage))
+    return coverage
+
+
+def record_source_contract(tasks, originals):
+    """在模型调用前确认选材记录与来源索引是同一份原文。"""
+    missing=[];mismatch=[]
+    for task in tasks:
+        for record in task['records']:
+            source=originals.get(record['id'])
+            if source is None:
+                missing.append(record['id'])
+            elif source.get('role')!=record.get('role') or source.get('text')!=record.get('text'):
+                mismatch.append(record['id'])
+    if missing or mismatch:
+        raise ValueError('日评来源合同不一致：缺失记录={}，正文或角色不一致={}'.format(
+            sorted(set(missing)),sorted(set(mismatch))))
 
 
 def normalize_facts(facts, root):
@@ -406,12 +435,25 @@ def assess(client, root, tasks, originals, send):
     delivered={r['id']:r for task in tasks for r in task['records']}
     schema=facts_schema(tasks)
     facts=send(client,root,'facts',dict(tasks=tasks),schema,FACTS)
+    coverage=None
     try:
-        check_fact_coverage(facts,delivered)
+        coverage=check_fact_coverage(facts,delivered)
     except ValueError as error:
         facts=send(client,root,'facts-coverage-repair',dict(tasks=tasks,previous=facts,coverage_error=str(error)),schema,
             FACTS+'\n只补读缺失或冲突的记录并改正其标记，保留其余动作和摘要，返回完整结果。')
-        check_fact_coverage(facts,delivered)
+        try:
+            coverage=check_fact_coverage(facts,delivered)
+        except ValueError as final_error:
+            coverage=fact_coverage(facts,delivered)
+            # 缺失只代表模型没有形成该条记录的事实归纳，不能静默伪造为“无动作”；
+            # 冲突、重复和越界则说明输出合同仍不可信，必须停止。
+            if coverage['conflicts'] or coverage['duplicate_no_action'] or coverage['unexpected']:
+                raise final_error
+            if not coverage['missing']:
+                raise final_error
+            atomic(root/'facts-coverage.json',dict(status='partial',attempted_repair=True,
+                missing_refs=coverage['missing'],covered_refs=sorted(set(coverage['acted'])|set(coverage['no_action'])),
+                limitation='事实阅读修复后仍有未覆盖的用户记录；未将其改记为无动作，评分仅依据已形成的事实。'))
     facts=normalize_facts(facts,root)
     client.output_token_limit=5000
     actions={'action-'+str(index):action for index,action in enumerate(facts['actions'],1)}
@@ -517,4 +559,8 @@ def assess(client, root, tasks, originals, send):
         summaries[task['id']]=dict(facts['task_summaries'][task['id']],user_actions=[a for a in facts['actions'] if a['record_id'] in people])
     cited_context={ref for cell in judgments.values() for ref in cell['context_refs']}
     displayed=[row for row in read_records if row not in asset_evidence or row['id'] in cited_context]
-    return dict(needs_records=[],task_summaries=summaries,items=result,summary=prose['summary'],behaviors=behaviors),displayed
+    limitations=[]
+    if coverage and coverage['missing']:
+        limitations.append('事实阅读修复后仍有{}条用户记录未形成动作或无动作结论；未将其静默改记为无动作，评分仅依据已形成的事实。'.format(len(coverage['missing'])))
+    return dict(needs_records=[],task_summaries=summaries,items=result,summary=prose['summary'],
+        behaviors=behaviors,limitations=limitations),displayed

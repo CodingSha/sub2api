@@ -142,7 +142,12 @@ def materialize(plan, all_turns, *, with_records=True):
         tasks.append(task)
         if with_records:
             for row in spine + tools:
-                records[row['id']] = dict(row, task_id=task['id'])
+                current=dict(row, task_id=task['id'])
+                existing=records.get(row['id'])
+                if existing and any(existing.get(key)!=current.get(key) for key in ('role','text','truncated')):
+                    raise ValueError('任务来源记录编号重复但正文或任务归属不一致：'+row['id'])
+                if existing is None:
+                    records[row['id']] = current
     if not tasks or len(tasks) > 5 or size(tasks) > MAIN_BYTES:
         raise ValueError('每日完整任务材料超过预算或为空：实际'+str(size(tasks))+'字节，上限'+str(MAIN_BYTES)+'字节；应减少完整任务数量或选择其他完整窗口，不截断原文')
     return tasks, records

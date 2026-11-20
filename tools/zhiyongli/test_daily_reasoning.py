@@ -7,7 +7,7 @@ import unittest
 import jsonschema
 
 from daily_pilot import call, RUBRIC
-from daily_reasoning import allocate, assess, allocated_schema, check_fact_coverage, check_quality, judge_call, judge_schema, normalize_facts, presentation_contract, read_asset_evidence
+from daily_reasoning import allocate, assess, allocated_schema, check_fact_coverage, check_quality, fact_coverage, judge_call, judge_schema, normalize_facts, presentation_contract, read_asset_evidence, record_source_contract
 from daily_behaviors import source_fragments
 from runtime import atomic
 
@@ -404,6 +404,23 @@ class DailyReasoningTests(unittest.TestCase):
             with self.subTest(skipped=skipped),self.assertRaisesRegex(ValueError,'事实阅读覆盖不一致'):
                 check_fact_coverage(dict(actions=actions,no_action_refs=skipped),delivered)
 
+    def test_fact_coverage_repair_does_not_promote_uncovered_user_record_to_no_action(self):
+        delivered={'u1':dict(role='user',text='明确目标。'),'u2':dict(role='user',text='补充反馈。'),
+                   'a':dict(role='assistant',text='已收到。')}
+        facts=dict(actions=[fact('u1','明确目标')],no_action_refs=[])
+        coverage=fact_coverage(facts,delivered)
+        self.assertEqual(coverage['missing'],['u2'])
+        self.assertEqual(coverage['no_action'],[])
+        self.assertRaisesRegex(ValueError,r"缺失=\['u2'\]",check_fact_coverage,facts,delivered)
+
+    def test_record_source_contract_rejects_missing_or_changed_selected_record(self):
+        tasks=[dict(records=[dict(id='u1',role='user',text='原文')])]
+        record_source_contract(tasks,{'u1':dict(id='u1',role='user',text='原文',task_id='task-1')})
+        with self.assertRaisesRegex(ValueError,r"缺失记录=\['u1'\]"):
+            record_source_contract(tasks,{})
+        with self.assertRaisesRegex(ValueError,r"正文或角色不一致=\['u1'\]"):
+            record_source_contract(tasks,{'u1':dict(id='u1',role='user',text='改写后',task_id='task-1')})
+
     def test_actor_check_cannot_use_user_quote_as_ai_evidence(self):
         rows=[dict(id='u',role='user',text='我已在业务端核对总数。'),
               dict(id='a',role='assistant',text='我会根据总数检查差异。')]
@@ -463,6 +480,41 @@ class DailyReasoningTests(unittest.TestCase):
             self.assertIn(value['items'][code]['evidence'][0]['quote'],source)
         self.assertIn('E:\\项目\\登录.py',value['items']['P1']['evidence'][0]['quote'])
         self.assertEqual(sends,['facts','facts-coverage-repair','behaviors','judge-P-0','judge-J-0','quality-0'])
+
+    def test_repeated_fact_coverage_failure_keeps_uncovered_records_unresolved(self):
+        rows=[dict(id='u',role='user',text='请修复登录。',excerpt=False),
+              dict(id='u2',role='user',text='保留原失败步骤。',excerpt=False),
+              dict(id='a',role='assistant',text='已修改，待回归。',excerpt=False)]
+        task=dict(id='task-1',records=rows,workflow_index=[])
+        sends=[]
+
+        def send(client,root,name,data,schema,instructions):
+            sends.append(name)
+            if name in {'facts','facts-coverage-repair'}:
+                value=dict(task_summaries={'task-1':dict(title='修复登录',goal='恢复登录',outcome='已修改，待回归。',workflow=[])},
+                    actions=[fact('u','要求修复登录')],no_action_refs=[])
+                if name=='facts-coverage-repair':
+                    self.assertIn("缺失=['u2']",data['coverage_error'])
+            elif name=='behaviors':
+                value=dict(routes={'action-1':dict(fragment_id=next(iter(data['fragments'])),primary_item='P1',origin='personal',asset_query='')})
+            elif name=='judge-P-0':
+                identity=next(iter(data['behaviors']))
+                value=dict(needs_records=[],items=dict(P1=dict(user_action='要求修复登录。',context_support='目标和对象明确。',band=80,
+                    basis='你明确了修复目标。',next_band='本次尚未呈现更高档的具体质量。',refs=[identity],context_refs=[],negative=None)))
+            elif name=='quality-0':
+                value=dict(issues=[])
+            else:
+                self.fail('未登记的评审阶段：'+name)
+            jsonschema.validate(value,schema)
+            return value
+
+        with tempfile.TemporaryDirectory() as path:
+            value,_=assess(SimpleNamespace(),Path(path),[task],{r['id']:r for r in rows},send)
+            coverage=json.loads((Path(path)/'facts-coverage.json').read_text())
+        self.assertEqual(coverage['status'],'partial')
+        self.assertEqual(coverage['missing_refs'],['u2'])
+        self.assertEqual(len(value['limitations']),1)
+        self.assertEqual(sends,['facts','facts-coverage-repair','behaviors','judge-P-0','quality-0'])
 
     def test_judgment_can_decline_candidate_without_evidence_and_low_score_needs_responsibility(self):
         schema=judge_schema({'P1':dict(eligible_refs=['b1'])})

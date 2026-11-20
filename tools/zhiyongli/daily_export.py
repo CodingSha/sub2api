@@ -63,7 +63,8 @@ def bundle(packet, day, root, model):
         review['behaviors']=copy.deepcopy(saved['pilot'].get('behaviors',{}))
         validate_behaviors(review['behaviors'],originals)
         report.update(score_status=saved['score_status'],score_reason=saved['score_reason'],items=copy.deepcopy(saved['items']),
-            dimensions=copy.deepcopy(saved['dimensions']),score=saved['score'],exact=saved['exact'])
+            dimensions=copy.deepcopy(saved['dimensions']),score=saved['score'],exact=saved['exact'],
+            limitations=copy.deepcopy(saved.get('limitations',[])))
         from scoring_pipeline.weekly_performance.scores022 import packed
         total=observed_total(report['dimensions'])
         if total is None:
