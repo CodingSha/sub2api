@@ -86,7 +86,7 @@ class DailyWorkerTests(unittest.TestCase):
                 user=next(row for row in task['records'] if row['role']=='user')
                 action=dict(record_id=user['id'],action='要求比较两份报价并解释差异',explicit_reason='',new_fact='',
                             new_fact_record='',claimed_completed_by_user='',result_decision_quote='',selected_asset=[])
-                value=dict(task_summaries={task['id']:dict(title=task['title'],goal=task['goal'],outcome='已说明报价差异。',workflow=[])},actions=[action])
+                value=dict(task_summaries={task['id']:dict(title=task['title'],goal=task['goal'],outcome='已说明报价差异。',workflow=[])},actions=[action],no_action_refs=[])
             elif path.stem.startswith('behaviors.'):
                 value=dict(routes={'action-1':dict(fragment_id=next(iter(data['fragments'])),primary_item='P1',origin='personal')})
             elif path.stem.startswith('judge-P-0.'):

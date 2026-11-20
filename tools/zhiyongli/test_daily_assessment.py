@@ -278,7 +278,7 @@ class DailyAssessmentTests(unittest.TestCase):
         from daily_behaviors import source_fragments
         fragments=source_fragments({r['id']:r for t in task for r in t['records']})
         fragment=next(k for k,f in fragments.items() if '确认没问题' in f['quote'])
-        facts=dict(actions=[dict(record_id='u1',action='安排核验后推送',result_decision_quote='')])
+        facts=dict(actions=[dict(record_id='u1',action='安排核验后推送',result_decision_quote='')],no_action_refs=[])
         allocation=dict(routes={'action-1':dict(fragment_id=fragment,primary_item='J2',origin='personal')})
         needs=[dict(items=None,needs_records=[dict(record_id='t',start=i,chars=1)]) for i in range(3)]
         with tempfile.TemporaryDirectory() as target,patch('daily_assessment.checked_call',side_effect=[facts,allocation,*needs]) as call:

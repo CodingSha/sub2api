@@ -7,7 +7,7 @@ import unittest
 import jsonschema
 
 from daily_pilot import call
-from daily_reasoning import allocate, assess, allocated_schema, check_quality, judge_call, judge_schema, presentation_contract, read_asset_evidence
+from daily_reasoning import allocate, assess, allocated_schema, check_fact_coverage, check_quality, judge_call, judge_schema, presentation_contract, read_asset_evidence
 from daily_behaviors import source_fragments
 from runtime import atomic
 
@@ -88,7 +88,7 @@ class DailyReasoningTests(unittest.TestCase):
         names=[]
         def send(client,root,name,data,schema,instructions):
             names.append(name)
-            if name=='facts':value=dict(task_summaries={'task-1':dict(title='脚本复用',goal='编写脚本',outcome='',workflow=[])},actions=[fact('u','复用旧脚本')])
+            if name=='facts':value=dict(task_summaries={'task-1':dict(title='脚本复用',goal='编写脚本',outcome='',workflow=[])},actions=[fact('u','复用旧脚本')],no_action_refs=[])
             elif name=='behaviors':value=dict(routes=behavior_wire(data,[dict(quote='参考 old_script.py',primary_item='E3')]))
             elif name=='judge-E-0':value=dict(needs_records=[],search_queries=['old_script.py'],items=None)
             elif name=='judge-E-1':
@@ -231,24 +231,79 @@ class DailyReasoningTests(unittest.TestCase):
                            claim_quote=judgment['next_band'], criterion_quote=judgment['next_anchor'], behavior_ids=['check'])
         actor = dict(item='J2', kind='wrong_actor', problem='执行者是AI。', claim_quote=judgment['basis'],
                      source_ref='a', source_quote='我已核对总数。', behavior_ids=['check'])
-        for issues in ([calibration], [calibration, actor]):
-            with self.subTest(has_actor=actor in issues), tempfile.TemporaryDirectory() as path:
+        fixed=dict(judgment,basis='你要求AI核对总数。')
+        for state in ('advisory','corrected','unresolved'):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as path:
                 root = Path(path)
+                stages=[]
                 def send(client, root, name, data, schema, instructions):
-                    result = dict(issues=issues)
+                    stages.append(name)
+                    if name=='quality-0':
+                        issues=[calibration] if state=='advisory' else [calibration,actor]
+                    else:
+                        issues=[actor] if state=='unresolved' else []
+                    result=dict(issues=issues)
                     jsonschema.validate(result, schema)
                     return result
+
+                def repair(findings):
+                    self.assertEqual(findings,[actor])
+                    return {'J2':judgment if state=='unresolved' else fixed}
+
                 def audit():
-                    return check_quality(None, root, [task], behaviors, {'J2': judgment}, prose, [], send,
-                                         lambda _: self.fail('档位争议不触发重判'))
-                if actor in issues:
+                    return check_quality(None, root, [task], behaviors, {'J2': judgment}, prose, [], send,repair)
+                if state=='unresolved':
                     with self.assertRaisesRegex(ValueError, '归属检查未通过'):
                         audit()
                 else:
-                    self.assertEqual(audit(), ({'J2': judgment}, prose))
+                    judgments,_=audit()
+                    self.assertEqual(judgments,presentation_contract({'J2':fixed})[0] if state=='corrected' else {'J2':judgment})
+                self.assertEqual(stages,['quality-0'] if state=='advisory' else ['quality-0','quality-1'])
                 quality = json.loads((root/'quality.json').read_text())
                 self.assertEqual(quality['dismissed_findings'][0]['reason'], 'anchor_advisory')
-                self.assertEqual(quality.get('issues', []), [actor] if actor in issues else [])
+                self.assertEqual(quality.get('issues', []), [actor] if state=='unresolved' else [])
+
+    def test_wrong_item_requires_a_different_item_and_the_scored_behaviors_own_evidence(self):
+        action='按上次失败的步骤检查导出。'
+        task=dict(records=[dict(id='u',role='user',text=action),dict(id='other',role='user',text='辛苦了。')])
+        basis='你指定了导出的检查办法。'
+        next_band='还未说明合格条件。'
+        behaviors={'check':dict(primary_item='J2',source_ref='u',claim=action)}
+        for expected in (None,'J2','P3','P3-wrong-source','P3-next-band','P3-unscored'):
+            with self.subTest(expected=expected),tempfile.TemporaryDirectory() as path:
+                root=Path(path)
+                finding=dict(item='J2',kind='wrong_item',problem='归项需要核对。',claim_quote=basis,
+                    source_ref='u',source_quote=action,behavior_ids=['check'])
+                if expected:
+                    finding['correct_item']=expected.split('-')[0]
+                if expected=='P3-wrong-source':
+                    finding.update(source_ref='other',source_quote='辛苦了。')
+                if expected=='P3-next-band':
+                    finding['claim_quote']=next_band
+                def send(client,root,name,data,schema,instructions):
+                    value=dict(issues=[finding])
+                    jsonschema.validate(value,schema)
+                    return value
+                judgment=dict(J2=dict(refs=[] if expected=='P3-unscored' else ['check']))
+                def audit():
+                    return check_quality(None,root,[task],behaviors,judgment,
+                        dict(items=dict(J2=dict(basis=basis,next_band=next_band))),[],send,
+                        lambda _:self.fail('错归不能仅通过修改表述来修复'))
+                if expected=='P3':
+                    with self.assertRaisesRegex(ValueError,'归属检查未通过'):
+                        audit()
+                else:
+                    audit()
+                    quality=json.loads((root/'quality.json').read_text())
+                    self.assertEqual(quality['dismissed_findings'][0]['reason'],'invalid_wrong_item_finding')
+
+    def test_fact_coverage_distinguishes_no_action_from_an_omitted_record(self):
+        delivered={'u1':dict(role='user'),'u2':dict(role='user'),'a':dict(role='assistant')}
+        actions=[fact('u1','提供本次报价来源')]
+        check_fact_coverage(dict(actions=actions,no_action_refs=['u2']),delivered)
+        for skipped in ([],['u1','u2'],['u2','u2'],['u2','a']):
+            with self.subTest(skipped=skipped),self.assertRaisesRegex(ValueError,'事实阅读覆盖不一致'):
+                check_fact_coverage(dict(actions=actions,no_action_refs=skipped),delivered)
 
     def test_actor_check_cannot_use_user_quote_as_ai_evidence(self):
         rows=[dict(id='u',role='user',text='我已在业务端核对总数。'),
@@ -278,15 +333,21 @@ class DailyReasoningTests(unittest.TestCase):
                     self.assertEqual(quality['dismissed_findings'][0]['reason'],'actor_counterevidence_is_user_text')
 
     def test_program_links_original_path_and_same_judgment_explanation(self):
-        original='请修复 E:\\项目\\登录.py，并按原失败步骤回归。'
-        rows=[dict(id='u',role='user',text=original,excerpt=False),dict(id='a',role='assistant',text='已修复，回归仍待执行。',excerpt=False)]
+        original='请修复 E:\\项目\\登录.py。'
+        check='请按原失败步骤回归。'
+        rows=[dict(id='u',role='user',text=original,excerpt=False),dict(id='u2',role='user',text=check,excerpt=False),
+            dict(id='a',role='assistant',text='已修复，回归仍待执行。',excerpt=False)]
         task=dict(id='task-1',records=rows,workflow_index=[])
         sends=[]
         def send(client,root,name,data,schema,instructions):
             sends.append(name)
-            if name=='facts':
+            if name in {'facts','facts-coverage-repair'}:
                 value=dict(task_summaries={'task-1':dict(title='修复登录',goal='恢复登录',outcome='已修改，回归待执行。',workflow=[])},
-                    actions=[fact('u','要求修复登录'),fact('u','指定原失败步骤回归')])
+                    actions=[fact('u','要求修复登录')],no_action_refs=[])
+                if name=='facts-coverage-repair':
+                    self.assertIn("缺失=['u2']",data['coverage_error'])
+                    self.assertEqual(data['previous']['actions'],value['actions'])
+                    value['actions'].append(fact('u2','指定原失败步骤回归'))
             elif name=='behaviors':
                 value=dict(routes=behavior_wire(data,[dict(quote='请修复 E:\\项目\\登录.py',primary_item='P1'),
                     dict(quote='按原失败步骤回归',primary_item='J2')]))
@@ -301,11 +362,11 @@ class DailyReasoningTests(unittest.TestCase):
             return value
         with tempfile.TemporaryDirectory() as path:
             value,_=assess(SimpleNamespace(),Path(path),[task],{r['id']:r for r in rows},send)
-        for code in ('P1','J2'):
+        for code,source in (('P1',original),('J2',check)):
             self.assertEqual(value['items'][code]['band'],'good')
-            self.assertIn(value['items'][code]['evidence'][0]['quote'],original)
-            self.assertNotEqual(value['items'][code]['evidence'][0]['quote'],original)
-        self.assertEqual(sends,['facts','behaviors','judge-P-0','judge-J-0','quality-0'])
+            self.assertIn(value['items'][code]['evidence'][0]['quote'],source)
+        self.assertIn('E:\\项目\\登录.py',value['items']['P1']['evidence'][0]['quote'])
+        self.assertEqual(sends,['facts','facts-coverage-repair','behaviors','judge-P-0','judge-J-0','quality-0'])
 
     def test_judgment_can_decline_candidate_without_evidence_and_low_score_needs_responsibility(self):
         schema=judge_schema({'P1':dict(eligible_refs=['b1'])})
