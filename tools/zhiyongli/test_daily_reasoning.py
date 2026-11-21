@@ -7,7 +7,7 @@ import unittest
 import jsonschema
 
 from daily_pilot import call, RUBRIC
-from daily_reasoning import allocate, assess, allocated_schema, check_fact_coverage, check_quality, fact_coverage, judge_call, judge_schema, normalize_facts, presentation_contract, read_asset_evidence, record_source_contract
+from daily_reasoning import allocate, assess, allocated_schema, check_fact_coverage, check_quality, checked_judgment, fact_coverage, judge_call, judge_schema, normalize_facts, presentation_contract, read_asset_evidence, record_source_contract
 from daily_behaviors import source_fragments
 from runtime import atomic
 
@@ -582,6 +582,42 @@ class DailyReasoningTests(unittest.TestCase):
                     with self.assertRaises(jsonschema.ValidationError):judge_call(client,root,'judge',{},schema,call)
                 self.assertEqual(len(sent),1)
                 self.assertEqual(json.loads((root/'judge.receipt.json').read_text()),receipt)
+
+    def test_invalid_received_judgment_has_one_separate_repair_and_reuses_both_receipts(self):
+        from runtime import CompanyClient,digest
+        schema=judge_schema({'P2':dict(eligible_refs=['b1'])},['u1'])
+        cell=dict(user_action='补充了截图。',context_support='只知道截图路径，未展示内容。',band=60,
+            basis='材料未呈现截图内容。',next_band='尚不能说明适配情况。',refs=['b1'],context_refs=['u1'],negative=None)
+        original=dict(needs_records=[],items=dict(P2=cell))
+        for band in (70,None,60):
+            with self.subTest(repaired_band=band),tempfile.TemporaryDirectory() as path:
+                root=Path(path);sent=[];payloads=[]
+                corrected=dict(needs_records=[],items=dict(P2=dict(cell,band=band,
+                    refs=[] if band is None else ['b1'],next_band='' if band is None else cell['next_band'])))
+                client=SimpleNamespace(config=SimpleNamespace(model='test',responses_url='https://example.test/v1/responses'))
+                def model(payload,target):
+                    if target.exists():return CompanyClient._call(client,payload,target)
+                    sent.append(target.name);payloads.append(payload)
+                    value=original if target.name=='judge-P-0.receipt.json' else corrected
+                    receipt=dict(status='received',request_sha256=digest(dict(endpoint=client.config.responses_url,payload=payload)),
+                        response=dict(status='completed',output=[dict(content=[dict(type='output_text',text=json.dumps(value))])]))
+                    atomic(target,receipt);return receipt
+                client._call=model
+                data=dict(tasks=[dict(records=[dict(id='u1',role='user',text='参考这张截图。')])],
+                    items={'P2':dict(eligible_refs=['b1'])})
+                for attempt in range(2):
+                    if band==60:
+                        with self.assertRaises(jsonschema.ValidationError):checked_judgment(client,root,'judge-P-0',data,schema,call)
+                    else:
+                        result=checked_judgment(client,root,'judge-P-0',data,schema,call)
+                        self.assertEqual(result['items']['P2']['band'],'reasonable' if band==70 else None)
+                self.assertEqual(sent,['judge-P-0.receipt.json','judge-P-0-contract-repair.receipt.json'])
+                self.assertNotEqual(payloads[0],payloads[1])
+                receipt=json.loads((root/'judge-P-0.receipt.json').read_text())
+                self.assertEqual(json.loads(receipt['response']['output'][0]['content'][0]['text']),original)
+                proof=json.loads((root/'judge-P-0.contract-repair.json').read_text())
+                self.assertEqual(proof['receipt_sha256'],digest(receipt))
+                self.assertFalse((root/'judge-P-0-contract-repair-contract-repair.receipt.json').exists())
 
     def test_unused_item_summary_keeps_scores_and_original_receipt(self):
         schema=judge_schema({'E3':dict(eligible_refs=['b1'])})

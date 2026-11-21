@@ -267,6 +267,28 @@ def judge_call(client, root, name, data, schema, send):
     finally:client.daily_natural_json=previous
 
 
+def checked_judgment(client, root, name, data, schema, send):
+    """已收妥但违反结构合同的判断只纠正一次，不重发原请求或代改分数。"""
+    try:
+        return judge_call(client,root,name,data,schema,send)
+    except jsonschema.ValidationError as error:
+        from request_retry import read_receipt
+        from model_config import response_text
+        path=root/(name+'.receipt.json')
+        if not path.exists() and getattr(client,'reuse_root',None):path=Path(client.reuse_root)/path.name
+        receipt=read_receipt(path)
+        previous=json.loads(response_text(receipt['response']))
+        # 只传失败位置与约束；不把巨大分支schema或原文重复塞进诊断。
+        problem=dict(path=list(error.absolute_path),constraint=error.validator,
+            requirement='必须满足该位置的完整输出合同；低于70档需四项归责事实，材料未呈现不能当作实际不足。')
+        repair_name=name+'-contract-repair'
+        atomic(root/(name+'.contract-repair.json'),dict(receipt_sha256=digest(receipt),
+            problem=problem,repair_stage=repair_name))
+        value=judge_call(client,root,repair_name,dict(data,previous_invalid_judgment=previous,
+            judgment_contract_error=problem),schema,send)
+        return value
+
+
 def _judge_call(client, root, name, data, schema, send):
     """引用是集合；只去除同一ID的重复，不增删事实、判档或未知引用，不重发请求。"""
     try:
@@ -511,7 +533,7 @@ def assess(client, root, tasks, originals, send):
                 tool_directory=tool_directory(originals,{t['id'] for t in relevant}),tool_search_results=list(search_results))
             inputs[dimension]=data
             available_refs=list(dict.fromkeys([r['id'] for t in relevant for r in t['records']]+[r['id'] for r in read_records]))
-            value=judge_call(client,root,'judge-'+dimension+'-'+str(read_rounds),data,judge_schema(items,available_refs),send)
+            value=checked_judgment(client,root,'judge-'+dimension+'-'+str(read_rounds),data,judge_schema(items,available_refs),send)
             queries=value.get('search_queries',[])
             if not value['needs_records'] and not queries:break
             if read_rounds==2:raise ValueError('日评工具补读已达两轮，保留失败回执')
@@ -542,7 +564,7 @@ def assess(client, root, tasks, originals, send):
             if not local:continue
             items={code:item for code,item in data['items'].items() if any(i['item']==code for i in local)}
             available_refs=list(dict.fromkeys([r['id'] for t in data['tasks'] for r in t['records']]+[r['id'] for r in data['read_records']]))
-            value=judge_call(client,root,'judgment-repair-'+dimension,dict(data,items=items,review_findings=local,
+            value=checked_judgment(client,root,'judgment-repair-'+dimension,dict(data,items=items,review_findings=local,
                 previous={code:judgments[code] for code in items}),judge_schema(items,available_refs),send)
             if value['needs_records'] or value['items'] is None:
                 raise ValueError('事实纠正未给出终态；不追加补读或循环重评')
