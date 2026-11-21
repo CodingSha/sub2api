@@ -103,6 +103,8 @@ class DailyReasoningTests(unittest.TestCase):
         schema=allocated_schema(actions,fragments)
         value=dict(routes={'action-1':row(refs[0]),'action-2':None})
         jsonschema.validate(value,schema)
+        with tempfile.TemporaryDirectory() as path, self.assertRaisesRegex(ValueError,'入选任务没有实际行为归属'):
+            allocate(SimpleNamespace(),Path(path),dict(actions=actions),tasks,lambda *args:value,unresolved_refs=['other'])
         for bad in (dict(routes={'action-1':row(refs[0])}),
                     dict(routes={**value['routes'],'invented':None}),
                     dict(routes={**value['routes'],'action-1':[row(refs[0]),row(refs[0])]}),
@@ -507,6 +509,7 @@ class DailyReasoningTests(unittest.TestCase):
               dict(id='u2',role='user',text='保留原失败步骤。',excerpt=False),
               dict(id='a',role='assistant',text='已修改，待回归。',excerpt=False)]
         task=dict(id='task-1',records=rows,workflow_index=[])
+        unresolved=dict(id='task-2',records=[dict(id='u3',role='user',text='另一个任务仍待核对。',excerpt=False)],workflow_index=[])
         sends=[]
 
         def send(client,root,name,data,schema,instructions):
@@ -514,8 +517,9 @@ class DailyReasoningTests(unittest.TestCase):
             if name in {'facts','facts-coverage-repair'}:
                 value=dict(task_summaries={'task-1':dict(title='修复登录',goal='恢复登录',outcome='已修改，待回归。',workflow=[])},
                     actions=[fact('u','要求修复登录')],no_action_refs=[])
+                value['task_summaries']['task-2']=dict(title='另一个任务',goal='核对',outcome='未决',workflow=[])
                 if name=='facts-coverage-repair':
-                    self.assertIn("缺失=['u2']",data['coverage_error'])
+                    self.assertIn("缺失=['u2', 'u3']",data['coverage_error'])
             elif name=='behaviors':
                 value=dict(routes={'action-1':dict(fragment_id=next(iter(data['fragments'])),primary_item='P1',origin='personal',asset_query='')})
             elif name=='judge-P-0':
@@ -530,10 +534,11 @@ class DailyReasoningTests(unittest.TestCase):
             return value
 
         with tempfile.TemporaryDirectory() as path:
-            value,_=assess(SimpleNamespace(),Path(path),[task],{r['id']:r for r in rows},send)
+            value,_=assess(SimpleNamespace(),Path(path),[task,unresolved],{r['id']:r for r in rows+unresolved['records']},send)
             coverage=json.loads((Path(path)/'facts-coverage.json').read_text())
         self.assertEqual(coverage['status'],'partial')
-        self.assertEqual(coverage['missing_refs'],['u2'])
+        self.assertEqual(coverage['missing_refs'],['u2','u3'])
+        self.assertEqual(value['task_summaries']['task-2']['user_actions'],[])
         self.assertEqual(len(value['limitations']),1)
         self.assertEqual(sends,['facts','facts-coverage-repair','behaviors','judge-P-0','quality-0'])
 

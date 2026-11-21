@@ -148,7 +148,7 @@ def allocated_schema(actions, fragments, decision_fragments=None):
     return compact(obj(dict(routes=obj(routes))),minimum=50)
 
 
-def allocate(client,root,data,tasks,send,name='behaviors'):
+def allocate(client,root,data,tasks,send,name='behaviors',*,unresolved_refs=()):
     """归项使用受约束结构；语义和逐字原文由独立合同校验。"""
     previous=getattr(client,'daily_natural_json',False)
     client.daily_natural_json=False
@@ -183,7 +183,10 @@ def allocate(client,root,data,tasks,send,name='behaviors'):
         if any(row['primary_item']!='E3' and row.get('asset_query','') for row in rows):
             raise ValueError('只有E3归项可以指定复用资产')
         assigned={row['record_id'] for row in rows}
-        if any(not assigned.intersection(row['id'] for row in task['records'] if row['role']=='user') for task in tasks):
+        unresolved=set(unresolved_refs)
+        # 整项任务的用户记录仍未形成事实时，保留未决与原文，不强迫模型补造评分行为。
+        people=[{row['id'] for row in task['records'] if row['role']=='user'} for task in tasks]
+        if any(not assigned.intersection(refs) and not (refs and refs<=unresolved) for refs in people):
             raise ValueError('入选任务没有实际行为归属，不能静默遗漏该任务')
         original={record['id']:record['text'] for task in tasks for record in task['records'] if record['role']=='user'}
         if any(row.get('asset_query','').strip() not in original[row['record_id']] for row in rows):
@@ -466,7 +469,7 @@ def assess(client, root, tasks, originals, send):
         anchors={k:v['reasonable'] for k,v in RUBRIC['performance_anchors'].items()},counterexamples=RUBRIC['item_counterexamples'])
     allocation=None
     try:
-        allocation=allocate(client,root,allocation_data,tasks,send)
+        allocation=allocate(client,root,allocation_data,tasks,send,unresolved_refs=coverage['missing'])
         behaviors=catalog(allocation['behaviors'],delivered)
     except (ValueError,jsonschema.ValidationError) as error:
         if isinstance(error,jsonschema.ValidationError):
@@ -477,7 +480,8 @@ def assess(client, root, tasks, originals, send):
             allocation=json.loads(response_text(read_receipt(path)['response']))
             problem=json.dumps(dict(path=list(error.path),constraint=error.validator,expected=error.validator_value),ensure_ascii=False)
         else:problem=str(error)
-        allocation=allocate(client,root,dict(allocation_data,previous=allocation,allocation_errors=problem),tasks,send,'behaviors-repair')
+        allocation=allocate(client,root,dict(allocation_data,previous=allocation,allocation_errors=problem),tasks,send,'behaviors-repair',
+            unresolved_refs=coverage['missing'])
         behaviors=catalog(allocation['behaviors'],delivered)
     origins={('b'+digest([a['record_id'],a['claim'].strip()])[:20]):a['origin'] for a in allocation['behaviors']}
     quotes={('b'+digest([a['record_id'],a['claim'].strip()])[:20]):original_quote(delivered[a['record_id']]['text'],a['quote']) for a in allocation['behaviors']}
