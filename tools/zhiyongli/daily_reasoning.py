@@ -148,7 +148,7 @@ def allocated_schema(actions, fragments, decision_fragments=None):
     return compact(obj(dict(routes=obj(routes))),minimum=50)
 
 
-def allocate(client,root,data,tasks,send,name='behaviors',*,unresolved_refs=()):
+def allocate(client,root,data,tasks,send,name='behaviors',*,unscored_refs=()):
     """归项使用受约束结构；语义和逐字原文由独立合同校验。"""
     previous=getattr(client,'daily_natural_json',False)
     client.daily_natural_json=False
@@ -183,10 +183,10 @@ def allocate(client,root,data,tasks,send,name='behaviors',*,unresolved_refs=()):
         if any(row['primary_item']!='E3' and row.get('asset_query','') for row in rows):
             raise ValueError('只有E3归项可以指定复用资产')
         assigned={row['record_id'] for row in rows}
-        unresolved=set(unresolved_refs)
-        # 整项任务的用户记录仍未形成事实时，保留未决与原文，不强迫模型补造评分行为。
+        unscored=set(unscored_refs)
+        # 用户记录均为无动作或未决的任务保留原文，不强迫模型补造评分行为。
         people=[{row['id'] for row in task['records'] if row['role']=='user'} for task in tasks]
-        if any(not assigned.intersection(refs) and not (refs and refs<=unresolved) for refs in people):
+        if any(not assigned.intersection(refs) and not (refs and refs<=unscored) for refs in people):
             raise ValueError('入选任务没有实际行为归属，不能静默遗漏该任务')
         original={record['id']:record['text'] for task in tasks for record in task['records'] if record['role']=='user'}
         if any(row.get('asset_query','').strip() not in original[row['record_id']] for row in rows):
@@ -469,7 +469,7 @@ def assess(client, root, tasks, originals, send):
         anchors={k:v['reasonable'] for k,v in RUBRIC['performance_anchors'].items()},counterexamples=RUBRIC['item_counterexamples'])
     allocation=None
     try:
-        allocation=allocate(client,root,allocation_data,tasks,send,unresolved_refs=coverage['missing'])
+        allocation=allocate(client,root,allocation_data,tasks,send,unscored_refs=coverage['missing']+coverage['no_action'])
         behaviors=catalog(allocation['behaviors'],delivered)
     except (ValueError,jsonschema.ValidationError) as error:
         if isinstance(error,jsonschema.ValidationError):
@@ -481,7 +481,7 @@ def assess(client, root, tasks, originals, send):
             problem=json.dumps(dict(path=list(error.path),constraint=error.validator,expected=error.validator_value),ensure_ascii=False)
         else:problem=str(error)
         allocation=allocate(client,root,dict(allocation_data,previous=allocation,allocation_errors=problem),tasks,send,'behaviors-repair',
-            unresolved_refs=coverage['missing'])
+            unscored_refs=coverage['missing']+coverage['no_action'])
         behaviors=catalog(allocation['behaviors'],delivered)
     origins={('b'+digest([a['record_id'],a['claim'].strip()])[:20]):a['origin'] for a in allocation['behaviors']}
     quotes={('b'+digest([a['record_id'],a['claim'].strip()])[:20]):original_quote(delivered[a['record_id']]['text'],a['quote']) for a in allocation['behaviors']}
@@ -569,5 +569,8 @@ def assess(client, root, tasks, originals, send):
     limitations=[]
     if coverage and coverage['missing']:
         limitations.append('事实阅读修复后仍有{}条用户记录未形成动作或无动作结论；未将其静默改记为无动作，评分仅依据已形成的事实。'.format(len(coverage['missing'])))
+    unscored_tasks=sum(not row['user_actions'] for row in summaries.values())
+    if unscored_tasks:
+        limitations.append('有{}项入选任务未形成可评分的本人行为；其原文仍保留，未纳入判档，也未记为零分。'.format(unscored_tasks))
     return dict(needs_records=[],task_summaries=summaries,items=result,summary=prose['summary'],
         behaviors=behaviors,limitations=limitations),displayed
