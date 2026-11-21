@@ -2,15 +2,34 @@
 import json
 import os
 import time
+import tempfile
+from pathlib import Path
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+import jsonschema
 
 from daily_pilot import RUBRIC
 from runtime import atomic, digest
 from source_frames import read_signed
 from source_snapshot import collect
 from workday_scope import daily_window
-from worker import importer, tick
+from worker import importer, process, tick
+
+
+class DailyWorkerFailureTests(unittest.TestCase):
+    def test_schema_failure_preserves_private_diagnostics_and_contract_state(self):
+        db=SimpleNamespace(execute=Mock())
+        job=dict(id=1,user_id=2,period_type='day')
+        with tempfile.TemporaryDirectory() as path:
+            with patch('personal_scope.require_personal_user',side_effect=jsonschema.ValidationError('结构校验失败')):
+                process(db,job,path,None,SimpleNamespace(),SimpleNamespace(draft_only=False),[])
+            failure=json.loads((Path(path)/'1/failure.json').read_text())
+        self.assertEqual(failure['error_type'],'ValidationError')
+        self.assertEqual(failure['category'],'execution_contract')
+        self.assertIn('结构校验失败',failure['traceback'])
+        self.assertFalse(failure['employee_review_required'])
+        self.assertEqual(db.execute.call_args.args[1][:2],('failed','execution_contract_failed'))
 
 
 @unittest.skipUnless(os.environ.get('ZHIYONGLI_TEST_DSN'), '需要显式本地专用测试库')

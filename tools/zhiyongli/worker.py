@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor,wait,FIRST_EXCEPTION
 from datetime import datetime,timedelta,timezone
 import fcntl
 import json
+import jsonschema
 import os
 from pathlib import Path
 import signal
@@ -334,7 +335,7 @@ def process(db,job,state,source,client,send,excluded_keys,max_requests=100,new_r
             else:update(db,job['id'],outcome['state'],outcome['phase'],message=str(ex))
         elif ex.state=='queued':update(db,job['id'],'queued',*last,message=str(ex))
         else:update(db,job['id'],ex.state,'done' if ex.state=='no_activity' else 'paused',message=str(ex))
-    except (ValueError,KeyError,TypeError,ModelError) as ex:
+    except (ValueError,KeyError,TypeError,ModelError,jsonschema.ValidationError) as ex:
         # 错误细节只在私有文件留存，不把原文、路径或远端错误体返回页面。
         import traceback
         from navigation_access import ReadbackCapacity

@@ -583,6 +583,27 @@ class DailyReasoningTests(unittest.TestCase):
                 self.assertEqual(len(sent),1)
                 self.assertEqual(json.loads((root/'judge.receipt.json').read_text()),receipt)
 
+    def test_unused_item_summary_keeps_scores_and_original_receipt(self):
+        schema=judge_schema({'E3':dict(eligible_refs=['b1'])})
+        for extra,valid in ((dict(summary='冗余概述。'),True),(dict(unknown='未定义字段'),False)):
+            with self.subTest(extra=extra),tempfile.TemporaryDirectory() as path:
+                root=Path(path);sent=[]
+                cell=dict(user_action='选择既有脚本。',context_support='脚本与当前工作对应。',band=80,
+                    basis='你复用了既有脚本。',next_band='本次尚未呈现更完整的信息保留作用。',refs=['b1'],context_refs=[],negative=None,**extra)
+                value=dict(needs_records=[],items=dict(E3=cell))
+                receipt=dict(status='received',request_sha256='a'*64,response=dict(status='completed',output=[dict(content=[dict(type='output_text',text=json.dumps(value))])]))
+                def model(payload,target):
+                    sent.append(target);atomic(target,receipt);return receipt
+                client=SimpleNamespace(config=SimpleNamespace(model='deepseek-v4.1-flash-local'),_call=model)
+                if valid:
+                    result=judge_call(client,root,'judge',{},schema,call)
+                    self.assertEqual(result['items']['E3'],dict({k:v for k,v in cell.items() if k!='summary'},band='good'))
+                    self.assertEqual(json.loads((root/'judge.reference-set.json').read_text())['normalized_fields'],[['E3','summary','unused']])
+                else:
+                    with self.assertRaises(jsonschema.ValidationError):judge_call(client,root,'judge',{},schema,call)
+                self.assertEqual(len(sent),1)
+                self.assertEqual(json.loads((root/'judge.receipt.json').read_text()),receipt)
+
     def test_duplicate_reference_recovery_keeps_the_receipt_and_does_not_resend(self):
         schema=judge_schema({'P1':dict(eligible_refs=['b1'])})
         for refs,valid in [(['b1','b1'],True),(['b1','missing','missing'],False)]:

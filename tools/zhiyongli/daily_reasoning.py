@@ -286,6 +286,8 @@ def _judge_call(client, root, name, data, schema, send):
         if value.get('context_refs')==[]:
             value.pop('context_refs');changed.append(['context_refs','unused-root-field'])
         for code,cell in (value.get('items') or {}).items():
+            if isinstance(cell.get('summary'),str):
+                cell.pop('summary');changed.append([code,'summary','unused'])
             if 'negative' not in cell and (cell.get('band') is None or type(cell.get('band')) is int and cell['band'] in (70,80,90,100)):
                 cell['negative']=None;changed.append([code,'negative','not_applicable'])
             for key in ('refs','context_refs'):
