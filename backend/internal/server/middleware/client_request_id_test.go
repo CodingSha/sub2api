@@ -95,3 +95,36 @@ func TestClientRequestIDAcceptsBoundedHeaderWithContextPrecedence(t *testing.T) 
 		require.Equal(t, response.Body.String(), response.Header().Get(clientRequestIDHeader))
 	}
 }
+
+func TestClientCorrelationDoesNotReuseBillingIdentityAcrossHTTPCalls(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, header := range []string{"codex-conversation-id", "", strings.Repeat("x", 200), "invalid id"} {
+		t.Run(header, func(t *testing.T) {
+			var ids []string
+			router := gin.New()
+			router.Use(ClientRequestID(), func(c *gin.Context) {
+				before := c.Request.Context().Value(ctxkey.UsageBillingRequestID)
+				c.Next()
+				require.Equal(t, before, c.Request.Context().Value(ctxkey.UsageBillingRequestID))
+			}, ClientRequestID())
+			router.POST("/responses", func(c *gin.Context) {
+				id, _ := c.Request.Context().Value(ctxkey.UsageBillingRequestID).(string)
+				ids = append(ids, id)
+				c.Status(http.StatusOK)
+			})
+			for i := 0; i < 2; i++ {
+				req := httptest.NewRequest(http.MethodPost, "/responses", nil)
+				req.Header.Set(clientRequestIDHeader, header)
+				response := httptest.NewRecorder()
+				router.ServeHTTP(response, req)
+				require.Equal(t, http.StatusOK, response.Code)
+				if header == "codex-conversation-id" {
+					require.Equal(t, header, response.Header().Get(clientRequestIDHeader))
+				}
+			}
+			require.Len(t, ids[0], 36)
+			require.Len(t, ids[1], 36)
+			require.NotEqual(t, ids[0], ids[1])
+		})
+	}
+}

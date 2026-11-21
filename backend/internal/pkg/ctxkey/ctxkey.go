@@ -23,8 +23,11 @@ const (
 	// RequestID 为服务端生成/透传的请求 ID。
 	RequestID Key = "ctx_request_id"
 
-	// ClientRequestID 客户端请求的唯一标识，用于追踪请求全生命周期（用于 Ops 监控与排障）。
+	// ClientRequestID 为调用方关联标识，允许跨请求复用，仅用于 Ops 监控与排障。
 	ClientRequestID Key = "ctx_client_request_id"
+
+	// UsageBillingRequestID 为服务端生成的单次入站调用标识，同调用异步落账和重试共用。
+	UsageBillingRequestID Key = "ctx_usage_billing_request_id"
 
 	// Model 请求模型标识（用于统一请求链路日志字段）。
 	Model Key = "ctx_model"

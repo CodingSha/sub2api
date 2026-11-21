@@ -249,6 +249,9 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 	if parent == nil {
 		return base
 	}
+	if billingRequestID, _ := parent.Value(ctxkey.UsageBillingRequestID).(string); strings.TrimSpace(billingRequestID) != "" {
+		base = context.WithValue(base, ctxkey.UsageBillingRequestID, strings.TrimSpace(billingRequestID))
+	}
 	if clientRequestID, _ := parent.Value(ctxkey.ClientRequestID).(string); strings.TrimSpace(clientRequestID) != "" {
 		base = context.WithValue(base, ctxkey.ClientRequestID, strings.TrimSpace(clientRequestID))
 	}
