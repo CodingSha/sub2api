@@ -137,7 +137,8 @@ def materialize(plan, all_turns, *, with_records=True):
             goal=spec['goal'], records=[dict(id=r['id'],role=r['role'],text=r['text'],
                 excerpt=bool(r.get('truncated')), boundary_context=bool(r.get('boundary_context'))) for r in spine],
             workflow_index=workflow)
-        if size(task) > TASK_BYTES:
+        # 定位标题/目标由模型生成，不占完整原文的单任务额度；总交付与请求上限仍计实际字节。
+        if size(dict(task,title='',goal='')) > TASK_BYTES:
             raise ValueError('任务完整主线超过选材预算：'+spec['start'])
         tasks.append(task)
         if with_records:
@@ -168,6 +169,8 @@ def windows(all_turns, listing):
             tasks,_=materialize(plan,all_turns,with_records=False)
         except ValueError:
             continue
+        # 目录继续按固定定位说明保守核算，保持已落盘规划请求和窗口编号不变。
+        if size(tasks[0]) > TASK_BYTES:continue
         options.append(dict(start=keys[0],end=keys[-1],bytes=size(tasks[0]),scope='complete_session',
             user_turns=len(keys),feedback_turns=sum(all_turns[key]['reply'] is not None for key in keys)))
         whole.add(session)
@@ -182,6 +185,7 @@ def windows(all_turns, listing):
                 tasks,_=materialize(plan,all_turns,with_records=False)
             except ValueError:
                 continue
+            if size(tasks[0]) > TASK_BYTES:continue
             records=tasks[0]['records']
             options.append(dict(start=start,end=end,bytes=size(tasks[0]),scope='task_window',
                 user_turns=sum(r['role']=='user' for r in records),

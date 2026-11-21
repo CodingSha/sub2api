@@ -16,6 +16,31 @@ def row(key,role,text,**extra):
 
 
 class DailyAssessmentTests(unittest.TestCase):
+    def test_window_budget_does_not_reject_complete_evidence_for_long_plan_labels(self):
+        from daily_tasks import size
+        groups=[dict(session='s',records=[row('u','user','完整委派与参考材料。'*120),
+            row('a','assistant','已给出完整处理反馈。')])]
+        ts=turns(groups)
+        neutral=dict(tasks=[dict(start='u',end='u',title='完整会话',goal='核对当日完整任务来回')])
+        expected,_=materialize(neutral,ts)
+        limit=size(expected[0])
+        candidate=dict(window_id='w1',title='定位标题'*10,goal='定位目标'*30)
+        with patch('daily_tasks.TASK_BYTES',limit):
+            options=windows(ts,directory(ts))
+            self.assertEqual(options,[dict(id='w1',start='u',end='u',bytes=limit,
+                scope='complete_session',user_turns=1,feedback_turns=1)])
+            tasks,_,selection=select_candidates(dict(candidates=[candidate]),options,ts)
+        self.assertGreater(size(tasks[0]),limit)
+        self.assertEqual(tasks[0]['records'],expected[0]['records'])
+        self.assertEqual(tasks[0]['title'],candidate['title'])
+        self.assertEqual(tasks[0]['goal'],candidate['goal'])
+        self.assertEqual(selection['rejected'],[])
+        # 原文真的超限时仍拒绝，不能靠将描述字段移出正文预算放过长材料。
+        with patch('daily_tasks.TASK_BYTES',500):
+            self.assertEqual(windows(ts,directory(ts)),[])
+            with self.assertRaisesRegex(ValueError,'完整主线超过'):
+                materialize(neutral,ts)
+
     def test_tool_directory_exposes_command_and_real_output_location_without_claiming_read(self):
         records={'c':dict(id='c',role='tool',task_id='task-1',text='Tool: exec\nCall ID: abc\nType: custom_tool_call\n\ntext(await tools.exec_command({cmd:"Get-Content old_script.py"}))'),
             'o':dict(id='o',role='tool',task_id='task-1',text='Call ID: abc\nType: custom_tool_call_output\n\nScript completed\nOutput:\n'+json.dumps(dict(output='def reuse_login():\n    return existing_session'))),
