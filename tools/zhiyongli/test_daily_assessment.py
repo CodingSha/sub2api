@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from daily_tasks import turns, directory, materialize, windows, workflow_rows, tool_directory
-from daily_assessment import check_assessment, evaluate, frozen_plan, select_candidates, plan_schema
+from daily_assessment import check_assessment, evaluate, frozen_plan, select_candidates, plan_schema, workflow_selected
 from daily_pilot import RUBRIC
 from runtime import digest
 
@@ -16,6 +16,15 @@ def row(key,role,text,**extra):
 
 
 class DailyAssessmentTests(unittest.TestCase):
+    def test_explicit_mcp_service_selection_matches_only_its_real_tool_namespace(self):
+        name='mcp__sdp_history_metrics__sdp_get_network_rate'
+        self.assertTrue(workflow_selected(name,'使用 sdp-history-metrics，查询业务用户今天10点到12点的网络速率。'))
+        self.assertTrue(workflow_selected(name,'使用 '+name+' 查询。'))
+        self.assertTrue(workflow_selected('push','请使用 push 提交。'))
+        for text in ('查询网络速率。','使用 sdp-history-metrics-extra。','使用 other-sdp-history-metrics。','使用 sdp-history。'):
+            self.assertFalse(workflow_selected(name,text))
+        self.assertFalse(workflow_selected('mcp__another_service__get_network_rate','使用 sdp-history-metrics。'))
+
     def test_window_budget_does_not_reject_complete_evidence_for_long_plan_labels(self):
         from daily_tasks import size
         groups=[dict(session='s',records=[row('u','user','完整委派与参考材料。'*120),

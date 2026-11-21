@@ -419,6 +419,41 @@ class DailyReasoningTests(unittest.TestCase):
             self.assertEqual(judgments['P2']['refs'],['ask'])
         self.assertEqual(stages,['quality-0'])
 
+    def test_responsibility_facts_are_audited_without_scores_and_cannot_be_fixed_by_field_filling(self):
+        text='参考这张截图。'
+        task=dict(records=[dict(id='u',role='user',text=text)])
+        behaviors={'b':dict(primary_item='P2',source_ref='u',claim='提供截图')}
+        negative=dict(known_at_time='用户发了截图。',person_control='用户可以提供说明。',
+            feasible_alternative='可以补充说明。',actual_gap='评审材料没有展示截图内容。')
+        judgment=dict(band='partial',refs=['b'],basis='你提供了截图。',next_band='尚不能证明具体适配。',negative=negative)
+        finding=dict(item='P2',kind='unsupported_responsibility',problem='评审没有图片内容，不证明用户有实际不足。',
+            claim_quote=negative['actual_gap'],source_ref='u',source_quote=text,behavior_ids=['b'])
+        for remains_invalid in (False,True):
+            with self.subTest(remains_invalid=remains_invalid),tempfile.TemporaryDirectory() as path:
+                stages=[];repairs=[]
+                def send(client,root,name,data,schema,instructions):
+                    stages.append(name)
+                    self.assertNotIn('"band":',json.dumps(data,ensure_ascii=False))
+                    if 'responsibility_claims' in data:
+                        self.assertEqual(data['responsibility_claims'],{'P2':negative})
+                        result=dict(issues=[finding])
+                    else:result=dict(issues=[])
+                    jsonschema.validate(result,schema)
+                    return result
+                def repair(issues):
+                    repairs.append(issues)
+                    return {'P2':dict(judgment) if remains_invalid else dict(judgment,band='reasonable',negative=None)}
+                args=(None,Path(path),[task],behaviors,{'P2':dict(judgment)},
+                    dict(items=dict(P2=dict(basis=judgment['basis'],next_band=judgment['next_band']))),[],send,repair)
+                if remains_invalid:
+                    with self.assertRaisesRegex(ValueError,'事实及归属检查未通过'):check_quality(*args)
+                    self.assertEqual(stages,['quality-responsibility-0','quality-responsibility-1'])
+                else:
+                    result,_=check_quality(*args)
+                    self.assertEqual(result['P2']['band'],'reasonable')
+                    self.assertEqual(stages,['quality-responsibility-0','quality-1'])
+                self.assertEqual(len(repairs),1)
+
     def test_fact_coverage_distinguishes_no_action_from_an_omitted_record(self):
         delivered={'u1':dict(role='user'),'u2':dict(role='user'),'a':dict(role='assistant')}
         actions=[fact('u1','提供本次报价来源')]

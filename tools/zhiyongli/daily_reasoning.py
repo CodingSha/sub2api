@@ -363,17 +363,26 @@ def check_quality(client,root,tasks,behaviors,judgments,prose,read_records,send,
         data=dict(tasks=tasks,behaviors=behaviors,scored_behaviors=scored_behaviors,read_records=read_records,
             reasonable_criteria={code:RUBRIC['performance_anchors'][code]['reasonable'] for code in judgments},
             next_criteria={code:cell.get('next_anchor') for code,cell in judgments.items()})
+        responsibility={code:cell['negative'] for code,cell in judgments.items() if cell.get('negative') is not None}
+        audit_stage='quality-'+str(attempt);audit_schema=schema;audit_instructions=AUDIT
+        if responsibility:
+            # 归责是事实门禁；只交付四项事实主张，不把当前分数交给事实审核员。
+            data['responsibility_claims']=responsibility
+            audit_stage='quality-responsibility-'+str(attempt)
+            audit_schema=compact(obj(dict(issues=dict(array(dict(anyOf=variants+[
+                obj(dict(fields,kind=enum('unsupported_responsibility')))])),maxItems=12))))
+            audit_instructions+='\nresponsibility_claims是低档所依赖的归责事实，必须逐项核对当时知情、本人可控、可行替代和实际不足是否都有原文正面支持。评审材料没有展示截图、没有补读工具或没有记录用户知情，不证明用户实际做错；不得仅为保留低档补齐四个字段。任一归责主张缺少原文支持时，返回unsupported_responsibility，claim_quote逐字引用该归责主张，source_ref/source_quote定位相关的实际委派或资料原文。此类问题属于事实门禁，不是wrong_anchor建议；不自行改分。'
         try:
-            audit=send(client,root,'quality-'+str(attempt),dict(data,presentation=prose),schema,AUDIT)
+            audit=send(client,root,audit_stage,dict(data,presentation=prose),audit_schema,audit_instructions)
         except jsonschema.ValidationError:
-            atomic(root/'quality.json',dict(quality_status='failed',reason='invalid_audit_response',audit_stage='quality-'+str(attempt),dismissed_findings=dismissed))
+            atomic(root/'quality.json',dict(quality_status='failed',reason='invalid_audit_response',audit_stage=audit_stage,dismissed_findings=dismissed))
             raise
         originals={}
         for row in [r for t in tasks for r in t['records']]+read_records:
             originals.setdefault(row['id'],[]).append(row)
         actionable=[]
         for index,issue in enumerate(audit['issues']):
-            location=dict(stage='quality-'+str(attempt),index=index,item=issue['item'])
+            location=dict(stage=audit_stage,index=index,item=issue['item'])
             if issue['kind']=='wrong_anchor':
                 dismissed.append(dict(location,reason='anchor_advisory'))
                 continue
@@ -398,7 +407,10 @@ def check_quality(client,root,tasks,behaviors,judgments,prose,read_records,send,
                     continue
                 dismissed.append(dict(location,reason='unlocatable_counterevidence'))
                 continue
-            if issue['kind']!='missing_evidence' and (not issue['claim_quote'] or not any(issue['claim_quote'] in line for line in prose['items'].get(issue['item'],{}).values())):
+            claims=list(prose['items'].get(issue['item'],{}).values())
+            if issue['kind']=='unsupported_responsibility':
+                claims=list(responsibility.get(issue['item'],{}).values())
+            if issue['kind']!='missing_evidence' and (not issue['claim_quote'] or not any(issue['claim_quote'] in line for line in claims)):
                 dismissed.append(dict(location,reason='unlocatable_claim'))
                 continue
             if issue['kind'] in {'borrowed_behavior','duplicate_behavior','wrong_item','missing_evidence'} and not any(
@@ -423,10 +435,10 @@ def check_quality(client,root,tasks,behaviors,judgments,prose,read_records,send,
                     continue
             actionable.append(issue)
         if not actionable:
-            atomic(root/'quality.json',dict(quality_status='model_checked',audit_stage='quality-'+str(attempt),
+            atomic(root/'quality.json',dict(quality_status='model_checked',audit_stage=audit_stage,
                 dismissed_findings=dismissed,limitation='同一固定模型核对来源、归属和评语事实；不等同于独立判档标定。'))
             return judgments,prose
-        if attempt==0 and all(i['kind'] in {'borrowed_behavior','wording','unsupported_action','wrong_actor'} for i in actionable):
+        if attempt==0 and all(i['kind'] in {'borrowed_behavior','wording','unsupported_action','wrong_actor','unsupported_responsibility'} for i in actionable):
             judgments.update(presentation_contract(repair(actionable))[0])
             prose=judgment_prose(judgments)
             continue

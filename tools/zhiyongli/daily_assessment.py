@@ -3,6 +3,7 @@ import argparse
 from dataclasses import replace
 from datetime import date, timedelta
 import json
+import re
 from pathlib import Path
 import time
 
@@ -57,6 +58,16 @@ def select_candidates(plan, options, all_turns):
     return tasks,records,dict(selected=accepted,rejected=rejected,main_bytes=size(tasks))
 
 
+def workflow_selected(name, text):
+    """保留真实工具名；明确点名MCP服务也能证明选择该服务内的调用。"""
+    if name in text:return True
+    parts=name.split('__')
+    if len(parts)==3 and parts[0]=='mcp' and parts[1] and parts[2]:
+        service=parts[1].replace('_','-')
+        return re.search(r'(?<![A-Za-z0-9_-])'+re.escape(service)+r'(?![A-Za-z0-9_-])',text) is not None
+    return False
+
+
 def check_assessment(value, delivered, tasks=()):
     """检查可确定的引文、身份、重复与档位合同，不冒充语义验收。"""
     if value['needs_records'] or value['items'] is None:
@@ -107,7 +118,7 @@ def check_assessment(value, delivered, tasks=()):
                 if usage['selection']=='用户明确选择':
                     if not usage['user_refs'] or any(ref not in people for ref in usage['user_refs']):
                         issues.append('用户选择缺少同任务原话：'+task['id'])
-                    elif not any(usage['name'] in people[ref] for ref in usage['user_refs']):
+                    elif not any(workflow_selected(usage['name'],people[ref]) for ref in usage['user_refs']):
                         issues.append('用户原话没有选择所述工作流：'+task['id'])
                 elif usage['user_refs']:
                     issues.append('AI自主调用不能挂本人选择依据：'+task['id'])
