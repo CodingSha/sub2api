@@ -349,10 +349,13 @@ def process(db,job,state,source,client,send,excluded_keys,max_requests=100,new_r
                     '来源或执行合同校验失败；已保留阶段与回执，不属于员工表现审核')
         else:update(db,job['id'],'needs_review','paused',message='来源、评审合同或判断校验未通过；已保留原始回执，需核对后继续')
     except Exception as ex:
+        import traceback
         from execution_recovery import transient_connection
         retryable=session_review and transient_connection(ex,last[0])
         atomic(root/'failure.json',dict(phase=last[0],error_type=type(ex).__name__,at=time.time(),
-            category='transient_connection' if retryable else 'unclassified',employee_review_required=False))
+            category='transient_connection' if retryable else 'unclassified',employee_review_required=False,
+            traceback=traceback.format_exc(),
+            **(dict(http_status=ex.code,response_body=ex.read(4096).decode('utf-8','replace')) if isinstance(ex,urllib.error.HTTPError) else {})))
         update(db,job['id'],'failed','paused',message='后台执行失败；已有阶段和回执已保留，可恢复校验')
 
 def tick(db,source,state,client,send,excluded_keys,max_requests=100,new_request_limit=1):

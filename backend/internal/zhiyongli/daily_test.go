@@ -156,6 +156,39 @@ func TestDailyToolDirectoryDoesNotRequireUnreadBodyOrImplyPersonalSelection(t *t
 	}
 }
 
+func TestDailyMCPServiceSelectionUsesTheActualToolNamespace(t *testing.T) {
+	name := "mcp__sdp_history_metrics__sdp_get_network_rate"
+	for _, tc := range []struct {
+		text  string
+		valid bool
+	}{
+		{"使用 sdp-history-metrics，查询今天10点到12点的网络速率。", true},
+		{"使用 " + name + " 查询。", true},
+		{"查询网络速率。", false},
+		{"使用 sdp-history-metrics-extra。", false},
+		{"使用 other-sdp-history-metrics。", false},
+	} {
+		t.Run(tc.text, func(t *testing.T) {
+			r := dailyFixture()
+			task := r.DailyReview.Conversations["task-1"]
+			task.Records[0].Text += tc.text
+			task.Records[0].SourceHash = bytesSHA([]byte(task.Records[0].Text))
+			for i := range r.Items {
+				for j := range r.Items[i].Evidence {
+					r.Items[i].Evidence[j].Context = task.Records[0].Text
+					r.Items[i].Evidence[j].SourceHash = task.Records[0].SourceHash
+				}
+			}
+			task.ToolIndex = []DailyToolIndex{{Name: name, RecordID: "tool-1", Chars: 5000}}
+			task.Workflow = []DailyWorkflow{{Name: name, Purpose: "查询指定时段速率", Selection: "用户明确选择", UserRefs: []string{"u"}, ToolRefs: []string{"tool-1"}}}
+			r.DailyReview.Conversations["task-1"] = task
+			if err := r.Validate(); (err == nil) != tc.valid {
+				t.Fatalf("服务选择校验不符: %v", err)
+			}
+		})
+	}
+}
+
 func TestDailyTrivialQueriesRemainUnscored(t *testing.T) {
 	r := dailyFixture()
 	r.ScoreStatus = "observation_only"

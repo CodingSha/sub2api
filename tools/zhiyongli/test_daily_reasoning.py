@@ -646,13 +646,13 @@ class DailyReasoningTests(unittest.TestCase):
                     else:
                         result=checked_judgment(client,root,'judge-P-0',data,schema,call)
                         self.assertEqual(result['items']['P2']['band'],'reasonable' if band==70 else None)
-                self.assertEqual(sent,['judge-P-0.receipt.json','judge-P-0-contract-repair.receipt.json'])
+                self.assertEqual(sent,['judge-P-0.receipt.json','judge-P-0-contract-repair-v2.receipt.json'])
                 self.assertNotEqual(payloads[0],payloads[1])
                 receipt=json.loads((root/'judge-P-0.receipt.json').read_text())
                 self.assertEqual(json.loads(receipt['response']['output'][0]['content'][0]['text']),original)
                 proof=json.loads((root/'judge-P-0.contract-repair.json').read_text())
                 self.assertEqual(proof['receipt_sha256'],digest(receipt))
-                self.assertFalse((root/'judge-P-0-contract-repair-contract-repair.receipt.json').exists())
+                self.assertFalse((root/'judge-P-0-contract-repair-v2-contract-repair-v2.receipt.json').exists())
 
     def test_unused_item_summary_keeps_scores_and_original_receipt(self):
         schema=judge_schema({'E3':dict(eligible_refs=['b1'])})

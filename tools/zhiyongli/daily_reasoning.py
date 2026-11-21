@@ -260,6 +260,8 @@ def judge_call(client, root, name, data, schema, send):
     client.daily_natural_json=True
     fields=dict(user_action='本人动作，完整短句',context_support='上下文的具体支持及限制',basis='面向用户的评语',
         refs=['本项eligible_refs中的行为ID'],context_refs=['已交付的上下文记录ID'],band='原档整数或null',negative=None,next_band='紧邻高档差距，100档和null为空字符串')
+    if 'judgment_contract_error' in data:
+        fields['negative']='非负档为null；负档必须是known_at_time、person_control、feasible_alternative、actual_gap四项原文事实对象'
     shape=dict(needs_records=[],search_queries=[],items={code:fields for code in data.get('items',{})})
     available_refs=list(dict.fromkeys([r['id'] for t in data.get('tasks',[]) for r in t['records']]+[r['id'] for r in data.get('read_records',[])]))
     data=dict(data,output_shape=shape,available_context_refs=available_refs)
@@ -280,12 +282,12 @@ def checked_judgment(client, root, name, data, schema, send):
         previous=json.loads(response_text(receipt['response']))
         # 只传失败位置与约束；不把巨大分支schema或原文重复塞进诊断。
         problem=dict(path=list(error.absolute_path),constraint=error.validator,
-            requirement='必须满足该位置的完整输出合同；低于70档需四项归责事实，材料未呈现不能当作实际不足。')
-        repair_name=name+'-contract-repair'
+            requirement='回到原文重新判断，禁止只补字段保留原档。低于70档必须有四项原文正面支持的归责事实；截图内容未进入评审材料、未见说明或无法判断都不是实际不足。不能证明四项归责时撤回负档；有可独立评价的有效行为才按原锚点给正常档，没有则band=null、refs=[]、negative=null、next_band=""。不默认给70档。')
+        repair_name=name+'-contract-repair-v2'
         atomic(root/(name+'.contract-repair.json'),dict(receipt_sha256=digest(receipt),
             problem=problem,repair_stage=repair_name))
         value=judge_call(client,root,repair_name,dict(data,previous_invalid_judgment=previous,
-            judgment_contract_error=problem),schema,send)
+            judgment_contract_error=problem,required_output_contract=schema),schema,send)
         return value
 
 

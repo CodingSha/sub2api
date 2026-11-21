@@ -3,12 +3,26 @@ package zhiyongli
 import (
 	"encoding/json"
 	"math/big"
+	"regexp"
 	"strings"
 	"time"
 )
 
 const DailyReviewVersion = "daily-task-review-20261120.2"
 const DailyAggregationVersion = "daily-observed-weighted-20261119.2"
+
+// explicitlySelectedWorkflow 保留真实工具名，并识别用户明确点名的所属 MCP 服务。
+func explicitlySelectedWorkflow(text, name string) bool {
+	if strings.Contains(text, name) {
+		return true
+	}
+	parts := strings.Split(name, "__")
+	if len(parts) != 3 || parts[0] != "mcp" || parts[1] == "" || parts[2] == "" {
+		return false
+	}
+	service := strings.ReplaceAll(parts[1], "_", "-")
+	return regexp.MustCompile(`(^|[^A-Za-z0-9_-])` + regexp.QuoteMeta(service) + `($|[^A-Za-z0-9_-])`).MatchString(text)
+}
 
 // DailyReview 保存实际交给模型的任务上下文；列表接口不返回正文。
 type DailyReview struct {
@@ -134,7 +148,7 @@ func (r *Result) validateDaily() error {
 			}
 			for _, ref := range usage.UserRefs {
 				rec, ok := records[ref]
-				if !ok || taskOf[ref] != key || rec.Role != "user" || !strings.Contains(rec.Text, usage.Name) {
+				if !ok || taskOf[ref] != key || rec.Role != "user" || !explicitlySelectedWorkflow(rec.Text, usage.Name) {
 					return invalid("本人工作流选择没有同任务原话")
 				}
 			}
