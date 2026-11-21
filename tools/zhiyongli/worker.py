@@ -119,6 +119,8 @@ def import_candidate(root,job,bundle,send):
         bundle_sha256=digest(bundle))
     if (receipt.exists() or checked.exists()) and not input_path.exists():raise ValueError('旧导入回执缺少事前任务及结果包绑定，须先核对，禁止补签完成')
     checkpoint(input_path,intent)
+    # 在第一次发送前保留完整包；恢复导入不再重新评审或汇总后来新增的纠正回执。
+    checkpoint(root/'import-bundle.json',bundle)
     prior=json.loads(receipt.read_text()) if receipt.exists() else None
     def validate(value):
         if (not isinstance(value,dict) or set(value)!={'id','digest','source_name','report_count','created_at'}
@@ -289,8 +291,15 @@ def process(db,job,state,source,client,send,excluded_keys,max_requests=100,new_r
             progress('evaluating',0,1,'按完整任务评估当日使用表现')
             # 与周评的分页阅读/逐句归项分开；同任务恢复仍使用原请求账簿。
             client.reasoning_effort=None;client.temperature=0;client.output_token_limit=8000
-            evaluate_daily(packet,str(job['period_start']),review_root,client)
-            bundle=daily_bundle(packet,str(job['period_start']),review_root,client.config.model)
+            frozen=root/'import-bundle.json'
+            if frozen.exists():
+                bundle=json.loads(frozen.read_text())
+                intent=json.loads((root/'import-input.json').read_text())
+                if digest(bundle)!=intent['bundle_sha256']:
+                    raise ValueError('冻结导入包与原意图不符，禁止重新生成或发送')
+            else:
+                evaluate_daily(packet,str(job['period_start']),review_root,client)
+                bundle=daily_bundle(packet,str(job['period_start']),review_root,client.config.model)
         elif job['period_type']=='week':
             if 'evaluation_dates' in scope:
                 from pipeline import selected_packet

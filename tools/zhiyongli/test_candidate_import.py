@@ -41,6 +41,16 @@ class CandidateImportTests(unittest.TestCase):
         self.assertEqual(run,self.run_import());self.assertEqual(2,self.send.calls)
         self.assertEqual(before,self.evidence())
 
+    def test_full_bundle_is_frozen_before_any_import_send(self):
+        def unavailable(job,bundle):
+            self.assertEqual(json.loads((self.root/'import-bundle.json').read_text()),bundle)
+            self.assertEqual(json.loads((self.root/'import-input.json').read_text())['bundle_sha256'],digest(bundle))
+            raise ConnectionResetError('发送后没有收到回执')
+        unavailable.base_url=self.send.base_url
+        with self.assertRaises(ConnectionResetError):import_candidate(self.root,self.job,self.bundle,unavailable)
+        self.assertEqual(json.loads((self.root/'import-bundle.json').read_text()),self.bundle)
+        self.assertFalse((self.root/'import.json').exists())
+
     def test_checked_files_cannot_claim_completion_after_server_rollback(self):
         self.run_import();before=self.evidence()
         # 产品库较旧、文件卷较新；重建同包的Run即使ID相同，创建时刻也不能被静默替换。

@@ -618,6 +618,30 @@ class DailyReasoningTests(unittest.TestCase):
                 self.assertEqual(len(sent),1)
                 self.assertEqual(json.loads((root/'judge.receipt.json').read_text()),receipt)
 
+    def test_unscored_candidate_refs_are_not_retained_as_scoring_evidence(self):
+        schema=judge_schema({'P2':dict(eligible_refs=['b1'])},['u1'])
+        for refs,negative,next_band,valid in ((['b1'],None,'',True),(['foreign'],None,'',False),
+                (['b1'],dict(actual_gap='不足'),'',False),(['b1'],None,'仍需改进',False)):
+            with self.subTest(refs=refs,negative=negative,next_band=next_band),tempfile.TemporaryDirectory() as path:
+                root=Path(path);sent=[]
+                cell=dict(user_action='提供了截图路径。',context_support='截图正文不可见。',band=None,
+                    basis='本次无法评价截图信息是否适配。',next_band=next_band,refs=refs,context_refs=['u1'],negative=negative)
+                value=dict(needs_records=[],items=dict(P2=cell))
+                receipt=dict(status='received',request_sha256='a'*64,response=dict(status='completed',output=[dict(content=[dict(type='output_text',text=json.dumps(value))])]))
+                def model(payload,target):
+                    sent.append(target);atomic(target,receipt);return receipt
+                client=SimpleNamespace(config=SimpleNamespace(model='test'),_call=model)
+                data=dict(items={'P2':dict(eligible_refs=['b1'])})
+                if valid:
+                    result=judge_call(client,root,'judge',data,schema,call)
+                    self.assertIsNone(result['items']['P2']['band'])
+                    self.assertEqual(result['items']['P2']['refs'],[])
+                    self.assertEqual(result['items']['P2']['basis'],cell['basis'])
+                else:
+                    with self.assertRaises(jsonschema.ValidationError):judge_call(client,root,'judge',data,schema,call)
+                self.assertEqual(len(sent),1)
+                self.assertEqual(json.loads((root/'judge.receipt.json').read_text()),receipt)
+
     def test_invalid_received_judgment_has_one_separate_repair_and_reuses_both_receipts(self):
         from runtime import CompanyClient,digest
         schema=judge_schema({'P2':dict(eligible_refs=['b1'])},['u1'])

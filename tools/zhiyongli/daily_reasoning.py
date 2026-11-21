@@ -314,6 +314,13 @@ def _judge_call(client, root, name, data, schema, send):
                 cell.pop('summary');changed.append([code,'summary','unused'])
             if 'negative' not in cell and (cell.get('band') is None or type(cell.get('band')) is int and cell['band'] in (70,80,90,100)):
                 cell['negative']=None;changed.append([code,'negative','not_applicable'])
+            # 模型已明确撤回计分时，合法候选编号不再是计分引用；不改变档位或事实评语。
+            ids=cell.get('refs')
+            eligible=data.get('items',{}).get(code,{}).get('eligible_refs',[])
+            if (cell.get('band','missing') is None and cell.get('negative') is None
+                    and cell.get('next_band')=='' and isinstance(ids,list) and ids
+                    and all(isinstance(ref,str) and ref in eligible for ref in ids)):
+                cell['refs']=[];changed.append([code,'refs','unscored_not_applicable'])
             for key in ('refs','context_refs'):
                 ids=cell.get(key)
                 if isinstance(ids,list) and all(isinstance(x,str) for x in ids):
