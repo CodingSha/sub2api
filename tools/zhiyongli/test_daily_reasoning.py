@@ -26,6 +26,27 @@ def fact(record_id, action):
 
 
 class DailyReasoningTests(unittest.TestCase):
+    def test_received_coverage_repair_remains_reusable_after_diagnostic_upgrade(self):
+        from daily_pilot import request_payload
+        from runtime import CompanyClient, digest
+        delivered={ref:dict(id=ref,role='user',text=ref) for ref in ('u1','u2')}
+        facts=dict(actions=[fact('u1','安排核对')],no_action_refs=[])
+        original_error="事实阅读覆盖不一致：缺失=['u2']，动作与无动作冲突=[]，无动作列表不得重复"
+        data=dict(tasks=[],previous=facts,coverage_error=original_error)
+        schema=dict(type='object',properties=dict(ok=dict(type='boolean')),required=['ok'],additionalProperties=False)
+        client=SimpleNamespace(config=SimpleNamespace(model='test',responses_url='https://example.test/v1/responses'))
+        client._call=lambda payload,target:CompanyClient._call(client,payload,target)
+        saved=dict(status='received',request_sha256=digest(dict(endpoint=client.config.responses_url,
+            payload=request_payload(client,data,schema,'覆盖修复'))),
+            response=dict(status='completed',output=[dict(content=[dict(type='output_text',text='{"ok":true}')])]))
+        with tempfile.TemporaryDirectory() as path:
+            root=Path(path); target=root/'facts-coverage-repair.receipt.json'; atomic(target,saved)
+            with self.assertRaises(ValueError) as error:
+                check_fact_coverage(facts,delivered)
+            result=call(client,root,'facts-coverage-repair',dict(data,coverage_error=str(error.exception)),schema,'覆盖修复')
+            self.assertEqual(result,dict(ok=True))
+            self.assertEqual(json.loads(target.read_text()),saved)
+
     def test_autonomous_workflow_drops_only_inapplicable_user_selection_refs(self):
         uses=[dict(name='skill',selection=selection,user_refs=['u'],tool_ref='tool')
             for selection in ('AI自主调用','用户明确选择')]

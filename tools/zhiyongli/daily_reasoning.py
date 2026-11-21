@@ -97,8 +97,11 @@ def check_fact_coverage(facts, delivered):
     coverage=fact_coverage(facts,delivered)
     if (coverage['missing'] or coverage['conflicts'] or coverage['duplicate_no_action']
             or coverage['unexpected']):
-        raise ValueError('事实阅读覆盖不一致：缺失={missing}，动作与无动作冲突={conflicts}，'
-            '无动作列表不得重复，越界={unexpected}'.format(**coverage))
+        # 无越界时沿用原诊断，避免仅因空诊断字段变化而使已收到的修复回执签名漂移。
+        message='事实阅读覆盖不一致：缺失={missing}，动作与无动作冲突={conflicts}，无动作列表不得重复'.format(**coverage)
+        if coverage['unexpected']:
+            message+='，越界={unexpected}'.format(**coverage)
+        raise ValueError(message)
     return coverage
 
 
