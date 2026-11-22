@@ -358,6 +358,8 @@ def _judge_call(client, root, name, data, schema, send):
         if not path.exists() and getattr(client,'reuse_root',None):path=Path(client.reuse_root)/path.name
         receipt=read_receipt(path)
         value=json.loads(response_text(receipt['response']))
+        if not isinstance(value,dict) or not isinstance(value.get('items') or {},dict):
+            jsonschema.validate(value,schema)
         changed=[]
         # 该字段是已知的非计分冗余，不改变任何分项事实、依据或分数；保留原回执。
         if isinstance(value.get('summary'),str):
@@ -365,6 +367,8 @@ def _judge_call(client, root, name, data, schema, send):
         if value.get('context_refs')==[]:
             value.pop('context_refs');changed.append(['context_refs','unused-root-field'])
         for code,cell in (value.get('items') or {}).items():
+            if not isinstance(cell,dict):
+                continue
             if isinstance(cell.get('summary'),str):
                 cell.pop('summary');changed.append([code,'summary','unused'])
             if 'negative' not in cell and (cell.get('band') is None or type(cell.get('band')) is int and cell['band'] in (70,80,90,100)):
@@ -509,6 +513,28 @@ def check_quality(client,root,tasks,behaviors,judgments,prose,read_records,send,
             judgments.update(presentation_contract(repair(actionable))[0])
             prose=judgment_prose(judgments)
             continue
+        if attempt==1 and all(i['kind']=='wrong_actor' for i in actionable) and getattr(client,'dimension_coverage',False):
+            # 最终主体争议须核对已计行为的本人正证；AI执行同一安排不证明用户没有提出安排。
+            decision=obj(dict(upheld=dict(type='boolean'),user_ref=string(96),user_quote=string(1000),reason=string(400,True)))
+            decisions_schema=obj(dict(decisions=obj({str(i):decision for i in range(len(actionable))})))
+            decisions=send(client,root,'quality-actor-dispute',dict(data,presentation=prose,disputed_findings=actionable),decisions_schema,
+                '只裁定这些主体归属指控是否有原文支持，不评分、不改评语。区分本人提出安排、AI实际执行与本人已验收。'
+                'AI执行某流程不反证本人曾要求或采纳该流程。若指控成立，upheld=true，user_ref/user_quote为空；'
+                '若指控误把本人真实要求当作AI专属行为，upheld=false，并引用当前计分行为对应的实际本人原句，'
+                '说明原句如何直接支持被指控的具体主张；嵌套材料内他人的话不算本人正证。没有确凿本人正证则保留指控。')
+            jsonschema.validate(decisions,decisions_schema);remaining=[]
+            for index,issue in enumerate(actionable):
+                cell=decisions['decisions'][str(index)];ref=cell['user_ref'];quote=cell['user_quote']
+                permitted={behaviors[key]['source_ref'] for key in scored_behaviors.get(issue['item'],[])}
+                valid=ref in permitted and quote and any(row['role']=='user' and quote in row['text'] for row in originals.get(ref,[]))
+                if cell['upheld'] or not valid:remaining.append(issue)
+                else:dismissed.append(dict(stage='quality-actor-dispute',index=index,item=issue['item'],reason='supported_user_action',decision=cell))
+            atomic(root/'quality-actor-dispute.json',dict(decisions=decisions,remaining=remaining))
+            actionable=remaining
+            if not actionable:
+                atomic(root/'quality.json',dict(quality_status='model_checked',audit_stage='quality-actor-dispute',dismissed_findings=dismissed,
+                    limitation='同一固定模型核对主体争议及本人原文正证，不等同于独立判档标定。'))
+                return judgments,prose
         atomic(root/'quality.json',dict(quality_status='failed',issues=actionable,dismissed_findings=dismissed))
         raise ValueError('日评事实及归属检查未通过，禁止导出人员评分；不转员工待复核')
 

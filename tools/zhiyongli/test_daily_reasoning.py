@@ -485,6 +485,27 @@ class DailyReasoningTests(unittest.TestCase):
                     self.assertEqual(stages,['quality-responsibility-0','quality-1'])
                 self.assertEqual(len(repairs),1)
 
+    def test_actor_dispute_requires_scored_users_exact_positive_evidence(self):
+        task=dict(records=[dict(id='u',role='user',text='全自动跑，做最新的数据分析。'),dict(id='a',role='assistant',text='开始全自动跑。')])
+        behaviors={'b':dict(primary_item='P1',source_ref='u',claim='要求自动分析最新数据')}
+        cell=dict(band='reasonable',refs=['b'],basis='你要求做最新的数据分析。',next_band='现有依据不支持更高档。')
+        issue=dict(item='P1',kind='wrong_actor',problem='自动执行由AI提出。',claim_quote='要求做最新的数据分析',
+            source_ref='a',source_quote='开始全自动跑。',behavior_ids=['b'])
+        for upheld,quote,accepted in [(False,task['records'][0]['text'],True),(True,'',False),(False,'原文不存在',False)]:
+            with self.subTest(upheld=upheld,quote=quote),tempfile.TemporaryDirectory() as path:
+                stages=[]
+                def send(client,root,stage,data,schema,instructions):
+                    stages.append(stage)
+                    value=dict(decisions={'0':dict(upheld=upheld,user_ref='u' if quote else '',user_quote=quote,reason='核对本人安排与AI执行。')}) if stage=='quality-actor-dispute' else dict(issues=[issue])
+                    jsonschema.validate(value,schema);return value
+                def run():return check_quality(SimpleNamespace(dimension_coverage=True),Path(path),[task],behaviors,{'P1':cell},
+                    dict(items={'P1':dict(basis=cell['basis'],next_band=cell['next_band'])}),[],send,lambda _: {'P1':cell})
+                if accepted:
+                    actual,_=run();self.assertEqual(actual['P1']['band'],cell['band'])
+                else:
+                    with self.assertRaisesRegex(ValueError,'事实及归属检查未通过'):run()
+                self.assertEqual(stages,['quality-0','quality-1','quality-actor-dispute'])
+
     def test_fact_coverage_distinguishes_no_action_from_an_omitted_record(self):
         delivered={'u1':dict(role='user'),'u2':dict(role='user'),'a':dict(role='assistant')}
         actions=[fact('u1','提供本次报价来源')]
@@ -672,6 +693,22 @@ class DailyReasoningTests(unittest.TestCase):
                     with self.assertRaises(jsonschema.ValidationError):judge_call(client,root,'judge',data,schema,call)
                 self.assertEqual(len(sent),1)
                 self.assertEqual(json.loads((root/'judge.receipt.json').read_text()),receipt)
+
+    def test_string_item_reaches_contract_repair_without_attribute_error(self):
+        from runtime import digest
+        with tempfile.TemporaryDirectory() as path:
+            root=Path(path);sent=[];schema=judge_schema({'P1':dict(eligible_refs=['b'])},['u'])
+            fixed=dict(user_action='要求分析',context_support='有明确对象',basis='明确了分析目标',refs=['b'],context_refs=['u'],band=70,negative=None,next_band='未见更高档依据')
+            client=SimpleNamespace(config=SimpleNamespace(model='test',responses_url='https://example.test/v1/responses'))
+            def model(payload,target):
+                sent.append(target.name);value=dict(needs_records=[],items={'P1':'格式错误'}) if len(sent)==1 else dict(needs_records=[],items={'P1':fixed})
+                receipt=dict(status='received',request_sha256=digest(dict(endpoint=client.config.responses_url,payload=payload)),
+                    response=dict(status='completed',output=[dict(content=[dict(type='output_text',text=json.dumps(value))])]))
+                atomic(target,receipt);return receipt
+            client._call=model
+            value=checked_judgment(client,root,'judge-P-0',dict(tasks=[dict(records=[dict(id='u',role='user',text='分析当前数据')])],items={'P1':dict(eligible_refs=['b'])}),schema,call)
+            self.assertEqual(value['items']['P1']['band'],'reasonable')
+            self.assertEqual(sent,['judge-P-0.receipt.json','judge-P-0-contract-repair-v2.receipt.json'])
 
     def test_invalid_received_judgment_has_one_separate_repair_and_reuses_both_receipts(self):
         from runtime import CompanyClient,digest
