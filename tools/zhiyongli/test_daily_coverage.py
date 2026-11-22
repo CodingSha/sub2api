@@ -44,6 +44,59 @@ class CoverageTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'覆盖不一致'):read_facts(None,Path(tmp),[task],{'u':row},send)
         self.assertEqual(len(calls),2)
 
+    def test_quote_repair_copies_escaped_source_without_regenerating_actions(self):
+        row=dict(id='u',role='user',text=r'请核对 https:\/\/example.test/a 路径。')
+        task=dict(id='t',records=[row],workflow_index=[]);stages=[]
+        def send(client,root,stage,data,schema,instructions):
+            stages.append(stage)
+            if stage.endswith('-quote-repair'):
+                self.assertEqual(data['source_messages'],{'u':row['text']})
+                self.assertEqual(set(data['problems']),{'0'})
+                return dict(quotes={'0':row['text']})
+            return dict(task_summaries={'t':dict(title='任务',goal='核对路径',outcome='',workflow=[])},
+                actions=[dict(record_id='u',action='核对路径',quote='请核对 https://example.test/a 路径。',result_decision_quote='',selected_asset=[])],no_action_refs=[])
+        with TemporaryDirectory() as tmp:
+            result=read_facts(None,Path(tmp),[task],{'u':row},send)
+            self.assertEqual(result['actions'][0]['quote'],row['text'])
+            self.assertEqual(result['actions'][0]['action'],'核对路径')
+        self.assertEqual(len(stages),3)
+
+    def test_received_output_limit_splits_but_unknown_never_resends(self):
+        from model_config import ModelError
+        rows=[dict(id='u'+str(i),role='user',text='要求'+str(i)) for i in range(2)]
+        task=dict(id='t',records=rows,workflow_index=[])
+        for status in ['received','unknown']:
+            calls=[]
+            def send(client,root,stage,data,schema,instructions):
+                calls.append(stage)
+                if len(data['focus_user_refs'])==2:
+                    (root/(stage+'.receipt.json')).write_text(json.dumps(dict(status=status,response=dict(status='incomplete',incomplete_details=dict(reason='max_output_tokens')))))
+                    raise ModelError('response_not_completed')
+                ref=data['focus_user_refs'][0]
+                return dict(task_summaries={'t':dict(title='任务',goal='处理要求',outcome='',workflow=[])},
+                    actions=[dict(record_id=ref,action='提出要求',quote=next(r['text'] for r in rows if r['id']==ref),result_decision_quote='',selected_asset=[])],no_action_refs=[])
+            with TemporaryDirectory() as tmp:
+                if status=='unknown':
+                    with self.assertRaises(ModelError):read_facts(None,Path(tmp),[task],{r['id']:r for r in rows},send)
+                    self.assertEqual(len(calls),1)
+                else:
+                    result=read_facts(None,Path(tmp),[task],{r['id']:r for r in rows},send)
+                    self.assertEqual(len(result['actions']),2);self.assertEqual(len(calls),3)
+
+    def test_single_record_output_limit_uses_one_explicit_capacity_retry(self):
+        from model_config import ModelError
+        row=dict(id='u',role='user',text='明确要求');task=dict(id='t',records=[row],workflow_index=[])
+        client=SimpleNamespace(output_token_limit=7000);limits=[]
+        def send(client,root,stage,data,schema,instructions):
+            limits.append(client.output_token_limit)
+            if not stage.endswith('-output-capacity'):
+                (root/(stage+'.receipt.json')).write_text(json.dumps(dict(status='received',response=dict(status='incomplete',incomplete_details=dict(reason='max_output_tokens')))))
+                raise ModelError('response_not_completed')
+            return dict(task_summaries={'t':dict(title='任务',goal='处理要求',outcome='',workflow=[])},
+                actions=[dict(record_id='u',action='提出要求',quote=row['text'],result_decision_quote='',selected_asset=[])],no_action_refs=[])
+        with TemporaryDirectory() as tmp:read_facts(client,Path(tmp),[task],{'u':row},send)
+        self.assertEqual(limits,[7000,12000]);self.assertEqual(client.output_token_limit,7000)
+
     def test_specific_adoption_is_selection_but_continue_or_autonomy_is_not(self):
         rows=[dict(id='a',role='assistant',text='我将使用 push 工作流提交已核改动。'),dict(id='u',role='user',text='按这个方案执行。')]
         self.assertTrue(workflow_selected_in_task('push',['u'],rows))
