@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ReviewJobs from './ReviewJobs.vue'
+import Pagination from '@/components/common/Pagination.vue'
 import { createI18n } from 'vue-i18n'
 
 const api=vi.hoisted(()=>({listJobs:vi.fn(),startJobs:vi.fn(),startLastWeekJobs:vi.fn(),resumeJob:vi.fn(),listUsers:vi.fn(),showError:vi.fn(),showSuccess:vi.fn()}))
@@ -10,11 +11,23 @@ vi.mock('@/stores/app',()=>({useAppStore:()=>({showError:api.showError,showSucce
 const empty={items:[],total:0,page:1,page_size:20,pages:0}
 const mountView=(open=false)=>mount(ReviewJobs,{props:{startOpen:open},global:{plugins:[createI18n({legacy:false,locale:'zh',messages:{zh:{}}})],stubs:{
   BaseDialog:{props:['show'],template:'<div v-if="show"><slot/><slot name="footer"/></div>'},
-  Select:{props:['modelValue','options'],template:'<select :value="modelValue" @change="$emit(\'update:modelValue\',$event.target.value)"><option value="week">周评分</option><option value="month">月评分</option></select>'}
+  Select:{props:['modelValue','options'],template:'<select :value="modelValue" @change="$emit(\'update:modelValue\',$event.target.value);$emit(\'change\')"><option v-for="option in options" :value="option.value">{{ option.label }}</option></select>'}
 }}})
 beforeEach(()=>{vi.useFakeTimers();vi.clearAllMocks();api.listJobs.mockResolvedValue(empty);api.listUsers.mockResolvedValue({...empty,items:[{id:63,email:'person@example.test'}],total:1})})
 afterEach(()=>{vi.useRealTimers()})
 describe('管理员评审入口',()=>{
+  it('顶部可直接跳页，排序变更从第一页对完整结果重新查询',async()=>{
+    api.listJobs.mockResolvedValue({...empty,total:65,pages:4})
+    const wrapper=mountView();await flushPromises()
+    const pages=wrapper.findAllComponents(Pagination)
+    expect(pages).toHaveLength(2)
+    pages[0].vm.$emit('update:page',3);await flushPromises()
+    expect(api.listJobs).toHaveBeenLastCalledWith(3,{state:'',search:'',sort:''})
+    await wrapper.get('select[aria-label="评审排序"]').setValue('period_asc');await flushPromises()
+    expect(api.listJobs).toHaveBeenLastCalledWith(1,{state:'',search:'',sort:'period_asc'})
+    expect(pages[0].props('page')).toBe(1)
+    wrapper.unmount()
+  })
   it('周评分一键登记全员上周，不选人不选日期；失败如实显示',async()=>{
     api.startLastWeekJobs.mockRejectedValueOnce(new Error('工作日期间来源尚未封口'))
     const wrapper=mountView(true);await flushPromises()

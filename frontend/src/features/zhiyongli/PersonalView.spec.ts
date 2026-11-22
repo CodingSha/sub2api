@@ -17,7 +17,7 @@ describe('首次上线的个人空状态', () => {
     vi.mocked(listReports).mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 0 })
     const page = mountPage()
     await flushPromises()
-    expect(page.text()).toContain('暂无已发布的每日评分')
+    expect(page.text()).toContain('暂无已发布的每日分析')
     expect(page.find('report-body-stub').exists()).toBe(false)
     expect(page.text()).not.toContain('数据采集中')
     page.unmount()

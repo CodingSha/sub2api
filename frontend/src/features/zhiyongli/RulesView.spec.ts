@@ -60,11 +60,12 @@ describe('版本化评分规则', () => {
     wrapper.unmount()
   })
 
-  it('日评阅读与下载包含归一规则，切回周评保持原规则', async () => {
+  it('日评阅读与下载说明仅展示维度分及综合周评，历史规则保留', async () => {
     route.query = { version: '1.6', period_type: 'day' }
     const wrapper = page()
-    expect(wrapper.text()).toContain('每日评分的总分计算')
-    expect(wrapper.text()).toContain('82.4')
+    expect(wrapper.text()).toContain('每日评审与周评分')
+    expect(wrapper.text()).toContain('不展示日总分')
+    expect(wrapper.text()).toContain('不平均或继承日分')
     expect(wrapper.get('a[download]').attributes('download')).toBe('智用力每日评分规则-v1.6.md')
     const content = await new Promise<string>(resolve => {
       const reader = new FileReader()
@@ -74,7 +75,7 @@ describe('版本化评分规则', () => {
     expect(content).toBe(rules16 + '\n\n' + dailyRules)
     route.query = { version: '1.6', period_type: 'week' }
     await flushPromises()
-    expect(wrapper.text()).not.toContain('每日评分的总分计算')
+    expect(wrapper.text()).not.toContain('每日评审与周评分')
     wrapper.unmount()
   })
 })

@@ -1,7 +1,8 @@
 <template>
   <AppLayout>
     <div class="space-y-6">
-      <header class="flex flex-wrap items-center justify-end gap-4">
+      <header class="flex flex-wrap items-center justify-between gap-4">
+        <p class="text-sm text-gray-500 dark:text-gray-400">每日查看维度分析，每周形成综合评分。</p>
         <div class="flex items-center gap-3">
           <Select v-model="periodType" :options="periodOptions" class="w-28" aria-label="评分周期类型" @change="resetPeriod" />
           <Select v-if="reports.length" v-model="selectedId" :options="reportOptions" class="w-72" :aria-label="periodType === 'day' ? '选择评分日期' : '选择评分周期'" @change="loadReport" />
@@ -11,7 +12,7 @@
       <LoadingSpinner v-if="loading" class="mx-auto my-12" />
       <div v-else-if="error" class="py-10 text-center"><p class="text-sm text-red-600">{{ error }}</p><button class="btn btn-secondary mt-4" @click="resetPeriod">重试</button></div>
       <ReportBody v-else-if="report" :key="report.id" :report="report" />
-      <EmptyState v-else :title="periodType === 'day' ? '暂无已发布的每日评分' : periodType === 'week' ? '暂无已发布的周评分' : '暂无已发布的月评级'" />
+      <EmptyState v-else :title="periodType === 'day' ? '暂无已发布的每日分析' : periodType === 'week' ? '暂无已发布的周评分' : '暂无已发布的月评级'" />
       <div v-if="total > reports.length" class="flex justify-center"><button class="btn btn-secondary" :disabled="loading" @click="loadMore">更早周期</button></div>
     </div>
   </AppLayout>
@@ -24,7 +25,7 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import ReportBody from './ReportBody.vue'
 import { listReports, getReport, periodLabel, type Report } from './api'
-const periodOptions = [{value:'day',label:'每日评分'},{value:'week',label:'周评分'},{value:'month',label:'月评级'}]
+const periodOptions = [{value:'day',label:'每日分析'},{value:'week',label:'周评分'},{value:'month',label:'月评级'}]
 const periodType = ref('day'), selectedId = ref<number | null>(null), reports = ref<Report[]>([]), report = ref<Report | null>(null)
 const loading = ref(false), error = ref(''), total = ref(0), page = ref(1)
 let request = 0

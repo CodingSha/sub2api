@@ -22,13 +22,16 @@ const report: Report = {
 }
 
 describe('按维度阅读真实评分和案例', () => {
-  it('部分维度的日总分说明归一权重，缺失维度仍显示横线', async () => {
-    const wrapper = mount(AssessmentReader, { global: { stubs: { teleport: true } }, props: { report: { ...report, period_type: 'day' }, periodLabel: '2026-11-18' } })
-    await wrapper.get('[aria-label="查看日总分计算方式"]').trigger('focusin')
-    expect(wrapper.get('[role="tooltip"]').text()).toContain('日总分按已观察维度的原权重归一计算，未观察维度不补分。')
+  it('日评保留维度真实分与缺失状态，周评继续展示综合分', async () => {
+    const wrapper = mount(AssessmentReader, { props: { report: { ...report, period_type: 'day' }, periodLabel: '2026-11-18' } })
+    expect(wrapper.find('.total-score').exists()).toBe(false)
+    expect(wrapper.get('svg[role="img"]').attributes('aria-label')).toContain('任务驾驭度未评分')
+    expect(wrapper.findAll('.radar-point')).toHaveLength(1)
+    expect(wrapper.text()).not.toContain(report.score!)
+    expect(wrapper.text()).toContain('2026-11-18')
     expect(wrapper.findAll('.dimension-score strong').map(s => s.text())).toEqual(['80.0', '—'])
     await wrapper.setProps({ report })
-    expect(wrapper.find('[aria-label="查看日总分计算方式"]').exists()).toBe(false)
+    expect(wrapper.get('.total-score strong').text()).toBe(report.score)
     wrapper.unmount()
   })
 

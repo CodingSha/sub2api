@@ -200,13 +200,17 @@ func filterSQL(f Filter) (string, []any) {
 	return where, args
 }
 func (s *Store) List(ctx context.Context, f Filter) ([]Report, int64, error) {
+	order, err := reportOrder(f)
+	if err != nil {
+		return nil, 0, err
+	}
 	where, args := filterSQL(f)
 	var total int64
 	if e := s.db.QueryRowContext(ctx, "SELECT count(*) FROM zhiyongli_reports r"+where, args...).Scan(&total); e != nil {
 		return nil, 0, e
 	}
 	args = append(args, f.PageSize, (f.Page-1)*f.PageSize)
-	query := "SELECT " + reportColumns + " FROM zhiyongli_reports r" + where + fmt.Sprintf(" ORDER BY r.period_start DESC,r.id DESC LIMIT $%d OFFSET $%d", len(args)-1, len(args))
+	query := "SELECT " + reportColumns + " FROM zhiyongli_reports r" + where + " ORDER BY " + order + fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)-1, len(args))
 	rows, e := s.db.QueryContext(ctx, query, args...)
 	if e != nil {
 		return nil, 0, e

@@ -13,13 +13,13 @@
           <h2 class="score-title text-gray-900 dark:text-gray-100">智用力评分</h2>
           <span class="badge badge-gray">{{ periodLabel ?? (report.period_type === 'day' ? '日评' : report.period_type === 'week' ? '周评' : '月评') }}</span>
         </div>
-        <div class="my-3 flex flex-wrap gap-2" :class="displayedScore === null ? 'items-center' : 'items-baseline'">
+        <div v-if="report.period_type !== 'day' || report.score_status !== 'scored'" class="my-3 flex flex-wrap gap-2" :class="displayedScore === null ? 'items-center' : 'items-baseline'">
           <ScoreReveal v-if="displayedScore !== null" :key="`${report.id}:${report.revision}`" class="score-number text-gray-900 dark:text-gray-100" :score="displayedScore" :exact="displayedExact" :animate="revealScore === true" :identity="`${report.user_id}:${report.id}:${report.revision}`" />
-          <span v-else class="text-sm text-gray-600 dark:text-gray-300">{{ scoreStatusLabel(report) }}</span>
+          <span v-else class="text-sm text-gray-600 dark:text-gray-300">{{ report.period_type === 'day' && report.score_status === 'observation_only' ? '仅作维度观察' : scoreStatusLabel(report) }}</span>
           <span v-if="displayedScore !== null" class="text-sm text-gray-400">/ 100</span>
           <span v-if="report.rating" class="badge badge-success">{{ report.rating }}</span>
           <span v-else-if="report.period_type === 'month' && displayedScore !== null" class="text-sm text-amber-700 dark:text-amber-400">评级待定</span>
-          <HelpTooltip v-if="report.score_explanation || report.score_reason || hasDimensionObservations" class="self-center" width-class="w-80">
+          <HelpTooltip v-if="report.period_type !== 'day' && (report.score_explanation || report.score_reason || hasDimensionObservations)" class="self-center" width-class="w-80">
             <template #trigger="{ open, tooltipId }">
               <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded hover:bg-gray-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500" :class="scoreNeedsAttention(report) ? 'text-orange-600 dark:text-orange-400' : 'text-gray-500 dark:text-gray-400'" aria-label="查看评分说明" :aria-describedby="open ? tooltipId : undefined">
                 <Icon :name="scoreNeedsAttention(report) ? 'exclamationTriangle' : 'infoCircle'" size="sm" aria-hidden="true" />
@@ -40,22 +40,7 @@
         </div>
         <p v-if="report.published_at" class="mt-5 text-xs text-gray-500 dark:text-gray-400">发布于 {{ formatTime(report.published_at) }}</p>
       </div>
-      <div v-if="report.dimensions.length" class="radar-surface">
-        <svg :key="report.id" viewBox="0 0 560 360" role="img" :aria-label="radarDescription" class="h-full w-full">
-          <polygon v-for="tick in radarTicks" :key="tick" :points="diamond(tick)" class="radar-grid" :class="{'radar-grid-outer': tick === 100}" />
-          <path d="M280 50V310 M150 180H410" class="radar-axis" />
-          <text v-for="tick in radarTicks" :key="`t${tick}`" x="288" :y="180-scoreRadius(tick)+4" class="radar-tick text-gray-500 dark:text-gray-400">{{ tick }}</text>
-          <g v-if="points" class="text-primary-600 dark:text-primary-400">
-            <polygon :points="points" fill="currentColor" fill-opacity="0.09" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
-          </g>
-          <g v-for="(d,i) in chartDimensions" :key="d.code">
-            <circle v-if="d.score !== null" :cx="point(i, Number(d.score)).x" :cy="point(i, Number(d.score)).y" r="3.5" class="radar-point text-primary-600 dark:text-primary-400" />
-            <text :x="labels[i].x" :y="labels[i].y" text-anchor="middle" class="radar-label text-gray-600 dark:text-gray-400">{{ d.name }}</text>
-            <text :x="labels[i].x" :y="labels[i].y+23" text-anchor="middle" class="radar-value text-gray-900 dark:text-gray-100">{{ d.score === null ? '—' : d.score }}</text>
-          </g>
-          <text x="544" y="344" text-anchor="end" class="radar-tick text-gray-500 dark:text-gray-400">非等距刻度</text>
-        </svg>
-      </div>
+      <CapabilityRadar v-if="report.dimensions.length" :dimensions="report.dimensions" />
     </div>
     <slot name="summary" />
     <section v-if="report.items?.length" class="pt-8" aria-label="分项评分与标准">
@@ -162,6 +147,7 @@
 </template>
 
 <script setup lang="ts">
+import CapabilityRadar from './CapabilityRadar.vue'
 import AssessmentReader from './AssessmentReader.vue'
 import { computed, ref, useId, watch } from 'vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
@@ -179,8 +165,8 @@ const hasTaskReview = computed(() => {
   const value = props.report.task_review
   return props.report.period_type === 'week' && !!value && (value.version === 'task-evidence-20261106.1' && ['case_checked', 'week_checked', 'generated'].includes(value.status) || value.version === 'source-evidence-20261116.1' && value.status === 'source_linked')
 })
-const displayedScore = computed(() => props.report.score)
-const displayedExact = computed(() => props.report.exact)
+const displayedScore = computed(() => props.report.period_type === 'day' ? null : props.report.score)
+const displayedExact = computed(() => props.report.period_type === 'day' ? null : props.report.exact)
 const hasDimensionObservations = computed(() => props.report.score === null && props.report.dimensions.some(d => d.score !== null))
 const expandedEvidence = ref(new Set<string>())
 const displayText = computed(() => reportText(props.report))
@@ -224,14 +210,6 @@ const efficiencySensitivity = computed(() => {
   return count && props.report.score !== null ? (1.5 / count).toFixed(2).replace(/0$/, '') : null
 })
 const chartDimensions = computed(() => ['P','M','J','E'].map(code => props.report.dimensions.find(d => d.code === code)!).filter(Boolean))
-const labels = [{x:280,y:20},{x:475,y:173},{x:280,y:337},{x:85,y:173}]
-const radarTicks = [20,40,60,80,90,100]
-// 统一展开高分区间，刻度与数据共用映射；90至100留出35个坐标单位。
-const scoreRadius = (value: number) => value <= 60 ? value * 0.75 : value <= 80 ? 45 + (value - 60) * 1.25 : value <= 90 ? 70 + (value - 80) * 2.5 : 95 + (value - 90) * 3.5
-const point = (index: number, value: number) => ({ x: 280 + [0,1,0,-1][index]*scoreRadius(value), y: 180 + [-1,0,1,0][index]*scoreRadius(value) })
-const diamond = (value: number) => [0,1,2,3].map(i => { const p=point(i,value); return `${p.x},${p.y}` }).join(' ')
-const points = computed(() => chartDimensions.value.length === 4 && chartDimensions.value.every(d => d.score !== null) ? chartDimensions.value.map((d,i) => { const p=point(i,Number(d.score));return `${p.x},${p.y}` }).join(' ') : '')
-const radarDescription = computed(() => `智用力${hasDimensionObservations.value ? '维度观察' : ''}画像，0至100分，高分区间展开，非等距刻度。${chartDimensions.value.map(d => `${d.name}${d.score === null ? '未评分' : d.score+'分'}`).join('，')}`)
 const roleText = { user: '用户消息', assistant: 'AI 回复', tool: '工具记录', context: '来源上下文' }
 const originText: Record<string,string> = { direct_expression:'本人表达', explicit_adoption:'明确采纳', quoted_or_forwarded:'引用或转发', uncertain:'归属未明', context:'背景材料' }
 const formatTime = (s: string) => new Date(s).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
@@ -242,9 +220,7 @@ const formatTime = (s: string) => new Date(s).toLocaleString('zh-CN', { timeZone
 .score-summary{min-width:0;padding:12px 0}.score-number{font-size:76px;line-height:1;font-weight:650;letter-spacing:-4px;font-variant-numeric:tabular-nums}
 .score-title{font-size:24px;line-height:32px;font-weight:600}
 .dimension-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid rgb(148 163 184 / .24)}
-.radar-surface{height:340px;background:transparent}.radar-label{font-size:16px;fill:currentColor}.radar-value{font-size:21px;font-weight:600;fill:currentColor}.radar-tick{font-size:12px;fill:currentColor}
-.radar-grid{fill:none;stroke:rgb(100 116 139 / .18);stroke-width:1}.radar-grid-outer{stroke:rgb(100 116 139 / .4)}.radar-axis{stroke:rgb(100 116 139 / .2);stroke-width:1}.radar-point{fill:currentColor}
-:global(.dark .radar-grid){stroke:rgb(148 163 184 / .22)}:global(.dark .radar-grid-outer){stroke:rgb(148 163 184 / .45)}:global(.dark .radar-axis){stroke:rgb(148 163 184 / .25)}
+
 .item-dimension{width:88px;flex-shrink:0}.item-content{padding-left:100px;max-width:880px;overflow-wrap:anywhere}.explanation-label{font-size:12px;line-height:20px;font-weight:600;color:#64748b;margin-bottom:8px}.explanation-list{list-style:disc;padding-left:18px}.explanation-list li+li{margin-top:8px}.explanation-detail{margin-top:12px}.detail-toggle{cursor:pointer;color:#0f766e;font-size:13px;line-height:24px}.task-record:last-child{border-bottom:0}.evidence-quote{overflow-wrap:anywhere}
 :global(.dark .explanation-label){color:#94a3b8}:global(.dark .detail-toggle){color:#5eead4}
 .item-row>summary,.task-record>summary{list-style:none}.item-row>summary::-webkit-details-marker,.task-record>summary::-webkit-details-marker{display:none}.expand-arrow{transition:transform 160ms}.item-row[open]>summary .expand-arrow,.task-record[open]>summary .expand-arrow{transform:rotate(180deg)}

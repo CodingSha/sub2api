@@ -135,7 +135,7 @@ export interface Report {
 }
 export interface Run { id: number; digest: string; source_name: string; report_count: number; created_at: string }
 export interface Page<T> { items: T[]; total: number; page: number; page_size: number; pages: number }
-export interface Filters { period_type?: string; period_start?: string; publication_status?: string; search?: string; page?: number; page_size?: number }
+export interface Filters { period_type?: string; period_start?: string; publication_status?: string; search?: string; page?: number; page_size?: number; sort?: string }
 
 const base = (admin: boolean) => admin ? '/admin/zhiyongli' : '/zhiyongli/me'
 export async function listReports(admin: boolean, params: Filters) {
@@ -179,7 +179,7 @@ export async function startJobs(input: {user_ids: number[]; period_type: 'day' |
 export async function startLastWeekJobs() {
   return (await apiClient.post<ReviewJob[]>('/admin/zhiyongli/jobs/last-week')).data
 }
-export async function listJobs(page: number, filters: {state?: string; search?: string} = {}) {
+export async function listJobs(page: number, filters: {state?: string; search?: string; sort?: string} = {}) {
   return (await apiClient.get<Page<ReviewJob>>('/admin/zhiyongli/jobs', {params:{page,page_size:20,...filters}})).data
 }
 export async function resumeJob(id: number) {

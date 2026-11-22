@@ -1,17 +1,23 @@
 <template>
   <div class="assessment-reader">
     <section class="score-overview" aria-label="评分总览">
-      <div class="total-score"><span>{{ periodLabel }}</span><strong>{{ report.score ?? '—' }}</strong><span class="inline-flex items-center gap-1">综合评分
-        <HelpTooltip v-if="partialDailyScore" width-class="w-72">
-          <template #trigger="{ open, tooltipId }">
-            <button type="button" class="inline-flex h-7 w-7 items-center justify-center hover:bg-gray-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500" :aria-label="report.period_type === 'day' ? '查看日总分计算方式' : '查看周总分计算方式'" :aria-describedby="open ? tooltipId : undefined"><Icon name="infoCircle" size="sm" aria-hidden="true" /></button>
-          </template>
-          {{ report.period_type === 'day' ? '日' : '周' }}总分按已观察维度的原权重归一计算，未观察维度不补分。
-        </HelpTooltip>
-      </span></div>
-      <div v-for="dimension in report.dimensions" :key="dimension.code" class="dimension-score">
-        <span>{{ dimension.name }}</span><strong>{{ dimension.score ?? '—' }}</strong>
+      <div class="score-summary">
+        <p class="review-date">{{ periodLabel }}</p>
+        <div v-if="report.period_type !== 'day'" class="total-score"><strong>{{ report.score ?? '—' }}</strong><span class="inline-flex items-center gap-1">综合评分
+          <HelpTooltip v-if="partialWeeklyScore" width-class="w-72">
+            <template #trigger="{ open, tooltipId }">
+              <button type="button" class="inline-flex h-7 w-7 items-center justify-center hover:bg-gray-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500" aria-label="查看周总分计算方式" :aria-describedby="open ? tooltipId : undefined"><Icon name="infoCircle" size="sm" aria-hidden="true" /></button>
+            </template>
+            周总分按已观察维度的原权重归一计算，未观察维度不补分。
+          </HelpTooltip>
+        </span></div>
+        <div class="dimension-scores">
+          <div v-for="dimension in report.dimensions" :key="dimension.code" class="dimension-score">
+            <span>{{ dimension.name }}</span><strong>{{ dimension.score ?? '—' }}</strong>
+          </div>
+        </div>
       </div>
+      <CapabilityRadar :dimensions="report.dimensions" />
     </section>
 
     <section class="assessment-content" aria-labelledby="assessment-title">
@@ -108,6 +114,7 @@ import { computed, ref, watch } from 'vue'
 import type { Item, Report } from './api'
 import ReportProse from './ReportProse.vue'
 import AssessmentContext from './AssessmentContext.vue'
+import CapabilityRadar from './CapabilityRadar.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -122,7 +129,7 @@ watch(() => props.report, (report) => {
 }, { immediate: true })
 const visibleItems = computed(() => (props.report.items ?? []).filter(item => item.item_code.startsWith(active.value)))
 const display = computed(() => reportText(props.report))
-const partialDailyScore = computed(() => (props.report.period_type === 'day' || !!props.report.weekly_review) && props.report.score !== null && props.report.dimensions.some(d => d.score === null))
+const partialWeeklyScore = computed(() => !!props.report.weekly_review && props.report.score !== null && props.report.dimensions.some(d => d.score === null))
 interface QuotedMessage { key: string; source_ref: string; context: string; quotes: string[] }
 interface CaseGroup { key: string; title: string; task?: AssessmentTask; messages: QuotedMessage[] }
 function caseGroups(item: Item) {
@@ -161,10 +168,11 @@ const hasExtraInput = (message: QuotedMessage) => plain(message.context) !== pla
 
 <style scoped>
 .assessment-reader{color:#24272c;font-size:15px;line-height:1.75}
-.score-overview{display:grid;grid-template-columns:1.25fr repeat(4,1fr);align-items:center;gap:24px;padding:24px 0 32px;border-bottom:1px solid #dce1e5}
-.total-score,.dimension-score{display:flex;flex-direction:column;align-items:flex-start;font-size:13px;color:#59616b}
-.total-score{border-right:1px solid #dce1e5}.total-score strong{font-size:56px;line-height:1.2;font-weight:600;color:#1e3037;font-variant-numeric:tabular-nums}
-.dimension-score strong{margin-top:8px;font-size:30px;line-height:1.3;font-weight:500;color:#283c43;font-variant-numeric:tabular-nums}
+.score-overview{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);align-items:center;gap:24px;padding:12px 0 28px;border-bottom:1px solid #dce1e5}
+.review-date{margin:0 0 12px;color:#59616b;font-size:14px}.score-summary{min-width:0}.dimension-scores{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:24px}
+.total-score{display:flex;align-items:baseline;gap:12px;margin-bottom:20px;font-size:13px;color:#59616b}.total-score strong{font-size:56px;line-height:1.2;font-weight:600;color:#1e3037;font-variant-numeric:tabular-nums}
+.dimension-score{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 0;border-top:1px solid #dce1e5;font-size:13px;color:#59616b}.dimension-score strong{font-size:28px;line-height:1.3;font-weight:500;color:#283c43;font-variant-numeric:tabular-nums}
+
 .assessment-content{padding-top:28px}.assessment-content>h2{font-size:21px;font-weight:600;line-height:1.5;margin:0 0 16px}
 .dimension-nav{display:flex;gap:24px;border-bottom:1px solid #dce1e5}.dimension-nav button{padding:10px 2px 12px;border-bottom:3px solid transparent;color:#59616b;font-size:15px;text-align:left;background:transparent;cursor:pointer}
 .dimension-nav button.selected{border-bottom-color:#286052;color:#254b41;font-weight:600}.dimension-nav button:hover{color:#254b41}.dimension-nav button:focus-visible,summary:focus-visible{outline:2px solid #286052;outline-offset:4px}

@@ -38,13 +38,14 @@ describe('报告的用户依据与管理员评审记录', () => {
     expect(wrapper.find('.score-hero').exists()).toBe(false)
     wrapper.unmount()
   })
-  it('正式日评使用新阅读布局，分数后直接展示依据和任务上下文入口', () => {
+  it('正式日评只展示维度分，直接提供依据和任务上下文入口', () => {
     const wrapper = mount(ReportBody, { props: { report: { ...report, period_type: 'day', period_start: '2026-11-18', period_end: '2026-11-19', daily_review: {
       version: 'daily-task-review-20261120.2', model: 'deepseek-v4.1-flash-local', request_digest: 'a', behaviors: {},
       window_start: '2026-11-18T08:00:00+08:00', window_end: '2026-11-18T18:00:00+08:00',
       source_labels: { 'person:message-1': '页面说明调整' }, source_sessions: {}, conversations: {}
     } } } })
     expect(wrapper.find('.assessment-reader').exists()).toBe(true)
+    expect(wrapper.find('.total-score').exists()).toBe(false)
     expect(wrapper.get('[aria-label="评分总览"]').element.nextElementSibling?.querySelector('h2')?.textContent).toBe('评分依据与任务解读')
     expect(wrapper.find('.score-hero').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('分项评分与标准')

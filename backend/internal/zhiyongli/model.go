@@ -151,6 +151,7 @@ type Run struct {
 type Filter struct {
 	UserID                                  int64
 	PeriodType, PeriodStart, Status, Search string
+	Sort                                    string
 	Page, PageSize                          int
 }
 

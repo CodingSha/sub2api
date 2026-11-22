@@ -240,9 +240,13 @@ func (s *Store) startLastWeekJobsAt(ctx context.Context, actor int64, now time.T
 type JobFilter struct {
 	State  string
 	Search string
+	Sort   string
 }
 
 func (f JobFilter) Validate() error {
+	if _, err := jobOrder(f.Sort); err != nil {
+		return err
+	}
 	if len(f.Search) > 200 {
 		return invalid("账户搜索不能超过200个字符")
 	}
@@ -277,7 +281,8 @@ func (s *Store) Jobs(ctx context.Context, page, size int, filters ...JobFilter) 
 		return nil, 0, err
 	}
 	args = append(args, size, (page-1)*size)
-	order := ` ORDER BY ` + jobActive + ` DESC, CASE j.state WHEN 'running' THEN 0 WHEN 'needs_review' THEN 1 WHEN 'unknown' THEN 1 WHEN 'failed' THEN 1 WHEN 'queued' THEN 2 WHEN 'completed' THEN 3 ELSE 4 END, j.id DESC`
+	ordering, _ := jobOrder(f.Sort)
+	order := " ORDER BY " + ordering
 	rows, err := s.db.QueryContext(ctx, `SELECT `+jobFields+from+where+order+fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)-1, len(args)), args...)
 	if err != nil {
 		return nil, 0, err

@@ -11,7 +11,7 @@ vi.mock('./api', async () => ({
 vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess: vi.fn() }) }))
 
 it('管理员确认后才复评，同一报告错误如实展示，并从进度打开确切草稿', async () => {
-  const report = { id: 19, user_email: 'person@example.test', period_type: 'day', period_start: '2026-11-18', publication_status: 'published', policy_versions: { rules: '1.6' } } as Report
+  const report = { id: 19, user_email: 'person@example.test', period_type: 'day', score: '77.6', score_status: 'scored', period_start: '2026-11-18', publication_status: 'published', policy_versions: { rules: '1.6' } } as Report
   const draft = { ...report, id: 21, publication_status: 'draft' } as Report
   vi.mocked(listReports).mockResolvedValue({ items: [report], total: 1, page: 1, pages: 1, page_size: 20 })
   vi.mocked(getReport).mockResolvedValueOnce(report).mockResolvedValueOnce(draft)
@@ -20,11 +20,14 @@ it('管理员确认后才复评，同一报告错误如实展示，并从进度�
   const wrapper = mount(AdminView, { global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh: {} } })], stubs: {
     AppLayout: { template: '<div><slot /></div>' }, RouterLink: true, Select: true, ReportBody: true,
     BaseDialog: { props: ['show'], template: '<div v-if="show"><slot/><slot name="footer"/></div>' },
-    DataTable: { props: ['data'], template: '<div><div v-for="row in data" :key="row.id"><slot name="cell-actions" :row="row"/></div></div>' },
+    DataTable: { props: ['data', 'columns'], template: '<div><span v-for="column in columns">{{ column.label }}</span><div v-for="row in data" :key="row.id"><span class="table-score"><slot name="cell-score" :row="row"/></span><slot name="cell-actions" :row="row"/></div></div>' },
     ReviewJobs: { props: ['initialSearch'], template: '<div>{{ initialSearch }}</div>' }
   } } })
   const click = (label: string) => wrapper.findAll('button').find(button => button.text() === label)!.trigger('click')
   await flushPromises()
+  expect(wrapper.text()).toContain('评审状态')
+  expect(wrapper.get('.table-score').text()).toBe('已评审')
+  expect(wrapper.text()).not.toContain('77.6')
   await click('查看'); await flushPromises()
   await click('重新采集并评审')
   expect(startDayRecheck).not.toHaveBeenCalled()

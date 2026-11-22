@@ -61,7 +61,7 @@ func (h *ZhiyongliHandler) list(c *gin.Context, owner int64) {
 	if !ok {
 		return
 	}
-	f := zhiyongli.Filter{UserID: owner, Page: p, PageSize: n, PeriodType: c.Query("period_type"), PeriodStart: c.Query("period_start"), Status: c.Query("publication_status"), Search: c.Query("search")}
+	f := zhiyongli.Filter{UserID: owner, Page: p, PageSize: n, PeriodType: c.Query("period_type"), PeriodStart: c.Query("period_start"), Status: c.Query("publication_status"), Search: c.Query("search"), Sort: c.Query("sort")}
 	if f.PeriodStart != "" {
 		start, err := time.Parse("2006-01-02", f.PeriodStart)
 		if err != nil || start.Format("2006-01-02") != f.PeriodStart {
@@ -269,7 +269,7 @@ func (h *ZhiyongliHandler) Jobs(c *gin.Context) {
 	if !ok {
 		return
 	}
-	filter := zhiyongli.JobFilter{State: c.Query("state"), Search: c.Query("search")}
+	filter := zhiyongli.JobFilter{State: c.Query("state"), Search: c.Query("search"), Sort: c.Query("sort")}
 	if e := filter.Validate(); e != nil {
 		zhiyongliError(c, e)
 		return

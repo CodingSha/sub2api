@@ -10,6 +10,10 @@
       <button class="btn btn-secondary" :disabled="loading" @click="load()">刷新</button>
     </div>
     <p v-if="error" role="alert" class="text-sm text-red-600">{{ error }}</p>
+    <div class="sticky top-16 z-20 bg-white dark:bg-dark-800" :class="{ 'pointer-events-none opacity-60': loading }" :aria-busy="loading">
+      <div class="flex items-center gap-3 px-4 py-2"><span class="text-sm text-gray-500">排序</span><Select v-model="sort" :options="sortOptions" class="w-60" aria-label="评审排序" @change="resetList" /></div>
+      <Pagination v-if="total > 0" :total="total" :page="page" :page-size="20" :show-page-size-selector="false" show-jump @update:page="goToPage" />
+    </div>
     <DataTable class="review-jobs-table" :columns="columns" :data="jobs" :loading="loading">
       <template #cell-user_email="{value}"><span class="block whitespace-normal break-all">{{ value }}</span></template>
       <template #cell-period_start="{row}">
@@ -31,11 +35,8 @@
       </template>
       <template #empty><p class="text-sm">暂无评审任务</p></template>
     </DataTable>
-    <div v-if="total > 20" class="flex items-center justify-end gap-3 text-sm">
-      <button class="btn btn-secondary" :disabled="page === 1 || loading" @click="changePage(-1)">上一页</button>
-      <span>{{ page }} / {{ Math.ceil(total/20) }}</span>
-      <button class="btn btn-secondary" :disabled="page*20 >= total || loading" @click="changePage(1)">下一页</button>
-    </div>
+    <Pagination v-if="total > 20" :total="total" :page="page" :page-size="20" :show-page-size-selector="false" show-jump :class="{ 'pointer-events-none opacity-60': loading }" @update:page="goToPage" />
+
     <BaseDialog :show="startOpen" title="开始评审" width="normal" :close-on-escape="!starting" :show-close-button="!starting" @close="$emit('close')">
       <form id="start-review" class="space-y-4" @submit.prevent="start">
         <div class="grid grid-cols-2 gap-4">
@@ -64,6 +65,7 @@
 </template>
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
+import Pagination from '@/components/common/Pagination.vue'
 import DataTable from '@/components/common/DataTable.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
@@ -75,6 +77,8 @@ const props = defineProps<{startOpen:boolean;initialSearch?:string}>()
 const emit = defineEmits<{close:[];reports:[job:ReviewJob]}>()
 const app=useAppStore()
 const jobs=ref<ReviewJob[]>([]),page=ref(1),total=ref(0),loading=ref(false),error=ref(''),resuming=ref<number|null>(null)
+const sort=ref('')
+const sortOptions=[{value:'',label:'执行及问题优先'},{value:'updated_desc',label:'最近更新优先'},{value:'updated_asc',label:'最早更新优先'},{value:'period_desc',label:'日期从新到旧'},{value:'period_asc',label:'日期从旧到新'},{value:'email_asc',label:'成员 A–Z'},{value:'email_desc',label:'成员 Z–A'}]
 const state=ref(''),searchInput=ref(props.initialSearch??''),search=ref(searchInput.value)
 const kind=ref<'week'|'month'>('week'),startDate=ref(''),starting=ref(false),startError=ref('')
 const users=ref<{id:number;email:string}[]>([]),selected=ref<{id:number;email:string}[]>([]),userSearch=ref(''),userTotal=ref(0),finding=ref(false)
@@ -87,11 +91,11 @@ const stateClass=(job:ReviewJob)=>job.state==='running'&&!job.active?'badge-gray
 const phases:Record<string,string>={collecting:'采集来源',reading:'阅读来源',identifying:'识别目标',evaluating:'当日评审',reviewing:'分项评审',checking:'核对依据',importing:'接入候选',done:'已完成',paused:'已暂停'}
 const columns=[{key:'user_email',label:'成员',class:'w-48'},{key:'period_start',label:'周期 / 规则',class:'w-[34%]'},{key:'state',label:'状态',class:'w-32 whitespace-nowrap'},{key:'phase',label:'进度与问题'},{key:'updated_at',label:'最近更新',class:'w-40'},{key:'actions',label:'操作',class:'w-24 whitespace-nowrap'}]
 let request=0,findRequest=0,alive=true,timer:ReturnType<typeof setTimeout>|undefined
-async function load(silent=false){const current=++request;if(!silent)loading.value=true;try{const value=await listJobs(page.value,{state:state.value,search:search.value});if(alive&&current===request){jobs.value=value.items;total.value=value.total;error.value=''}}catch(e){if(alive&&current===request)error.value=(e as Error).message}finally{if(current===request)loading.value=false}}
+async function load(silent=false){const current=++request;if(!silent)loading.value=true;try{const value=await listJobs(page.value,{state:state.value,search:search.value,sort:sort.value});if(alive&&current===request){jobs.value=value.items;total.value=value.total;error.value=''}}catch(e){if(alive&&current===request)error.value=(e as Error).message}finally{if(current===request)loading.value=false}}
 function resetList(){page.value=1;void load()}
 function applySearch(){search.value=searchInput.value.trim();resetList()}
 async function poll(){await load(true);if(alive)timer=setTimeout(poll,5000)}
-function changePage(delta:number){page.value+=delta;void load()}
+function goToPage(value:number){if(loading.value)return;page.value=value;void load()}
 async function findUsers(){const current=++findRequest;finding.value=true;try{const result=await listUsers(1,20,{search:userSearch.value});if(alive&&current===findRequest){users.value=result.items;userTotal.value=result.total}}catch(e){if(alive&&current===findRequest)startError.value=(e as Error).message}finally{if(current===findRequest)finding.value=false}}
 function toggle(user:{id:number;email:string}){if(starting.value)return;const index=selected.value.findIndex(u=>u.id===user.id);if(index>=0)selected.value.splice(index,1);else if(selected.value.length<20)selected.value.push(user)}
 async function start(){
