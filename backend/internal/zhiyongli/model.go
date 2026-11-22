@@ -102,6 +102,7 @@ type Assessment struct {
 }
 type Result struct {
 	DailyReview     *DailyReview     `json:"daily_review,omitempty"`
+	WeeklyReview    *WeeklyReview    `json:"weekly_review,omitempty"`
 	UserEmail       string           `json:"user_email"`
 	PeriodType      string           `json:"period_type"`
 	PeriodStart     string           `json:"period_start"`
@@ -266,6 +267,12 @@ func validateJSONBText(value any) error {
 // Validate 只接受登记版本；后续月评修改须新增版本处理，不重解释旧报告。
 // 总分、维度和等级全部由服务端精确重算，忽略传入的展示值。
 func (r *Result) Validate() error {
+	if r.WeeklyReview != nil {
+		if err := validateJSONBText(r); err != nil {
+			return err
+		}
+		return r.validateWeeklyReview()
+	}
 	if r.PeriodType == "day" {
 		if err := validateJSONBText(r); err != nil {
 			return err

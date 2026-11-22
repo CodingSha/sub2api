@@ -85,6 +85,7 @@ export interface DailyReview {
 }
 export interface Report {
   daily_review?: DailyReview
+  weekly_review?: DailyReview & { sources: { report_id: number; period_start: string; source_digest: string; request_digest: string }[] }
   id: number
   user_id: number
   user_email: string

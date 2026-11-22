@@ -191,8 +191,9 @@ def process(db,job,state,source,client,send,excluded_keys,max_requests=100,new_r
     root=Path(state)/str(job['id']);root.mkdir(parents=True,exist_ok=True,mode=0o700)
     evidence_first=getattr(client,'evidence_first',False) is True
     daily_review=job['period_type']=='day'
+    weekly_daily=job['period_type']=='week' and job.get('scope_key','').startswith('weekly-from-daily-20261122.1:')
     pilot=daily_review and job['id'] in (getattr(client,'pilot_day_job_ids',None) or ())
-    session_review=getattr(client,'session_review',False) is True or daily_review
+    session_review=getattr(client,'session_review',False) is True or daily_review or weekly_daily
     last=['collecting',0,1]
     def progress(phase,done,total,message):
         from disk_guard import require_space
@@ -241,6 +242,22 @@ def process(db,job,state,source,client,send,excluded_keys,max_requests=100,new_r
         validate(scope)
         if datetime.now(timezone.utc)<datetime.fromisoformat(scope['freeze_at']):
             raise Paused('queued','尚未到本期来源封口时刻，不提前采集和评分')
+        if weekly_daily:
+            from weekly_daily import evaluate as evaluate_daily_week
+            manifest=Path(state)/'daily-week-sources'/str(job['period_start'])/(str(job['user_id'])+'.json')
+            sources=json.loads(manifest.read_text())
+            frozen=root/'import-bundle.json'
+            if frozen.exists():
+                bundle=json.loads(frozen.read_text())
+                if digest(bundle)!=json.loads((root/'import-input.json').read_text())['bundle_sha256']:
+                    raise ValueError('周评冻结导入包与事前意图不符')
+            else:
+                progress('evaluating',0,1,'复用五日已核任务与原文综合评审，不平均日分')
+                bundle=evaluate_daily_week(sources,job,state,root/'review',client)
+            progress('importing',0,1,'保存并发布五日日评来源的新版周评分')
+            import_candidate(root,job,bundle,send)
+            update(db,job['id'],'completed','done',1,1,'新版周评分已保存并发布')
+            return
         if preparations is not None and job['period_type']=='week' and not scope.get('evaluation_dates'):
             proof=preparations.ready_budget(job,**(dict(session_review=True) if session_review else {}))
             if proof is not None:

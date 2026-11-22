@@ -90,6 +90,9 @@ func (s *Store) importBundle(ctx context.Context, b Bundle, actor, recheckJobID 
 		if e = personalUserAllowed(uid); e != nil {
 			return Run{}, e
 		}
+		if e = r.validatePublishedDays(ctx, tx, uid); e != nil {
+			return Run{}, e
+		}
 		if _, e = tx.ExecContext(ctx, `UPDATE zhiyongli_reports SET publication_status='superseded' WHERE user_id=$1 AND period_type=$2 AND period_start=$3::date AND publication_status='draft'`, uid, r.PeriodType, r.PeriodStart); e != nil {
 			return Run{}, e
 		}
@@ -219,6 +222,7 @@ func (s *Store) List(ctx context.Context, f Filter) ([]Report, int64, error) {
 		r.WeeklyReports = nil
 		r.TaskReview = nil
 		r.DailyReview = nil
+		r.WeeklyReview = nil
 		items = append(items, r)
 	}
 	return items, total, rows.Err()
@@ -295,6 +299,9 @@ func publishReportTx(ctx context.Context, tx *sql.Tx, id int64, revision int, ac
 		return ErrConflict
 	}
 	if e = personalUserAllowed(r.UserID); e != nil {
+		return e
+	}
+	if e = r.validatePublishedDays(ctx, tx, r.UserID); e != nil {
 		return e
 	}
 	if r.PublicationStatus == "published" {

@@ -11,7 +11,7 @@
       <LoadingSpinner v-if="loading" class="mx-auto my-12" />
       <div v-else-if="error" class="py-10 text-center"><p class="text-sm text-red-600">{{ error }}</p><button class="btn btn-secondary mt-4" @click="resetPeriod">重试</button></div>
       <ReportBody v-else-if="report" :key="report.id" :report="report" />
-      <EmptyState v-else :title="periodType === 'day' ? '暂无已发布的每日评分' : periodType === 'week' ? '暂无已发布的历史周评分' : '暂无已发布的月评级'" />
+      <EmptyState v-else :title="periodType === 'day' ? '暂无已发布的每日评分' : periodType === 'week' ? '暂无已发布的周评分' : '暂无已发布的月评级'" />
       <div v-if="total > reports.length" class="flex justify-center"><button class="btn btn-secondary" :disabled="loading" @click="loadMore">更早周期</button></div>
     </div>
   </AppLayout>
@@ -24,7 +24,7 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import ReportBody from './ReportBody.vue'
 import { listReports, getReport, periodLabel, type Report } from './api'
-const periodOptions = [{value:'day',label:'每日评分'},{value:'month',label:'月评级'},{value:'week',label:'历史周评'}]
+const periodOptions = [{value:'day',label:'每日评分'},{value:'week',label:'周评分'},{value:'month',label:'月评级'}]
 const periodType = ref('day'), selectedId = ref<number | null>(null), reports = ref<Report[]>([]), report = ref<Report | null>(null)
 const loading = ref(false), error = ref(''), total = ref(0), page = ref(1)
 let request = 0

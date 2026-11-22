@@ -1,5 +1,6 @@
 <template>
   <AssessmentReader v-if="report.period_type === 'day' && report.daily_review && report.items?.length" :report="report" :period-label="report.period_start" :source-labels="report.daily_review.source_labels" :source-sessions="report.daily_review.source_sessions" :conversations="report.daily_review.conversations" />
+  <AssessmentReader v-else-if="report.weekly_review && report.items?.length" :report="report" :period-label="`${report.weekly_review.sources[0].period_start} — ${report.weekly_review.sources.at(-1)?.period_start}`" :source-labels="report.weekly_review.source_labels" :source-sessions="report.weekly_review.source_sessions" :conversations="report.weekly_review.conversations" />
   <section v-else-if="reviewPending(report)" aria-label="评审状态">
     <h2 class="score-title text-gray-900 dark:text-gray-100">智用力评分</h2>
     <p class="mt-3 text-sm text-gray-600 dark:text-gray-300">评审待完成</p>

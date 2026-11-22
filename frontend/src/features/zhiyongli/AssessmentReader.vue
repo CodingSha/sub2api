@@ -4,9 +4,9 @@
       <div class="total-score"><span>{{ periodLabel }}</span><strong>{{ report.score ?? '—' }}</strong><span class="inline-flex items-center gap-1">综合评分
         <HelpTooltip v-if="partialDailyScore" width-class="w-72">
           <template #trigger="{ open, tooltipId }">
-            <button type="button" class="inline-flex h-7 w-7 items-center justify-center hover:bg-gray-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500" aria-label="查看日总分计算方式" :aria-describedby="open ? tooltipId : undefined"><Icon name="infoCircle" size="sm" aria-hidden="true" /></button>
+            <button type="button" class="inline-flex h-7 w-7 items-center justify-center hover:bg-gray-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500" :aria-label="report.period_type === 'day' ? '查看日总分计算方式' : '查看周总分计算方式'" :aria-describedby="open ? tooltipId : undefined"><Icon name="infoCircle" size="sm" aria-hidden="true" /></button>
           </template>
-          日总分按已观察维度的原权重归一计算，未观察维度不补分。
+          {{ report.period_type === 'day' ? '日' : '周' }}总分按已观察维度的原权重归一计算，未观察维度不补分。
         </HelpTooltip>
       </span></div>
       <div v-for="dimension in report.dimensions" :key="dimension.code" class="dimension-score">
@@ -122,7 +122,7 @@ watch(() => props.report, (report) => {
 }, { immediate: true })
 const visibleItems = computed(() => (props.report.items ?? []).filter(item => item.item_code.startsWith(active.value)))
 const display = computed(() => reportText(props.report))
-const partialDailyScore = computed(() => props.report.period_type === 'day' && props.report.score !== null && props.report.dimensions.some(d => d.score === null))
+const partialDailyScore = computed(() => (props.report.period_type === 'day' || !!props.report.weekly_review) && props.report.score !== null && props.report.dimensions.some(d => d.score === null))
 interface QuotedMessage { key: string; source_ref: string; context: string; quotes: string[] }
 interface CaseGroup { key: string; title: string; task?: AssessmentTask; messages: QuotedMessage[] }
 function caseGroups(item: Item) {

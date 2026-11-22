@@ -26,6 +26,18 @@ const report: Report = {
 }
 
 describe('报告的用户依据与管理员评审记录', () => {
+  it('新版周评沿用原文阅读布局并展示五日来源区间', () => {
+    const wrapper = mount(ReportBody, { props: { report: { ...report, period_start: '2026-11-16', period_end: '2026-11-23', weekly_review: {
+      version: 'weekly-from-daily-20261122.1', model: 'deepseek-v4.1-flash-local', request_digest: 'a', behaviors: {},
+      window_start: '2026-11-16T08:00:00+08:00', window_end: '2026-11-20T18:00:00+08:00',
+      sources: ['16', '17', '18', '19', '20'].map((day, index) => ({ report_id: index + 1, period_start: `2026-11-${day}`, source_digest: 'c', request_digest: 'a' })),
+      source_labels: {}, source_sessions: {}, conversations: {}
+    } } } })
+    expect(wrapper.find('.assessment-reader').exists()).toBe(true)
+    expect(wrapper.text()).toContain('2026-11-16 — 2026-11-20')
+    expect(wrapper.find('.score-hero').exists()).toBe(false)
+    wrapper.unmount()
+  })
   it('正式日评使用新阅读布局，分数后直接展示依据和任务上下文入口', () => {
     const wrapper = mount(ReportBody, { props: { report: { ...report, period_type: 'day', period_start: '2026-11-18', period_end: '2026-11-19', daily_review: {
       version: 'daily-task-review-20261120.2', model: 'deepseek-v4.1-flash-local', request_digest: 'a', behaviors: {},

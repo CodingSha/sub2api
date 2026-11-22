@@ -107,8 +107,17 @@ func (r *Result) validateDaily() error {
 	if r.TaskReview != nil || r.SampleInitial != nil || r.Eligibility != nil || r.Assessment != nil || len(r.Coverage) > 0 || len(r.WeeklyReports) > 0 || len(r.GapDispositions) > 0 {
 		return invalid("日评分不能混用周月观察资格、抽样初评或汇总来源")
 	}
+	return r.validateTaskEvidence(d, 5, 160000, 40, func(at time.Time) bool {
+		start, _ := time.Parse(time.RFC3339, d.WindowStart)
+		end, _ := time.Parse(time.RFC3339, d.WindowEnd)
+		return !at.Before(start) && at.Before(end)
+	})
+}
+
+// validateTaskEvidence 复用日周共同的原文、本人归属及精确计分门禁。
+func (r *Result) validateTaskEvidence(d *DailyReview, taskLimit, byteLimit, behaviorLimit int, eligibleTime func(time.Time) bool) error {
 	raw, _ := json.Marshal(d)
-	if len(raw) > 160000 || len(d.Conversations) > 5 || credentialPattern.Match(raw) {
+	if len(raw) > byteLimit || len(d.Conversations) > taskLimit || credentialPattern.Match(raw) {
 		return invalid("日评上下文超限或含未脱敏凭证")
 	}
 	records := map[string]DailyRecord{}
@@ -183,7 +192,7 @@ func (r *Result) validateDaily() error {
 		return invalid("日评须为完整十二项终态，执行失败不能作为人员报告")
 	}
 	seen := map[string]bool{}
-	if len(d.Behaviors) == 0 || len(d.Behaviors) > 40 {
+	if len(d.Behaviors) == 0 || len(d.Behaviors) > behaviorLimit {
 		return invalid("日评缺少独立行为归属或行为数量超限")
 	}
 	claims := map[string]bool{}
@@ -198,8 +207,6 @@ func (r *Result) validateDaily() error {
 	}
 	values := map[string][]*big.Rat{}
 	gaps := map[string][]*big.Rat{}
-	start, _ := time.Parse(time.RFC3339, d.WindowStart)
-	end, _ := time.Parse(time.RFC3339, d.WindowEnd)
 	type quoteSpan struct {
 		ref, code  string
 		start, end int
@@ -239,7 +246,7 @@ func (r *Result) validateDaily() error {
 		evidenceIDs := map[string]bool{}
 		for _, ev := range item.Evidence {
 			record, ok := records[ev.SourceRef]
-			if !ok || ev.ID == "" || evidenceIDs[ev.ID] || ev.Role != "user" || record.Role != "user" || ev.Origin != "direct_expression" && ev.Origin != "explicit_adoption" && !(item.Code[0] == 'P' && ev.Origin == "quoted_or_forwarded") || ev.SourceHash != record.SourceHash || ev.Context != record.Text || ev.Quote == "" || !strings.Contains(record.Text, ev.Quote) || ev.Supports == "" || ev.TaskTitle != d.Conversations[taskOf[ev.SourceRef]].Title || d.SourceSessions[ev.SourceRef] != taskOf[ev.SourceRef] || ev.OccurredAt.Before(start) || !ev.OccurredAt.Before(end) || credentialPattern.MatchString(ev.Supports) {
+			if !ok || ev.ID == "" || evidenceIDs[ev.ID] || ev.Role != "user" || record.Role != "user" || ev.Origin != "direct_expression" && ev.Origin != "explicit_adoption" && !(item.Code[0] == 'P' && ev.Origin == "quoted_or_forwarded") || ev.SourceHash != record.SourceHash || ev.Context != record.Text || ev.Quote == "" || !strings.Contains(record.Text, ev.Quote) || ev.Supports == "" || ev.TaskTitle != d.Conversations[taskOf[ev.SourceRef]].Title || d.SourceSessions[ev.SourceRef] != taskOf[ev.SourceRef] || !eligibleTime(ev.OccurredAt) || credentialPattern.MatchString(ev.Supports) {
 				return invalid("日评分项依据须绑定当日窗口内的本人原话与实际交付上下文")
 			}
 			behavior, exists := d.Behaviors[ev.ID]

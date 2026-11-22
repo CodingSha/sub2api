@@ -378,7 +378,7 @@ func (s *Store) importJob(ctx context.Context, id int64, bundle Bundle, draftOnl
 		recheckJobID = j.ID
 	}
 	run, err := s.importBundle(ctx, bundle, actor, recheckJobID)
-	if err != nil || j.PeriodType != "day" {
+	if err != nil || (j.PeriodType != "day" && r.WeeklyReview == nil) {
 		return run, err
 	}
 	var reportID int64
