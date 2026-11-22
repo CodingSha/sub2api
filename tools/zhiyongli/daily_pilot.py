@@ -107,9 +107,9 @@ def normalized(event):
         role='context'
     if event['actor_class']=='candidate_user' and text.lstrip().startswith(MACHINE_PREFIXES+CLIENT_CONTEXT_PREFIXES):role='context'
     # 后台完成通知、定时任务与标题生成会使用user协议角色，不能重复计为本人当天的安排。
-    if role=='user' and re.match(r'^background job [A-Za-z0-9_-]+ \([\s\S]*\) finished \[status: [^\]\n]+, exit code: -?\d+\]\. Output:\n',text):
+    if role=='user' and re.match(r'^background job [A-Za-z0-9_-]+ \([\s\S]*\) finished \[status: [^\]\n]+, exit code: -?\d+\]\. (?:Output:\n|Read its output with job_output\.$)',text):
         role='context'
-    if (role=='user' and re.match(r'^\[Automation: [^\n]+\]\n\nAutomation ID: [^\n]+\nAutomation memory: [^\n]+\nLast run: [^\n]+\n\n',text)):
+    if (role=='user' and re.match(r'^(?:\[Automation: [^\n]+\]\n\n|Automation: [^\n]+\n)Automation ID: [^\n]+\nAutomation memory: [^\n]+\nLast run: [^\n]+\n\n',text)):
         role='context'
     if (role=='user' and text.startswith('[IMPORTANT: You are running as a scheduled cron job. DELIVERY:')
             and 'This is a run of an EXISTING scheduled job' in text):

@@ -12,6 +12,8 @@ class DailyPilotTests(unittest.TestCase):
         bodies=[
             'background job pwsh-abc (pwsh: $entries=foreach($x in $rows) {\n @{todo=1; done=2}\n}) finished [status: completed, exit code: 0]. Output:\n完成',
             '[Automation: 到点了]\n\nAutomation ID: a\nAutomation memory: $CODEX_HOME/automations/a/memory.md\nLast run: 2026-11-15T20:00:00Z\n\n到点了！',
+            'Automation: 到点了\nAutomation ID: a\nAutomation memory: $CODEX_HOME/automations/a/memory.md\nLast run: 2026-11-13T06:49:15.642Z (1794552555642)\n\n到点了！',
+            "background job pwsh-122d74cdbbd14204 (pwsh: $entries=foreach($dir in @('todo','done','nofound','unable')){Get-ChildItem $dir -Recurse -File -Filter '*.json'|ForEach-Object {\n $_.Name\n}}) finished [status: completed, exit code: 0]. Read its output with job_output.",
         ]
         for body in bodies:
             event=dict(text=body,actor_class='candidate_user',protocol_role='user')
@@ -20,6 +22,9 @@ class DailyPilotTests(unittest.TestCase):
             self.assertEqual(text,body)
             for request in ('请检查这条通知：\n'+body,'请设计一个 Automation memory: 路径规则。'):
                 self.assertEqual(normalized(dict(event,text=request))[0],'user')
+        for request in ('Automation: 请帮我设计自动化\nAutomation ID: a',
+                        'background job task (pwsh: run) finished [status: completed, exit code: 0]. 请检查执行结果。'):
+            self.assertEqual(normalized(dict(event,text=request))[0],'user')
 
     def test_daily_selection_keeps_only_0800_to_before_1800_personal_actions(self):
         base=dict(session_id='s',api_key_id=1,group_id=1,actor_class='candidate_user',
