@@ -62,8 +62,8 @@ def catalog(rows, delivered):
 
 
 def validate(behaviors, delivered):
-    if not behaviors or len(behaviors)>40:
-        raise ValueError('日评缺少独立行为归属或行为数量超限')
+    if not behaviors:
+        raise ValueError('日评缺少独立行为归属')
     claims=set()
     for identity,behavior in behaviors.items():
         row=delivered.get(behavior['source_ref'])

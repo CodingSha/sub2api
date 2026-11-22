@@ -6,7 +6,7 @@
         <div class="flex items-center gap-4"><RouterLink :to="auth.isAdmin ? '/admin/zhiyongli' : '/zhiyongli'" class="text-sm text-primary-700 hover:underline dark:text-primary-400">返回报告</RouterLink><a v-if="supported" :href="downloadUrl" :download="`智用力${daily ? '每日' : ''}评分规则-v${version}.md`" class="btn btn-secondary">下载规则</a></div>
       </header>
       <p v-if="supported" class="mb-6 text-sm text-gray-500 dark:text-gray-400" role="status">
-        <template v-if="version === latestVersion">当前规则 · v{{ version }} · 按对话上下文综合评审</template>
+        <template v-if="version === latestVersion">当前规则 · v{{ version }}<template v-if="weekly"> · 周评分修订 2026-11-22</template> · 按对话上下文综合评审</template>
         <template v-else>历史规则 · v{{ version }} · 用于核对采用该版的报告。<RouterLink :to="{ path: '/zhiyongli/rules' }" class="ml-2 text-primary-700 hover:underline dark:text-primary-400">查看当前规则 v{{ latestVersion }}</RouterLink></template>
       </p>
       <div v-if="supported" class="rules-layout">
@@ -33,6 +33,7 @@ import rules14 from '../../../../docs/ZHIYONGLI_SCORING_RULES_V1_4.md?raw'
 import rules15 from '../../../../docs/ZHIYONGLI_SCORING_RULES_V1_5.md?raw'
 import rules16 from '../../../../docs/ZHIYONGLI_SCORING_RULES_V1_6.md?raw'
 import dailyRules from '../../../../docs/ZHIYONGLI_SCORING_RULES_V1_6_DAILY.md?raw'
+import weeklyRules from '../../../../docs/ZHIYONGLI_SCORING_RULES_V1_6_WEEKLY_20261122.md?raw'
 const latestVersion = '1.6'
 const route=useRoute()
 const auth=useAuthStore()
@@ -40,7 +41,8 @@ const versions: Record<string,string> = { '1.1':rules11,'1.2':rules12,'1.3':rule
 const version=computed(()=>route.query.version === undefined ? latestVersion : String(route.query.version))
 const supported=computed(()=>Object.prototype.hasOwnProperty.call(versions,version.value))
 const daily=computed(()=>version.value === '1.6' && route.query.period_type === 'day')
-const rules=computed(()=>supported.value ? versions[version.value] + (daily.value ? '\n\n' + dailyRules : '') : '')
+const weekly=computed(()=>version.value === '1.6' && (route.query.aggregation === 'weekly-fixed-coverage-20261122.3' || route.query.version === undefined))
+const rules=computed(()=>supported.value ? (weekly.value ? weeklyRules + '\n\n' : '') + versions[version.value] + (daily.value ? '\n\n' + dailyRules : '') : '')
 const rendered=computed(()=>{
   const sections: {id:string;title:string}[] = []
   const renderer = new Renderer()

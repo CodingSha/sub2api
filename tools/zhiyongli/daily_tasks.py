@@ -95,7 +95,7 @@ def directory(all_turns):
     return sorted(selected, key=lambda r:(r['session'], r['order']))
 
 
-def materialize(plan, all_turns, *, with_records=True):
+def materialize(plan, all_turns, *, with_records=True, allow_input_only=False):
     """规划只决定连续区间；完整用户消息及AI反馈必须实际交付，不能拿目录预览代替。"""
     tasks = []
     occupied = set()
@@ -123,7 +123,7 @@ def materialize(plan, all_turns, *, with_records=True):
             spine.append(turn['user'])
             if turn['reply']:
                 spine.append(turn['reply'])
-        if not any(r['role'] == 'assistant' and not r.get('boundary_context') for r in spine):
+        if not allow_input_only and not any(r['role'] == 'assistant' and not r.get('boundary_context') for r in spine):
             raise ValueError('任务缺少AI实际反馈，不能作为完整任务选材')
         tools = [r for t in selected for r in t['rows'] if r['role'] == 'tool']
         # 名称只证明出现了调用/加载，不把目录认成执行成功；必要正文可按编号读取。
@@ -154,7 +154,7 @@ def materialize(plan, all_turns, *, with_records=True):
     return tasks, records
 
 
-def windows(all_turns, listing):
+def windows(all_turns, listing, *, allow_input_only=False):
     """完整会话能交付就不拆成片段；仅超限会话提供连续任务窗口。"""
     allowed={r['id'] for r in listing}
     options=[]
@@ -166,7 +166,7 @@ def windows(all_turns, listing):
         keys.sort(key=lambda key:all_turns[key]['order'])
         plan=dict(tasks=[dict(start=keys[0],end=keys[-1],title='完整会话',goal='核对当日完整任务来回')])
         try:
-            tasks,_=materialize(plan,all_turns,with_records=False)
+            tasks,_=materialize(plan,all_turns,with_records=False,allow_input_only=allow_input_only)
         except ValueError:
             continue
         # 目录继续按固定定位说明保守核算，保持已落盘规划请求和窗口编号不变。
@@ -182,7 +182,7 @@ def windows(all_turns, listing):
                 continue
             plan=dict(tasks=[dict(start=start,end=end,title='选材窗口',goal='核对完整任务目标')])
             try:
-                tasks,_=materialize(plan,all_turns,with_records=False)
+                tasks,_=materialize(plan,all_turns,with_records=False,allow_input_only=allow_input_only)
             except ValueError:
                 continue
             if size(tasks[0]) > TASK_BYTES:continue

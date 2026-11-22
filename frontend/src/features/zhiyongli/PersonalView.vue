@@ -6,7 +6,7 @@
         <div class="flex items-center gap-3">
           <Select v-model="periodType" :options="periodOptions" class="w-36" aria-label="评分周期类型" @change="resetPeriod" />
           <Select v-if="reports.length" v-model="selectedId" :options="reportOptions" class="w-72" :aria-label="periodType === 'day' ? '选择评分日期' : '选择评分周期'" @change="loadReport" />
-          <RouterLink :to="{path:'/zhiyongli/rules',query:{version:report?.policy_versions.rules,period_type:periodType}}" class="btn btn-secondary">评分规则</RouterLink>
+          <RouterLink :to="{path:'/zhiyongli/rules',query:{version:report?.policy_versions.rules,period_type:periodType,aggregation:report?.policy_versions.aggregation}}" class="btn btn-secondary">评分规则</RouterLink>
         </div>
       </header>
       <LoadingSpinner v-if="loading" class="mx-auto my-12" />
@@ -42,7 +42,7 @@ async function resetPeriod() {
   const current = ++request
   loading.value=true;error.value='';report.value=null;reports.value=[];selectedId.value=null;page.value=1;total.value=0
   try {
-    const result = await listReports(false,{period_type:periodType.value,page:1})
+    const result = await listReports(false,{period_type:periodType,aggregation:report?.policy_versions.aggregation.value,page:1})
     if(current!==request) return
     reports.value=result.items;total.value=result.total;selectedId.value=result.items[0]?.id ?? null
     await loadReport()
@@ -51,7 +51,7 @@ async function resetPeriod() {
 }
 async function loadMore() {
   const current=++request;loading.value=true;error.value=''
-  try {const result=await listReports(false,{period_type:periodType.value,page:page.value+1});if(current===request){reports.value.push(...result.items);total.value=result.total;page.value++}}
+  try {const result=await listReports(false,{period_type:periodType,aggregation:report?.policy_versions.aggregation.value,page:page.value+1});if(current===request){reports.value.push(...result.items);total.value=result.total;page.value++}}
   catch(e){if(current===request)error.value=(e as {message:string}).message}
   finally{if(current===request)loading.value=false}
 }

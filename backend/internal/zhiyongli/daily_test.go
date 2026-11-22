@@ -202,3 +202,23 @@ func TestDailyTrivialQueriesRemainUnscored(t *testing.T) {
 		t.Fatal("简短查询不能造分或成为待审", err)
 	}
 }
+
+func TestSpecificWorkflowAdoptionRequiresAdjacentProposal(t *testing.T) {
+	for _, tc := range []struct {
+		proposal string
+		answer   string
+		want     bool
+	}{
+		{"我将使用 push 工作流提交已核改动。", "按这个方案执行。", true},
+		{"我将使用 push 工作流提交已核改动。", "继续", false},
+		{"无需使用 push，先检查。", "按这个方案执行。", false},
+		{"我将使用 another-skill 整理材料。", "按这个方案执行。", false},
+	} {
+		t.Run(tc.proposal+tc.answer, func(t *testing.T) {
+			rows := []DailyRecord{{ID: "a", Role: "assistant", Text: tc.proposal}, {ID: "u", Role: "user", Text: tc.answer}}
+			if got := selectedWorkflowInTask("push", []string{"u"}, rows); got != tc.want {
+				t.Fatalf("got %v want %v", got, tc.want)
+			}
+		})
+	}
+}

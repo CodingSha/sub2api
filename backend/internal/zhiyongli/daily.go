@@ -24,6 +24,37 @@ func explicitlySelectedWorkflow(text, name string) bool {
 	return regexp.MustCompile(`(^|[^A-Za-z0-9_-])` + regexp.QuoteMeta(service) + `($|[^A-Za-z0-9_-])`).MatchString(text)
 }
 
+func selectedWorkflowInTask(name string, refs []string, records []DailyRecord) bool {
+	approvals := map[string]bool{"执行": true, "执行吧": true, "按这个方案执行": true, "按上述方案执行": true, "就按这个方案": true, "采用这个方案": true, "按你说的执行": true, "执行这个方案": true, "按方案执行": true}
+	clean := regexp.MustCompile(`[\s，。！!,.]`)
+	proposal := regexp.MustCompile(`(我将|将会|接下来|准备|建议|方案|可以|我会).{0,80}(使用|采用|调用|通过|加载|运行)`)
+	negative := regexp.MustCompile(`不要|不使用|禁止|无需`)
+	previous := ""
+	for _, row := range records {
+		for _, ref := range refs {
+			if row.ID != ref || row.Role != "user" {
+				continue
+			}
+			if explicitlySelectedWorkflow(row.Text, name) {
+				return true
+			}
+			if approvals[clean.ReplaceAllString(row.Text, "")] {
+				for _, line := range regexp.MustCompile(`[\n。！？]`).Split(previous, -1) {
+					if !negative.MatchString(line) && proposal.MatchString(line) && explicitlySelectedWorkflow(line, name) {
+						return true
+					}
+				}
+			}
+		}
+		if row.Role == "assistant" {
+			previous = row.Text
+		} else if row.Role == "user" {
+			previous = ""
+		}
+	}
+	return false
+}
+
 // DailyReview 保存实际交给模型的任务上下文；列表接口不返回正文。
 type DailyReview struct {
 	Version        string                   `json:"version"`
@@ -107,7 +138,7 @@ func (r *Result) validateDaily() error {
 	if r.TaskReview != nil || r.SampleInitial != nil || r.Eligibility != nil || r.Assessment != nil || len(r.Coverage) > 0 || len(r.WeeklyReports) > 0 || len(r.GapDispositions) > 0 {
 		return invalid("日评分不能混用周月观察资格、抽样初评或汇总来源")
 	}
-	return r.validateTaskEvidence(d, 5, 160000, 40, func(at time.Time) bool {
+	return r.validateTaskEvidence(d, 5, 160000, func(at time.Time) bool {
 		start, _ := time.Parse(time.RFC3339, d.WindowStart)
 		end, _ := time.Parse(time.RFC3339, d.WindowEnd)
 		return !at.Before(start) && at.Before(end)
@@ -115,7 +146,7 @@ func (r *Result) validateDaily() error {
 }
 
 // validateTaskEvidence 复用日周共同的原文、本人归属及精确计分门禁。
-func (r *Result) validateTaskEvidence(d *DailyReview, taskLimit, byteLimit, behaviorLimit int, eligibleTime func(time.Time) bool) error {
+func (r *Result) validateTaskEvidence(d *DailyReview, taskLimit, byteLimit int, eligibleTime func(time.Time) bool) error {
 	raw, _ := json.Marshal(d)
 	if len(raw) > byteLimit || len(d.Conversations) > taskLimit || credentialPattern.Match(raw) {
 		return invalid("日评上下文超限或含未脱敏凭证")
@@ -157,7 +188,7 @@ func (r *Result) validateTaskEvidence(d *DailyReview, taskLimit, byteLimit, beha
 			}
 			for _, ref := range usage.UserRefs {
 				rec, ok := records[ref]
-				if !ok || taskOf[ref] != key || rec.Role != "user" || !explicitlySelectedWorkflow(rec.Text, usage.Name) {
+				if !ok || taskOf[ref] != key || rec.Role != "user" || !selectedWorkflowInTask(usage.Name, []string{ref}, task.Records) {
 					return invalid("本人工作流选择没有同任务原话")
 				}
 			}
@@ -183,6 +214,10 @@ func (r *Result) validateTaskEvidence(d *DailyReview, taskLimit, byteLimit, beha
 		if len(r.Items) > 0 || len(d.Conversations) > 0 || len(d.Behaviors) > 0 || strings.TrimSpace(r.ScoreReason) == "" {
 			return invalid("无使用记录的日评不能携带任务或分数")
 		}
+		if r.WeeklyReview != nil && r.PolicyVersions.Aggregation == WeeklyDailyAggregation {
+			r.Exact, r.Score = exact(big.NewRat(0, 1)), display(big.NewRat(0, 1))
+			r.ScoreReason = "五个工作日的采集窗口内未观察到有效的本人AI使用记录，本周使用评分为0分。"
+		}
 		return nil
 	}
 	if r.ScoreStatus == "observation_only" && len(d.Conversations) == 0 && len(d.Behaviors) == 0 && len(r.Items) == 0 && strings.TrimSpace(r.ScoreReason) != "" {
@@ -192,8 +227,8 @@ func (r *Result) validateTaskEvidence(d *DailyReview, taskLimit, byteLimit, beha
 		return invalid("日评须为完整十二项终态，执行失败不能作为人员报告")
 	}
 	seen := map[string]bool{}
-	if len(d.Behaviors) == 0 || len(d.Behaviors) > behaviorLimit {
-		return invalid("日评缺少独立行为归属或行为数量超限")
+	if len(d.Behaviors) == 0 {
+		return invalid("日评缺少独立行为归属")
 	}
 	claims := map[string]bool{}
 	for id, behavior := range d.Behaviors {
@@ -303,12 +338,16 @@ func (r *Result) validateTaskEvidence(d *DailyReview, taskLimit, byteLimit, beha
 	if observed == 0 {
 		return invalid("已选任务却十二项全空，属于评审执行失败")
 	}
-	// 周综合分要求四维均可评；日评的稀疏维度归一不能用于周评。
-	if r.WeeklyReview != nil && observedWeight != 100 {
+	// 历史周分保留原资格；新版周分固定分母100，不放大已观察维度权重。
+	if r.WeeklyReview != nil && r.PolicyVersions.Aggregation == legacyWeeklyDailyAggregation && observedWeight != 100 {
 		r.Exact, r.Score = nil, nil
 		r.ScoreStatus = "observation_only"
 		r.ScoreReason = "五日已核材料尚未覆盖四个维度的可评分本人行为，保留已有维度分析，不形成周综合分。"
 		return nil
+	}
+	if r.WeeklyReview != nil && r.PolicyVersions.Aggregation == WeeklyDailyAggregation {
+		observedWeight = 100
+		r.ScoreReason = "周评分按提示词质量20%、任务驾驭度35%、判断核验30%、使用效率15%的固定权重合成；五日抽样未观察到的维度本周不贡献分值，维度仍显示未观察到。"
 	}
 	total.Quo(total, big.NewRat(observedWeight, 1))
 	r.Exact, r.Score = exact(total), display(total)

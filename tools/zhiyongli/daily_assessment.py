@@ -39,7 +39,7 @@ def expand_plan(plan, options):
         title=t['title'],goal=t['goal']) for t in plan['tasks']])
 
 
-def select_candidates(plan, options, all_turns):
+def select_candidates(plan, options, all_turns, *, allow_input_only=False):
     """模型只排序，程序执行重叠和总量约束；不截断正文，保留每个未入选原因。"""
     accepted=[];rejected=[];tasks=[];records={}
     for candidate in plan['candidates']:
@@ -48,7 +48,7 @@ def select_candidates(plan, options, all_turns):
             continue
         proposed=expand_plan(dict(tasks=accepted+[candidate]),options)
         try:
-            material,originals=materialize(proposed,all_turns)
+            material,originals=materialize(proposed,all_turns,allow_input_only=allow_input_only)
         except ValueError as error:
             rejected.append(dict(window_id=candidate['window_id'],reason=str(error)))
             continue
@@ -65,6 +65,24 @@ def workflow_selected(name, text):
     if len(parts)==3 and parts[0]=='mcp' and parts[1] and parts[2]:
         service=parts[1].replace('_','-')
         return re.search(r'(?<![A-Za-z0-9_-])'+re.escape(service)+r'(?![A-Za-z0-9_-])',text) is not None
+    return False
+
+
+def workflow_selected_in_task(name, refs, records):
+    """明确点名或采纳紧邻的具体使用方案；普通继续、默认配置和AI自主执行不作选择。"""
+    approvals={'执行','执行吧','按这个方案执行','按上述方案执行','就按这个方案','采用这个方案','按你说的执行','执行这个方案','按方案执行'}
+    previous=None
+    for row in records:
+        if row['id'] in refs and row['role']=='user':
+            if workflow_selected(name,row['text']):return True
+            approval=re.sub(r'[\s，。！!,.]','',row['text'])
+            if approval in approvals and previous:
+                for line in re.split(r'[\n。！？]',previous):
+                    if (not re.search(r'不要|不使用|禁止|无需',line) and workflow_selected(name,line)
+                            and re.search(r'(?:我将|将会|接下来|准备|建议|方案|可以|我会).{0,80}(?:使用|采用|调用|通过|加载|运行)',line)):
+                        return True
+        if row['role']=='assistant':previous=row['text']
+        elif row['role']=='user':previous=None
     return False
 
 
@@ -118,7 +136,7 @@ def check_assessment(value, delivered, tasks=()):
                 if usage['selection']=='用户明确选择':
                     if not usage['user_refs'] or any(ref not in people for ref in usage['user_refs']):
                         issues.append('用户选择缺少同任务原话：'+task['id'])
-                    elif not any(workflow_selected(usage['name'],people[ref]) for ref in usage['user_refs']):
+                    elif not workflow_selected_in_task(usage['name'],usage['user_refs'],task['records']):
                         issues.append('用户原话没有选择所述工作流：'+task['id'])
                 elif usage['user_refs']:
                     issues.append('AI自主调用不能挂本人选择依据：'+task['id'])
@@ -130,8 +148,9 @@ def check_assessment(value, delivered, tasks=()):
 def checked_call(client, root, name, data, schema, instructions):
     # 预算按实际发送格式核对，不能靠隐藏schema或截断正文让请求过关。
     wire = request_payload(client,data,schema,instructions)
-    if len(json.dumps(wire,ensure_ascii=False).encode()) > 96000:
-        raise ValueError('完整日评请求超过96000字节，未截断或发送')
+    maximum=190000-wire['max_output_tokens'] if getattr(client,'dimension_coverage',False) else 96000
+    if len(json.dumps(wire,ensure_ascii=False).encode()) > maximum:
+        raise ValueError('完整日评请求超过'+str(maximum)+'字节，未截断或发送')
     return call(client,root,name,data,schema,instructions)
 
 
@@ -160,7 +179,8 @@ def frozen_plan(source, packet, day, all_turns):
 
 def evaluate(packet, day, root, client, plan_from=None, *, joint_candidate=False):
     started = time.monotonic()
-    groups, _, selection = prepare(packet,day,root/'source',limit=10**9)
+    coverage_reading=getattr(client,'dimension_coverage',False)
+    groups, _, selection = prepare(packet,day,root/'source',limit=10**9,allow_input_only=coverage_reading)
     all_turns = {'t'+str(i+1):t for i,t in enumerate(turns(groups).values())}
     if not all_turns:
         categories={entry.get('category') for entry in selection.get('excluded',[])}
@@ -174,7 +194,7 @@ def evaluate(packet, day, root, client, plan_from=None, *, joint_candidate=False
         atomic(root/'task-plan-reused.json',dict(source=str(plan_from),selected_sha256=digest(tasks)))
     else:
         listing = directory(all_turns)
-        options=windows(all_turns,listing)
+        options=windows(all_turns,listing,allow_input_only=coverage_reading)
         if not options:
             raise ValueError('没有可完整交付的任务窗口，不能用截断文本冒充完整任务')
         available={all_turns[w['start']]['session'] for w in options}
@@ -185,7 +205,7 @@ def evaluate(packet, day, root, client, plan_from=None, *, joint_candidate=False
         client.reasoning_effort=None
         client.output_token_limit = 2200
         plan = checked_call(client,root,'task-plan',plan_data,plan_schema(options),PLAN)
-        tasks,records,selection_result=select_candidates(plan,options,all_turns)
+        tasks,records,selection_result=select_candidates(plan,options,all_turns,allow_input_only=coverage_reading)
         atomic(root/'task-selection.json',selection_result)
         client.reasoning_effort=effort
     atomic(root/'selected-tasks.json',tasks)
@@ -205,6 +225,8 @@ def evaluate(packet, day, root, client, plan_from=None, *, joint_candidate=False
             quotes=[dict(record_id=e['record_id'],quote=e['quote'],origin=e['origin']) for e in cell['evidence']]))
     result=report(final,packet,day,records,normalize_observed=True)
     result['limitations']=list(dict.fromkeys(result.get('limitations',[])+value.get('limitations',[])))
+    if any(not any(row['role']=='assistant' and not row.get('boundary_context') for row in task['records']) for task in tasks):
+        result['limitations'].append('部分任务仅保存本人输入或工具过程，未保存AI实际回复；只评价可由本人原话确认的安排，不推断执行效果或已验收。')
     if result['score_status']=='observation_only' and not result['score_reason'].strip():
         result['score_reason']='当日记录形成了部分维度的评分，未形成四维总分。'
     # 正式day契约与旧周报告分开，不再用起止同日的week伪装日评。

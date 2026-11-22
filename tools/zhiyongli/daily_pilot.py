@@ -146,7 +146,7 @@ def normalized(event):
     return role,text
 
 
-def prepare(packet,day,root,limit=5):
+def prepare(packet,day,root,limit=5,*,allow_input_only=False):
     started=time.monotonic();groups=defaultdict(list);packet_hash=digest(packet)
     for e in packet['events']:
         # 日期以北京时间计算；UTC午夜附近不能按字符串前十位误分到另一日。
@@ -205,7 +205,7 @@ def prepare(packet,day,root,limit=5):
         trivial=all(r['text'].strip() in {'“”','""',"''",'当前是什么模型','当前是什么模型？','你是什么模型','你是什么模型？'} for r in users)
         if not personal or trivial:
             excluded.append(dict(session=digest(key),category='trivial_activity' if personal else 'background',reason='没有可评分任务，系统标题/自动消息/图片占位不作本人行为'));continue
-        if not any(r['role'] in {'assistant','tool'} for r in prepared):
+        if not allow_input_only and not any(r['role'] in {'assistant','tool'} for r in prepared):
             excluded.append(dict(session=digest(key),category='missing_feedback',reason='仅请求文本，缺少会话响应或执行过程，保留来源但不作为完整对话抽取'));continue
         signature=digest(dict(packet=packet_hash,day=day,session=key))
         eligible.append(dict(session=digest(key),selection_hash=signature,records=prepared))

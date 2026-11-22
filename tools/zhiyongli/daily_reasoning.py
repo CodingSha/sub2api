@@ -8,7 +8,7 @@ from daily_tasks import tool_directory
 from review_schema import obj, array, enum, compact
 from runtime import RUBRIC, atomic, digest
 
-VERSION='context-first-daily-20261120.50'
+VERSION='context-first-daily-20261122.51'
 REFERENCE_CASES={
     'P':'''下面仅校准原档解释，来自用户认可的历史对话评估，不是今日证据，禁止引用其中行为或数字为今日加分。
 P1参考90：用户纠正“评分应该是AI使用表现的好坏”，要求基于完整任务过程解释哪些行为支持哪些维度。目标、对象和可接受交付能对应，而不是因为措辞长或任务复杂。P2参考90：决策文件、发布分支及绑定具体元素的批注与当前工作有明确对应，不要求把可访问原件再抄一遍。P3参考80：控制改造范围具体，但“可靠、满意、准备上线”等接受条件仍需后续澄清。
@@ -136,7 +136,7 @@ def normalize_facts(facts, root):
 
 def checked_workflows(client, root, facts, tasks, send):
     """工作流归属单独有界纠正，不改本人动作、判档或原回执。"""
-    from daily_assessment import workflow_selected
+    from daily_assessment import workflow_selected_in_task
     def issues(workflows):
         errors=[]
         for task in tasks:
@@ -147,7 +147,7 @@ def checked_workflows(client, root, facts, tasks, send):
                 if (usage['name'],usage['tool_ref']) not in allowed:
                     errors.append(task['id']+'：调用名称与工具来源不一致')
                 if usage['selection']=='用户明确选择' and (not refs or any(ref not in people for ref in refs)
-                        or not any(workflow_selected(usage['name'],people.get(ref,'')) for ref in refs)):
+                        or not workflow_selected_in_task(usage['name'],refs,task['records'])):
                     errors.append(task['id']+'：用户原话没有选择所述工作流')
                 if usage['selection']=='AI自主调用' and refs:
                     errors.append(task['id']+'：AI自主调用不能挂本人选择依据')
@@ -158,11 +158,23 @@ def checked_workflows(client, root, facts, tasks, send):
     schemas=facts_schema(tasks,compress=False)['properties']['task_summaries']['properties']
     schema=obj({key:value['properties']['workflow'] for key,value in schemas.items()})
     repaired=send(client,root,'workflow-attribution-repair',dict(tasks=tasks,previous_workflows=workflows,errors=errors),schema,
-        '只核对各任务实际Skill/MCP调用及选择主体，不评分。调用名和tool_ref取本任务workflow_index。用户明确选择须有同任务本人原话明确点名该工作流或MCP服务；仅AI主动调用、用户未点名时保留AI自主调用并令user_refs为空。不能凭AI执行或普通委派推定本人选择。只返回各任务的workflow数组；无实际作用可为空，不改写其他事实。')
-    if issues(repaired):raise ValueError('工作流归属有界纠正后仍不符：'+'；'.join(issues(repaired)))
+        '只核对各任务实际Skill/MCP调用及选择主体，不评分。调用名和tool_ref取本任务workflow_index。用户明确选择须有同任务本人原话明确点名，或紧邻AI提出使用该具体工作流的方案后本人明确说按该方案执行；普通继续不算采纳。仅AI自主调用时令user_refs为空。不能凭AI执行或普通委派推定本人选择。只返回各任务的workflow数组；无实际作用可为空，不改写其他事实。')
+    unresolved=issues(repaired)
+    excluded=[]
+    if unresolved and getattr(client,'dimension_coverage',False):
+        # 无法核实的工具摘要不冒充本人选择，也不使已有独立行为全部作废。
+        for key,usages in repaired.items():
+            kept=[]
+            for usage in usages:
+                one={task['id']:([usage] if task['id']==key else []) for task in tasks}
+                errors=issues(one)
+                if errors:excluded.append(dict(task=key,usage=usage,reasons=errors))
+                else:kept.append(usage)
+            repaired[key]=kept
+    elif unresolved:raise ValueError('工作流归属有界纠正后仍不符：'+'；'.join(unresolved))
     result=json.loads(json.dumps(facts,ensure_ascii=False))
     for key,workflow in repaired.items():result['task_summaries'][key]['workflow']=workflow
-    atomic(root/'workflow-attribution-checked.json',dict(previous_sha256=digest(workflows),workflows=repaired))
+    atomic(root/'workflow-attribution-checked.json',dict(previous_sha256=digest(workflows),workflows=repaired,**(dict(excluded=excluded) if excluded else {})))
     return result
 
 
@@ -170,9 +182,14 @@ def allocated_schema(actions, fragments, decision_fragments=None):
     routes={}
     for identity, action in actions.items():
         local=[ref for ref, fragment in fragments.items() if fragment['record_id']==action['record_id']]
+        if action.get('quote'):
+            local=[ref for ref in local if fragments[ref]['quote']==action['quote']]
         def behavior(*items, **extra):
             return obj(dict(fragment_id=enum(*local),primary_item=enum(*items),origin=enum('personal','supplied'),**extra))
-        ordinary=behavior(*(code for code in RUBRIC['items'] if code!='J3'),asset_query=string(80))
+        assets=[name for name in dict.fromkeys(action.get('selected_asset',[])) if any(
+            name in fragment['quote'] for fragment in fragments.values() if fragment['record_id']==action['record_id'])]
+        query=enum('',*assets) if action.get('quote') else string(80)
+        ordinary=behavior(*(code for code in RUBRIC['items'] if code!='J3'),asset_query=query)
         options=[ordinary,dict(type='null')]
         if identity in (decision_fragments or {}):
             options.append(obj(dict(fragment_id=enum(decision_fragments[identity]),primary_item=enum('J3'),origin=enum('personal'))))
@@ -189,6 +206,10 @@ def allocate(client,root,data,tasks,send,name='behaviors',*,unscored_refs=()):
     actions=data['actions']
     decision_fragments={}
     for identity,action in actions.items():
+        # 行为阅读已定位的独立原句优先于消息的粗分块，避免不同决定被迫共用重叠引文。
+        if action.get('quote'):
+            quote=original_quote(delivered[action['record_id']]['text'],action['quote'])
+            fragments['action-'+digest([action['record_id'],quote])[:16]]=dict(record_id=action['record_id'],quote=quote)
         quote=action['result_decision_quote'].strip()
         if not quote:
             continue
@@ -346,6 +367,9 @@ def _judge_call(client, root, name, data, schema, send):
                 cell.pop('summary');changed.append([code,'summary','unused'])
             if 'negative' not in cell and (cell.get('band') is None or type(cell.get('band')) is int and cell['band'] in (70,80,90,100)):
                 cell['negative']=None;changed.append([code,'negative','not_applicable'])
+            if (getattr(client,'dimension_coverage',False) and cell.get('band')==100
+                    and cell.get('negative') is None and isinstance(cell.get('next_band'),str) and cell['next_band']):
+                cell['next_band']='';changed.append([code,'next_band','no_higher_band'])
             # 模型已明确撤回计分时，合法候选编号不再是计分引用；不改变档位或事实评语。
             ids=cell.get('refs')
             eligible=data.get('items',{}).get(code,{}).get('eligible_refs',[])
@@ -517,7 +541,11 @@ def assess(client, root, tasks, originals, send):
     client.reasoning_effort=None;client.temperature=0;client.output_token_limit=7000
     delivered={r['id']:r for task in tasks for r in task['records']}
     schema=facts_schema(tasks)
-    facts=send(client,root,'facts',dict(tasks=tasks),schema,FACTS)
+    if getattr(client,'dimension_coverage',False):
+        from daily_coverage import read_facts
+        facts=read_facts(client,root,tasks,delivered,send)
+    else:
+        facts=send(client,root,'facts',dict(tasks=tasks),schema,FACTS)
     coverage=None
     try:
         coverage=check_fact_coverage(facts,delivered)

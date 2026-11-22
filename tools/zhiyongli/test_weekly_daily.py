@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from runtime import atomic, digest
-from weekly_daily import evaluate, prepared, sha
+from weekly_daily import evaluate, prepared, sha, checked_call
 from workday_scope import window
 
 
@@ -69,6 +69,20 @@ class Client:
 
 
 class WeeklyDailyTests(unittest.TestCase):
+    def test_large_quality_review_splits_whole_tasks_without_cutting_text(self):
+        tasks=[dict(id='t'+str(i),records=[dict(id='u'+str(i),role='user',text='x'*100000)]) for i in range(2)]
+        client=SimpleNamespace(config=SimpleNamespace(model='test'),output_token_limit=4500)
+        data=dict(tasks=tasks,read_records=[])
+        with TemporaryDirectory() as tmp, patch('weekly_daily.call',return_value=dict(issues=[])) as send:
+            checked_call(client,Path(tmp),'quality-0',data,dict(type='object'),'核对事实')
+            self.assertEqual(len(send.call_args_list),2)
+            self.assertEqual([t for args in send.call_args_list for t in args.args[3]['tasks']],tasks)
+            self.assertTrue((Path(tmp)/'quality-0-batch-coverage.json').exists())
+        with TemporaryDirectory() as tmp, patch('weekly_daily.call') as send:
+            with self.assertRaisesRegex(ValueError,'超过既有全局预算'):
+                checked_call(client,Path(tmp),'judgment',data,dict(type='object'),'判断')
+            send.assert_not_called()
+
     def test_repair_input_and_later_received_repair_do_not_replace_published_allocation(self):
         with TemporaryDirectory() as tmp:
             state=Path(tmp);sources,job=fixture(state);root=state/'3/review'
@@ -83,9 +97,9 @@ class WeeklyDailyTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             state=Path(tmp);sources,job=fixture(state);client=Client()
             first=evaluate(sources,job,state,state/'week',client)['reports'][0]
-            self.assertIsNone(first['score'])
-            self.assertIsNone(first['exact'])
-            self.assertEqual(first['score_status'],'observation_only')
+            self.assertEqual(first['score'],'16.0')
+            self.assertEqual(first['exact'],'16')
+            self.assertEqual(first['score_status'],'scored')
             self.assertEqual(first['dimensions'][0]['score'],'80.0')
             self.assertEqual(first['items'][0]['evidence'][0]['occurred_at'],'2026-11-18T09:36:00+08:00')
             self.assertEqual(first['items'][0]['evidence'][0]['source_hash'],sha('请比较两份报价并说明差异原因。'))
@@ -105,7 +119,7 @@ class WeeklyDailyTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             state=Path(tmp);sources,job=fixture(state,active=False);client=Client()
             result=evaluate(sources,job,state,state/'week',client)['reports'][0]
-            self.assertEqual(result['score_status'],'no_activity');self.assertIsNone(result['score']);self.assertFalse(client.sent)
+            self.assertEqual(result['score_status'],'no_activity');self.assertEqual(result['score'],'0.0');self.assertFalse(client.sent)
             with self.assertRaisesRegex(ValueError,'缺少工作日'):prepared(sources[:4],job,state)
 
     def test_wrong_identity_changed_body_and_unchecked_day_are_rejected(self):

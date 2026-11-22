@@ -83,7 +83,7 @@ func TestWeeklyDailyEvidenceScoresAndScope(t *testing.T) {
 	}
 }
 
-func TestWeeklyDailyMissingDimensionKeepsAnalysisWithoutTotal(t *testing.T) {
+func TestWeeklyDailyMissingDimensionKeepsFixedWeights(t *testing.T) {
 	r := weeklyDailyFixture(t)
 	for i := range r.Items {
 		if r.Items[i].Code[:1] != "P" {
@@ -92,12 +92,34 @@ func TestWeeklyDailyMissingDimensionKeepsAnalysisWithoutTotal(t *testing.T) {
 			r.Items[i].Evidence = nil
 		}
 	}
-	// 即使输入伪造了总分，导入端也按分项重算，不能发布单维度的周总分。
+	// 即使输入伪造了总分，也按固定权重重算，P90只贡献18分。
 	r.Score, r.Exact = ptr("90.0"), ptr("90")
 	if err := r.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if r.Score != nil || r.Exact != nil || r.ScoreStatus != "observation_only" || r.Dimensions[0].Score == nil || *r.Dimensions[0].Score != "90.0" || r.Dimensions[1].Score != nil {
-		t.Fatal("缺维度须保留分析且不生成综合分", r)
+	if r.Score == nil || *r.Score != "18.0" || r.Exact == nil || *r.Exact != "18" || r.ScoreStatus != "scored" || r.Dimensions[0].Score == nil || *r.Dimensions[0].Score != "90.0" || r.Dimensions[1].Score != nil {
+		t.Fatal("缺维度按固定权重影响周分，不能补维度分或重新归一", r)
+	}
+	r.PolicyVersions.Aggregation = legacyWeeklyDailyAggregation
+	if err := r.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if r.Score != nil || r.ScoreStatus != "observation_only" {
+		t.Fatal("历史周分合同不能静默改写", r)
+	}
+}
+
+func TestWeeklyDailyNoActivityHasZeroUsageScore(t *testing.T) {
+	r := weeklyDailyFixture(t)
+	r.Items = nil
+	r.WeeklyReview.Conversations = map[string]DailyTask{}
+	r.WeeklyReview.Behaviors = map[string]DailyBehavior{}
+	r.WeeklyReview.SourceLabels, r.WeeklyReview.SourceSessions = map[string]string{}, map[string]string{}
+	r.ScoreStatus, r.ScoreReason = "no_activity", "五日无有效使用"
+	if err := r.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if r.Score == nil || *r.Score != "0.0" || r.Rating != nil || len(r.Dimensions) != 0 {
+		t.Fatal(r)
 	}
 }

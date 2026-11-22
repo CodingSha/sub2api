@@ -9,8 +9,10 @@ import (
 	"time"
 )
 
-const WeeklyDailyVersion = "weekly-from-daily-20261122.1"
-const WeeklyDailyAggregation = "weekly-complete-dimensions-20261122.2"
+const WeeklyDailyVersion = "weekly-from-daily-20261122.2"
+const legacyWeeklyDailyVersion = "weekly-from-daily-20261122.1"
+const WeeklyDailyAggregation = "weekly-fixed-coverage-20261122.3"
+const legacyWeeklyDailyAggregation = "weekly-complete-dimensions-20261122.2"
 
 // DailyReportSource 绑定同人每日当前已发布修订；日分不参与周分计算。
 type DailyReportSource struct {
@@ -27,11 +29,11 @@ type WeeklyReview struct {
 
 func (r *Result) validateWeeklyReview() error {
 	w := r.WeeklyReview
-	if r.PeriodType != "week" || r.DailyReview != nil || w == nil || w.Version != WeeklyDailyVersion || w.Model != "deepseek-v4.1-flash-local" || !hashValid(w.RequestDigest) || !hashValid(r.SourceDigest) || !strings.Contains(r.UserEmail, "@") {
+	if r.PeriodType != "week" || r.DailyReview != nil || w == nil || (w.Version != WeeklyDailyVersion && w.Version != legacyWeeklyDailyVersion) || w.Model != "deepseek-v4.1-flash-local" || !hashValid(w.RequestDigest) || !hashValid(r.SourceDigest) || !strings.Contains(r.UserEmail, "@") {
 		return invalid("新版周评缺少明确人员、冻结日评来源或模型回执")
 	}
 	p := r.PolicyVersions
-	if p.Scale != ScaleVersion || p.Rules != RulesVersion || p.Review != WeeklyDailyVersion || p.Aggregation != WeeklyDailyAggregation || p.Scope != WorkdayScopeVersion || p.Rating != "G2-proposal28" {
+	if p.Scale != ScaleVersion || p.Rules != RulesVersion || p.Review != w.Version || (p.Aggregation != WeeklyDailyAggregation && p.Aggregation != legacyWeeklyDailyAggregation) || p.Scope != WorkdayScopeVersion || p.Rating != "G2-proposal28" {
 		return invalid("新版周评版本未登记")
 	}
 	a, err := date(r.PeriodStart)
@@ -57,7 +59,7 @@ func (r *Result) validateWeeklyReview() error {
 	if r.TaskReview != nil || r.SampleInitial != nil || r.Eligibility != nil || r.Assessment != nil || len(r.Coverage) > 0 || len(r.WeeklyReports) > 0 || len(r.GapDispositions) > 0 {
 		return invalid("新版周评不能混入旧周评、日分平均或月评级来源")
 	}
-	return r.validateTaskEvidence(&w.DailyReview, 5*len(dates), 160000*len(dates), 40*len(dates), func(at time.Time) bool {
+	return r.validateTaskEvidence(&w.DailyReview, 5*len(dates), 160000*len(dates), func(at time.Time) bool {
 		for _, day := range dates {
 			start, _ := time.Parse(time.RFC3339, day+"T08:00:00+08:00")
 			if !at.Before(start) && at.Before(start.Add(10*time.Hour)) {

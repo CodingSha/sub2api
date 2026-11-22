@@ -63,7 +63,7 @@
           <p v-if="recheckError" role="alert" class="text-red-600">{{ recheckError }}</p>
         </div>
         <template v-else-if="detail">
-          <div class="mb-5 flex items-center justify-between gap-4 text-sm"><span>{{ periodLabel(detail) }} · {{ statusText[detail.publication_status] }}</span><RouterLink :to="{path:'/zhiyongli/rules',query:{version:detail.policy_versions.rules}}" class="text-primary-700 dark:text-primary-400">评分规则</RouterLink></div>
+          <div class="mb-5 flex items-center justify-between gap-4 text-sm"><span>{{ periodLabel(detail) }} · {{ statusText[detail.publication_status] }}</span><RouterLink :to="{path:'/zhiyongli/rules',query:{version:detail.policy_versions.rules,period_type:detail.period_type,aggregation:detail.policy_versions.aggregation}}" class="text-primary-700 dark:text-primary-400">评分规则</RouterLink></div>
           <ReportBody :key="detail.id" :report="detail" review-details />
         </template>
         <template #footer>

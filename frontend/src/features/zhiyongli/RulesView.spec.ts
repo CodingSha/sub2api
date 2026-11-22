@@ -4,8 +4,9 @@ import { reactive } from 'vue'
 import RulesView from './RulesView.vue'
 import rules16 from '../../../../docs/ZHIYONGLI_SCORING_RULES_V1_6.md?raw'
 import dailyRules from '../../../../docs/ZHIYONGLI_SCORING_RULES_V1_6_DAILY.md?raw'
+import weeklyRules from '../../../../docs/ZHIYONGLI_SCORING_RULES_V1_6_WEEKLY_20261122.md?raw'
 
-const route = reactive<{ query: { version?: string; period_type?: string } }>({ query: {} })
+const route = reactive<{ query: { version?: string; period_type?: string; aggregation?: string } }>({ query: {} })
 vi.mock('vue-router', () => ({ useRoute: () => route }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ isAdmin: false }) }))
 let downloaded: Blob
@@ -38,7 +39,7 @@ describe('版本化评分规则', () => {
       reader.onload = () => resolve(String(reader.result))
       reader.readAsText(downloaded)
     })
-    expect(text).toBe(rules16)
+    expect(text).toBe(weeklyRules + '\n\n' + rules16)
     wrapper.unmount()
     expect(revokeUrl).toHaveBeenCalled()
   })
@@ -76,6 +77,10 @@ describe('版本化评分规则', () => {
     route.query = { version: '1.6', period_type: 'week' }
     await flushPromises()
     expect(wrapper.text()).not.toContain('每日评审与周评分')
+    route.query = { version: '1.6', period_type: 'week', aggregation: 'weekly-fixed-coverage-20261122.3' }
+    await flushPromises()
+    expect(wrapper.text()).toContain('仅P为80时周分为16')
+    expect(wrapper.text()).toContain('Skill运用与工作流如何体现')
     wrapper.unmount()
   })
 })
