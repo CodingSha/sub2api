@@ -42,7 +42,7 @@ async function resetPeriod() {
   const current = ++request
   loading.value=true;error.value='';report.value=null;reports.value=[];selectedId.value=null;page.value=1;total.value=0
   try {
-    const result = await listReports(false,{period_type:periodType,aggregation:report?.policy_versions.aggregation.value,page:1})
+    const result = await listReports(false,{period_type:periodType.value,page:1})
     if(current!==request) return
     reports.value=result.items;total.value=result.total;selectedId.value=result.items[0]?.id ?? null
     await loadReport()
@@ -51,7 +51,7 @@ async function resetPeriod() {
 }
 async function loadMore() {
   const current=++request;loading.value=true;error.value=''
-  try {const result=await listReports(false,{period_type:periodType,aggregation:report?.policy_versions.aggregation.value,page:page.value+1});if(current===request){reports.value.push(...result.items);total.value=result.total;page.value++}}
+  try {const result=await listReports(false,{period_type:periodType.value,page:page.value+1});if(current===request){reports.value.push(...result.items);total.value=result.total;page.value++}}
   catch(e){if(current===request)error.value=(e as {message:string}).message}
   finally{if(current===request)loading.value=false}
 }
