@@ -4,7 +4,7 @@
       <header class="flex flex-wrap items-center justify-between gap-4">
         <p class="text-sm text-gray-500 dark:text-gray-400">每日查看维度分析，每周形成综合评分。</p>
         <div class="flex items-center gap-3">
-          <Select v-model="periodType" :options="periodOptions" class="w-28" aria-label="评分周期类型" @change="resetPeriod" />
+          <Select v-model="periodType" :options="periodOptions" class="w-36" aria-label="评分周期类型" @change="resetPeriod" />
           <Select v-if="reports.length" v-model="selectedId" :options="reportOptions" class="w-72" :aria-label="periodType === 'day' ? '选择评分日期' : '选择评分周期'" @change="loadReport" />
           <RouterLink :to="{path:'/zhiyongli/rules',query:{version:report?.policy_versions.rules,period_type:periodType}}" class="btn btn-secondary">评分规则</RouterLink>
         </div>
