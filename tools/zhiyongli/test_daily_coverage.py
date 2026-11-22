@@ -83,6 +83,35 @@ class CoverageTests(unittest.TestCase):
                     result=read_facts(None,Path(tmp),[task],{r['id']:r for r in rows},send)
                     self.assertEqual(len(result['actions']),2);self.assertEqual(len(calls),3)
 
+    def test_failed_quote_copy_uses_exact_local_fragment(self):
+        row=dict(id='u',role='user',text='请检查 a&#x20;b 的路径。')
+        task=dict(id='t',records=[row],workflow_index=[]);stages=[]
+        def send(client,root,stage,data,schema,instructions):
+            stages.append(stage)
+            if stage.endswith('-quote-locator'):
+                self.assertEqual(data['source_fragments']['0']['0-0'],row['text'])
+                return dict(locations={'0':'0-0'})
+            if stage.endswith('-quote-repair'):return dict(quotes={'0':'请检查 a b 的路径。'})
+            return dict(task_summaries={'t':dict(title='核查',goal='检查路径',outcome='',workflow=[])},
+                actions=[dict(record_id='u',action='要求核查路径',quote='请检查 a b 的路径。',result_decision_quote='',selected_asset=[])],no_action_refs=[])
+        with TemporaryDirectory() as tmp:
+            result=read_facts(None,Path(tmp),[task],{'u':row},send)
+            self.assertEqual(result['actions'][0]['quote'],row['text'])
+        self.assertEqual(len(stages),4)
+
+    def test_empty_extraction_checks_actual_outer_user_delegation(self):
+        row=dict(id='u',role='user',text='请按JSON返回这段材料的摘要。')
+        task=dict(id='t',records=[row],workflow_index=[]);stages=[]
+        def send(client,root,stage,data,schema,instructions):
+            stages.append(stage);confirm=stage.endswith('-no-action-confirm')
+            return dict(task_summaries={'t':dict(title='摘要',goal='整理材料',outcome='',workflow=[])},
+                actions=[dict(record_id='u',action='委派摘要整理',quote=row['text'],result_decision_quote='',selected_asset=[])] if confirm else [],
+                no_action_refs=[] if confirm else ['u'])
+        with TemporaryDirectory() as tmp:
+            result=read_facts(None,Path(tmp),[task],{'u':row},send)
+            self.assertEqual(len(result['actions']),1)
+        self.assertEqual(len(stages),2)
+
     def test_single_record_output_limit_uses_one_explicit_capacity_retry(self):
         from model_config import ModelError
         row=dict(id='u',role='user',text='明确要求');task=dict(id='t',records=[row],workflow_index=[])

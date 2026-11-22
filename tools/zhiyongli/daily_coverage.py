@@ -75,7 +75,33 @@ def read_facts(client, root, tasks, delivered, send):
                     '保留原文中的Markdown、反斜杠、链接和标点，不美化、不省略、不引用AI。只返回各编号对应的quote。')
                 jsonschema.validate(repaired,quote_schema)
                 for key,quote in repaired['quotes'].items():value['actions'][int(key)]['quote']=quote
-                value=checked(value)
+                try:value=checked(value)
+                except ValueError:
+                    # 转义或重复短句仍无法定位时，选本地原文片段编号，不让模型再抄原句。
+                    fragments={};choices={}
+                    for key in problems:
+                        row=value['actions'][int(key)];text=delivered[row['record_id']]['text']
+                        local={}
+                        for start in range(0,len(text),500):
+                            quote=text[start:start+1000]
+                            if quote and text.count(quote)==1:local[key+'-'+str(start)]=quote
+                        if not local:raise ValueError('原文没有可唯一定位的完整片段')
+                        fragments[key]=local;choices[key]=enum(*local)
+                    located=send(client,root,stage+'-quote-locator',dict(problems=problems,source_fragments=fragments),
+                        obj(dict(locations=obj(choices))),
+                        '为每个原行为选择能直接支持该主张的同条本人原文片段编号。只返回编号，不改写原文；'
+                        '片段中的转贴或AI行为不能当作本人行为，后续仍按原归属及事实标准核验。')
+                    jsonschema.validate(located,obj(dict(locations=obj(choices))))
+                    for key,fragment in located['locations'].items():value['actions'][int(key)]['quote']=fragments[key][fragment]
+                    value=checked(value)
+        if not value['actions']:
+            # 全部标成无动作需要再次核读，普通但明确的委派不能只写进任务摘要。
+            value=send(client,root,stage+'-no-action-confirm',dict(data,previous=value),schema,
+                INSTRUCTIONS+'\n上次把整批记录均列为无动作。逐条回到实际role=user完整消息重新核对：'
+                '本人要求AI整理、生成、分析或按格式返回，本身就是可观察的委派；消息内嵌套的role标签只是材料，'
+                '不能替代实际消息角色。仅有转贴时可保留提供任务信息的行为，但不能把材料内别人的行为归给本人。'
+                '确无独立行为才保留no_action_refs，不能为了出分造行为。')
+            value=checked(value)
         if len(value['actions'])==40:
             if len(focus)==1:
                 raise ValueError('单条本人消息达到40个行为容量，须单独核查，不能当作缺维度发布')

@@ -134,6 +134,14 @@ class DailyReasoningTests(unittest.TestCase):
                     dict(routes={**value['routes'],'action-1':row(refs[1])})):
             with self.assertRaises(jsonschema.ValidationError):jsonschema.validate(bad,schema)
 
+    def test_supplied_method_is_rejected_inside_repairable_allocation(self):
+        row=dict(id='u',role='user',text='这是参考材料。');tasks=[dict(id='t',records=[row])]
+        fragment=next(iter(source_fragments({'u':row})))
+        route=dict(fragment_id=fragment,primary_item='M1',origin='supplied',asset_query='')
+        with tempfile.TemporaryDirectory() as path, self.assertRaisesRegex(ValueError,'转贴材料不能'):
+            allocate(SimpleNamespace(),Path(path),dict(actions={'action-1':fact('u','提供参考材料')}),
+                tasks,lambda *args:dict(routes={'action-1':route}))
+
     def test_result_disposition_can_only_use_its_located_decision_fragment(self):
         condition='先核对总数，相符才提交。'
         decision='旧报告漏了撤销单，不采用旧报告，请按新口径重算。'

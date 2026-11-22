@@ -235,6 +235,8 @@ def allocate(client,root,data,tasks,send,name='behaviors',*,unscored_refs=()):
             for identity,route in value['routes'].items() if route is not None]
         if any(row['primary_item']!='E3' and row.get('asset_query','') for row in rows):
             raise ValueError('只有E3归项可以指定复用资产')
+        if any(row['origin']=='supplied' and not row['primary_item'].startswith('P') for row in rows):
+            raise ValueError('转贴材料不能作为本人的方法、判断或效率行为')
         assigned={row['record_id'] for row in rows}
         unscored=set(unscored_refs)
         # 用户记录均为无动作或未决的任务保留原文，不强迫模型补造评分行为。
