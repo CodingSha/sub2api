@@ -7,7 +7,7 @@ import unittest
 import jsonschema
 
 from daily_pilot import call, RUBRIC
-from daily_reasoning import allocate, assess, allocated_schema, check_fact_coverage, check_quality, checked_judgment, fact_coverage, judge_call, judge_schema, normalize_facts, presentation_contract, read_asset_evidence, record_source_contract
+from daily_reasoning import allocate, assess, allocated_schema, check_fact_coverage, check_quality, checked_judgment, checked_workflows, fact_coverage, judge_call, judge_schema, normalize_facts, presentation_contract, read_asset_evidence, record_source_contract
 from daily_behaviors import source_fragments
 from runtime import atomic
 
@@ -26,6 +26,29 @@ def fact(record_id, action):
 
 
 class DailyReasoningTests(unittest.TestCase):
+    def test_workflow_repair_changes_only_call_attribution_and_has_one_attempt(self):
+        tasks=[dict(id='task',records=[dict(id='u',role='user',text='请整理材料。')],
+            workflow_index=[dict(name='some-skill',record_id='tool')])]
+        invalid=dict(name='some-skill',purpose='整理材料',selection='用户明确选择',user_refs=['u'],tool_ref='tool')
+        facts=dict(task_summaries={'task':dict(title='原题',workflow=[invalid])},actions=[fact('u','整理材料')])
+        calls=[]
+        def send(client,root,name,data,schema,instructions):
+            calls.append(name)
+            value={'task':[dict(invalid,selection='AI自主调用',user_refs=[])]}
+            jsonschema.validate(value,schema)
+            return value
+        with tempfile.TemporaryDirectory() as tmp:
+            result=checked_workflows(None,Path(tmp),facts,tasks,send)
+            self.assertEqual(result['actions'],facts['actions'])
+            self.assertEqual(result['task_summaries']['task']['title'],'原题')
+            self.assertEqual(result['task_summaries']['task']['workflow'][0]['selection'],'AI自主调用')
+            self.assertEqual(facts['task_summaries']['task']['workflow'][0],invalid)
+            self.assertEqual(checked_workflows(None,Path(tmp),result,tasks,send),result)
+            self.assertEqual(calls,['workflow-attribution-repair'])
+            def bad(*args):return {'task':[invalid]}
+            with self.assertRaisesRegex(ValueError,'有界纠正后仍不符'):
+                checked_workflows(None,Path(tmp),facts,tasks,bad)
+
     def test_received_coverage_repair_remains_reusable_after_diagnostic_upgrade(self):
         from daily_pilot import request_payload
         from runtime import CompanyClient, digest

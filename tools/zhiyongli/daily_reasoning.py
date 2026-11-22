@@ -134,6 +134,38 @@ def normalize_facts(facts, root):
     return result
 
 
+def checked_workflows(client, root, facts, tasks, send):
+    """工作流归属单独有界纠正，不改本人动作、判档或原回执。"""
+    from daily_assessment import workflow_selected
+    def issues(workflows):
+        errors=[]
+        for task in tasks:
+            people={r['id']:r['text'] for r in task['records'] if r['role']=='user'}
+            allowed={(w['name'],w['record_id']) for w in task['workflow_index']}
+            for usage in workflows[task['id']]:
+                refs=usage['user_refs']
+                if (usage['name'],usage['tool_ref']) not in allowed:
+                    errors.append(task['id']+'：调用名称与工具来源不一致')
+                if usage['selection']=='用户明确选择' and (not refs or any(ref not in people for ref in refs)
+                        or not any(workflow_selected(usage['name'],people.get(ref,'')) for ref in refs)):
+                    errors.append(task['id']+'：用户原话没有选择所述工作流')
+                if usage['selection']=='AI自主调用' and refs:
+                    errors.append(task['id']+'：AI自主调用不能挂本人选择依据')
+        return errors
+    workflows={key:summary['workflow'] for key,summary in facts['task_summaries'].items()}
+    errors=issues(workflows)
+    if not errors:return facts
+    schemas=facts_schema(tasks,compress=False)['properties']['task_summaries']['properties']
+    schema=obj({key:value['properties']['workflow'] for key,value in schemas.items()})
+    repaired=send(client,root,'workflow-attribution-repair',dict(tasks=tasks,previous_workflows=workflows,errors=errors),schema,
+        '只核对各任务实际Skill/MCP调用及选择主体，不评分。调用名和tool_ref取本任务workflow_index。用户明确选择须有同任务本人原话明确点名该工作流或MCP服务；仅AI主动调用、用户未点名时保留AI自主调用并令user_refs为空。不能凭AI执行或普通委派推定本人选择。只返回各任务的workflow数组；无实际作用可为空，不改写其他事实。')
+    if issues(repaired):raise ValueError('工作流归属有界纠正后仍不符：'+'；'.join(issues(repaired)))
+    result=json.loads(json.dumps(facts,ensure_ascii=False))
+    for key,workflow in repaired.items():result['task_summaries'][key]['workflow']=workflow
+    atomic(root/'workflow-attribution-checked.json',dict(previous_sha256=digest(workflows),workflows=repaired))
+    return result
+
+
 def allocated_schema(actions, fragments, decision_fragments=None):
     routes={}
     for identity, action in actions.items():
@@ -505,7 +537,7 @@ def assess(client, root, tasks, originals, send):
             atomic(root/'facts-coverage.json',dict(status='partial',attempted_repair=True,
                 missing_refs=coverage['missing'],covered_refs=sorted(set(coverage['acted'])|set(coverage['no_action'])),
                 limitation='事实阅读修复后仍有未覆盖的用户记录；未将其改记为无动作，评分仅依据已形成的事实。'))
-    facts=normalize_facts(facts,root)
+    facts=checked_workflows(client,root,normalize_facts(facts,root),tasks,send)
     client.output_token_limit=5000
     actions={'action-'+str(index):action for index,action in enumerate(facts['actions'],1)}
     if not actions:

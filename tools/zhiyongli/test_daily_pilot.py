@@ -8,6 +8,19 @@ from unittest.mock import Mock,patch
 from daily_pilot import normalized,prepare,chunks,check_quotes,report,call,RUBRIC,MEMORY_TRANSCRIPT_SUFFIX
 
 class DailyPilotTests(unittest.TestCase):
+    def test_multiline_background_completion_and_automation_keep_context_identity(self):
+        bodies=[
+            'background job pwsh-abc (pwsh: $entries=foreach($x in $rows) {\n @{todo=1; done=2}\n}) finished [status: completed, exit code: 0]. Output:\n完成',
+            '[Automation: 到点了]\n\nAutomation ID: a\nAutomation memory: $CODEX_HOME/automations/a/memory.md\nLast run: 2026-11-15T20:00:00Z\n\n到点了！',
+        ]
+        for body in bodies:
+            event=dict(text=body,actor_class='candidate_user',protocol_role='user')
+            role,text=normalized(event)
+            self.assertEqual(role,'context')
+            self.assertEqual(text,body)
+            for request in ('请检查这条通知：\n'+body,'请设计一个 Automation memory: 路径规则。'):
+                self.assertEqual(normalized(dict(event,text=request))[0],'user')
+
     def test_daily_selection_keeps_only_0800_to_before_1800_personal_actions(self):
         base=dict(session_id='s',api_key_id=1,group_id=1,actor_class='candidate_user',
             protocol_role='user',truncated=False,source=dict(frame='f'))
