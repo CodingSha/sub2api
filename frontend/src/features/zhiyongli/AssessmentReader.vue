@@ -8,7 +8,8 @@
             <template #trigger="{ open, tooltipId }">
               <button type="button" class="inline-flex h-7 w-7 items-center justify-center hover:bg-gray-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500" aria-label="查看周总分计算方式" :aria-describedby="open ? tooltipId : undefined"><Icon name="infoCircle" size="sm" aria-hidden="true" /></button>
             </template>
-            周总分按已观察维度的原权重归一计算，未观察维度不补分。
+            <template v-if="report.policy_versions.aggregation === 'weekly-fixed-coverage-20261122.3'">{{ report.score_reason }}</template>
+            <template v-else>周总分按已观察维度的原权重归一计算，未观察维度不补分。</template>
           </HelpTooltip>
         </span></div>
         <div class="dimension-scores">
