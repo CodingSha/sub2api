@@ -121,6 +121,10 @@ class WeeklyDailyTests(unittest.TestCase):
             result=evaluate(sources,job,state,state/'week',client)['reports'][0]
             self.assertEqual(result['score_status'],'no_activity');self.assertEqual(result['score'],'0.0');self.assertFalse(client.sent)
             with self.assertRaisesRegex(ValueError,'缺少工作日'):prepared(sources[:4],job,state)
+            sources[0]['score_status']='observation_only'
+            observed=evaluate(sources,job,state,state/'observation-week',Client())['reports'][0]
+            self.assertEqual(observed['score'],'0.0');self.assertEqual(observed['score_status'],'scored')
+            self.assertIn('来源与日评齐全',observed['score_reason'])
 
     def test_wrong_identity_changed_body_and_unchecked_day_are_rejected(self):
         for mode in ('identity','body','quality','signature','allocation_input'):

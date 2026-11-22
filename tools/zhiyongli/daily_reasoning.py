@@ -9,6 +9,10 @@ from review_schema import obj, array, enum, compact
 from runtime import RUBRIC, atomic, digest
 
 VERSION='context-first-daily-20261122.51'
+
+class NoPersonalBehavior(ValueError):
+    """已完整复核但只见自动上下文等无本人行为的记录，不属于执行失败。"""
+
 REFERENCE_CASES={
     'P':'''下面仅校准原档解释，来自用户认可的历史对话评估，不是今日证据，禁止引用其中行为或数字为今日加分。
 P1参考90：用户纠正“评分应该是AI使用表现的好坏”，要求基于完整任务过程解释哪些行为支持哪些维度。目标、对象和可接受交付能对应，而不是因为措辞长或任务复杂。P2参考90：决策文件、发布分支及绑定具体元素的批注与当前工作有明确对应，不要求把可访问原件再抄一遍。P3参考80：控制改造范围具体，但“可靠、满意、准备上线”等接受条件仍需后续澄清。
@@ -513,7 +517,7 @@ def check_quality(client,root,tasks,behaviors,judgments,prose,read_records,send,
             judgments.update(presentation_contract(repair(actionable))[0])
             prose=judgment_prose(judgments)
             continue
-        if attempt==1 and all(i['kind']=='wrong_actor' for i in actionable) and getattr(client,'dimension_coverage',False):
+        if attempt==1 and all(i['kind']=='wrong_actor' for i in actionable) and (getattr(client,'dimension_coverage',False) or getattr(client,'review_actor_disputes',False)):
             # 最终主体争议须核对已计行为的本人正证；AI执行同一安排不证明用户没有提出安排。
             decision=obj(dict(upheld=dict(type='boolean'),user_ref=string(96),user_quote=string(1000),reason=string(400,True)))
             decisions_schema=obj(dict(decisions=obj({str(i):decision for i in range(len(actionable))})))
@@ -597,23 +601,27 @@ def assess(client, root, tasks, originals, send):
     client.output_token_limit=5000
     actions={'action-'+str(index):action for index,action in enumerate(facts['actions'],1)}
     if not actions:
+        if getattr(client,'dimension_coverage',False):
+            atomic(root/'no-personal-behavior.json',dict(source_sha256=digest(tasks),facts=facts,coverage=coverage))
+            raise NoPersonalBehavior('完整任务与全部本人记录已复核，未观察到可评分的本人行为。')
         raise ValueError('入选任务未提取到本人行为，禁止生成空评分')
     allocation_data=dict(tasks=tasks,actions=actions,evaluation_objects=OBJECTS,
         anchors={k:v['reasonable'] for k,v in RUBRIC['performance_anchors'].items()},counterexamples=RUBRIC['item_counterexamples'])
     allocation=None
+    allocation_name='behaviors-located-v2' if any(root.glob('*-quote-locator-v2.json')) else 'behaviors'
     try:
-        allocation=allocate(client,root,allocation_data,tasks,send,unscored_refs=coverage['missing']+coverage['no_action'])
+        allocation=allocate(client,root,allocation_data,tasks,send,allocation_name,unscored_refs=coverage['missing']+coverage['no_action'])
         behaviors=catalog(allocation['behaviors'],delivered)
     except (ValueError,jsonschema.ValidationError) as error:
         if isinstance(error,jsonschema.ValidationError):
             from model_config import response_text
             from request_retry import read_receipt
-            path=root/'behaviors.receipt.json'
+            path=root/(allocation_name+'.receipt.json')
             if not path.exists() and getattr(client,'reuse_root',None):path=Path(client.reuse_root)/path.name
             allocation=json.loads(response_text(read_receipt(path)['response']))
             problem=json.dumps(dict(path=list(error.path),constraint=error.validator,expected=error.validator_value),ensure_ascii=False)
         else:problem=str(error)
-        allocation=allocate(client,root,dict(allocation_data,previous=allocation,allocation_errors=problem),tasks,send,'behaviors-repair',
+        allocation=allocate(client,root,dict(allocation_data,previous=allocation,allocation_errors=problem),tasks,send,allocation_name+'-repair',
             unscored_refs=coverage['missing']+coverage['no_action'])
         behaviors=catalog(allocation['behaviors'],delivered)
     origins={('b'+digest([a['record_id'],a['claim'].strip()])[:20]):a['origin'] for a in allocation['behaviors']}

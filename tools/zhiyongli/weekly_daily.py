@@ -53,7 +53,7 @@ def published_quotes(root, catalog):
     # 后续重试可能留下另一份已收到的修复；以实际发布目录反向核对，不能简单取最新阶段。
     fragments=json.loads((root/'source-fragments.json').read_text())
     matches=[]
-    for stage in ('behaviors','behaviors-repair'):
+    for stage in ('behaviors','behaviors-repair','behaviors-located-v2','behaviors-located-v2-repair'):
         if not has_receipt(root,stage):
             continue
         payload=json.loads((root/(stage+'.input.json')).read_text())
@@ -178,6 +178,7 @@ def checked_call(client,root,name,data,schema,instructions):
 
 
 def evaluate(sources, job, state, root, client):
+    client.review_actor_disputes=True
     root.mkdir(parents=True,exist_ok=True,mode=0o700)
     checkpoint(root/'weekly-source.json',dict(version=VERSION,job_id=job['id'],sources_sha256=digest(sources),
         user_id=job['user_id'],scope=job['workday_scope']))
@@ -245,8 +246,9 @@ def evaluate(sources, job, state, root, client):
         for item in result['items']:
             for evidence,key in zip(item['evidence'],judgments.get(item['item_code'],{}).get('refs',[])):
                 evidence.update(id=key,source_hash=sha(evidence['context']),task_title=material['source_labels'][evidence['source_ref']])
-    if tasks or result['score_status']=='no_activity':
-        apply_weekly_score(result)
+    apply_weekly_score(result)
+    if not tasks and any(status=='observation_only' for status in material['statuses']):
+        result['score_reason']='五个工作日来源与日评齐全，但未观察到可评分的本人使用行为，本周使用评分为0分；各维度保留未观察到。'
     atomic(root/'quality.json',dict(quality_status='model_checked' if tasks else 'not_required',item_count=len(judgments)))
     bundle=dict(schema_version=1,source_name='weekly-daily-'+str(job['period_start'])+'-'+str(job['user_id'])+'-'+digest(sources)[:12],reports=[result])
     atomic(root/'report.json',result)

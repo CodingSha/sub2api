@@ -216,7 +216,12 @@ def evaluate(packet, day, root, client, plan_from=None, *, joint_candidate=False
         from daily_joint_judgment import assess as joint_assess
         atomic(root/'quality.json',dict(quality_status='joint_candidate_unvalidated'))
         assessor=joint_assess
-    value,read_records=assessor(client,root,tasks,records,checked_call)
+    from daily_reasoning import NoPersonalBehavior
+    try:value,read_records=assessor(client,root,tasks,records,checked_call)
+    except NoPersonalBehavior:
+        atomic(root/'empty.json',dict(day=day,user_id=packet['user_id'],status='observation_only',score=None,
+            reason='当日入选任务已完整复核，仅见自动上下文、重复或转贴内容，未观察到可评分的本人行为。'))
+        return None
     check_assessment(value,delivered,tasks)
     final = dict(summary=value['summary'],strengths='',improvements='',items=[])
     for code,cell in value['items'].items():

@@ -88,7 +88,7 @@ class CoverageTests(unittest.TestCase):
         task=dict(id='t',records=[row],workflow_index=[]);stages=[]
         def send(client,root,stage,data,schema,instructions):
             stages.append(stage)
-            if stage.endswith('-quote-locator'):
+            if stage.endswith('-quote-locator-v2'):
                 self.assertEqual(data['source_fragments']['0']['0-0'],row['text'])
                 return dict(locations={'0':'0-0'})
             if stage.endswith('-quote-repair'):return dict(quotes={'0':'请检查 a b 的路径。'})
@@ -111,6 +111,34 @@ class CoverageTests(unittest.TestCase):
             result=read_facts(None,Path(tmp),[task],{'u':row},send)
             self.assertEqual(len(result['actions']),1)
         self.assertEqual(len(stages),2)
+
+    def test_export_requires_received_capacity_parent_and_complete_partition(self):
+        from daily_export import completed_capacity_continuation
+        from runtime import digest
+        parent=dict(status='received',request_sha256='a'*64,response=dict(status='incomplete',incomplete_details=dict(reason='max_output_tokens')))
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp);path=root/'coverage-t-0.receipt.json';path.write_text(json.dumps(parent))
+            (root/'coverage-t-0-output-split.json').write_text(json.dumps(dict(receipt_sha256=digest(parent),focus_user_refs=['u1','u2'])))
+            batches=[dict(stage='coverage-t-0-output-'+side,focus_user_refs=[ref]) for side,ref in [('left','u1'),('right','u2')]]
+            (root/'coverage-read.json').write_text(json.dumps(dict(status='complete',batches=batches)))
+            for batch in batches:
+                (root/(batch['stage']+'.receipt.json')).write_text(json.dumps(dict(status='received',request_sha256='b'*64,response=dict(status='completed'))))
+            self.assertTrue(completed_capacity_continuation(path,root,parent))
+            self.assertFalse(completed_capacity_continuation(path,root,dict(parent,status='unknown')))
+            (root/(batches[1]['stage']+'.receipt.json')).unlink()
+            self.assertFalse(completed_capacity_continuation(path,root,parent))
+
+    def test_reviewed_context_only_input_remains_unscored_observation(self):
+        from daily_reasoning import assess,NoPersonalBehavior
+        row=dict(id='u',role='user',text='<automatic-context>仅有记忆提示</automatic-context>')
+        task=dict(id='t',records=[row],workflow_index=[])
+        def send(*args):return dict(task_summaries={'t':dict(title='上下文',goal='自动提示',outcome='',workflow=[])},actions=[],no_action_refs=['u'])
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            with self.assertRaises(NoPersonalBehavior):assess(SimpleNamespace(dimension_coverage=True),root,[task],{'u':row},send)
+            proof=json.loads((root/'no-personal-behavior.json').read_text())
+            self.assertEqual(proof['coverage']['no_action'],['u'])
+            self.assertFalse((root/'report.json').exists())
 
     def test_single_record_output_limit_uses_one_explicit_capacity_retry(self):
         from model_config import ModelError

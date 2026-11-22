@@ -1,5 +1,6 @@
 """按完整任务分批核对本人行为；保留全上下文，避免全日共用40个动作的瓶颈。"""
 import json
+import re
 import jsonschema
 from daily_behaviors import original_quote
 from review_schema import obj, array, enum
@@ -82,12 +83,13 @@ def read_facts(client, root, tasks, delivered, send):
                     for key in problems:
                         row=value['actions'][int(key)];text=delivered[row['record_id']]['text']
                         local={}
-                        for start in range(0,len(text),500):
-                            quote=text[start:start+1000]
-                            if quote and text.count(quote)==1:local[key+'-'+str(start)]=quote
+                        for match in re.finditer(r'[^，,\n。；！？]+[，,\n。；！？]*',text):
+                            for start in range(match.start(),match.end(),200):
+                                quote=text[start:min(start+200,match.end())]
+                                if quote.strip() and text.count(quote)==1:local[key+'-'+str(start)]=quote
                         if not local:raise ValueError('原文没有可唯一定位的完整片段')
                         fragments[key]=local;choices[key]=enum(*local)
-                    located=send(client,root,stage+'-quote-locator',dict(problems=problems,source_fragments=fragments),
+                    located=send(client,root,stage+'-quote-locator-v2',dict(problems=problems,source_fragments=fragments),
                         obj(dict(locations=obj(choices))),
                         '为每个原行为选择能直接支持该主张的同条本人原文片段编号。只返回编号，不改写原文；'
                         '片段中的转贴或AI行为不能当作本人行为，后续仍按原归属及事实标准核验。')

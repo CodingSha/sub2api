@@ -13,6 +13,29 @@ def text_sha(text):
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+def completed_capacity_continuation(path, root, receipt):
+    """仅接受收到超限终态且已按原覆盖清单完成的拆批链，未知请求始终拒绝。"""
+    if (receipt.get('status')!='received' or receipt.get('response',{}).get('status')!='incomplete'
+            or receipt['response'].get('incomplete_details',{}).get('reason')!='max_output_tokens'):
+        return False
+    stage=path.name[:-len('.receipt.json')];marker=path.with_name(stage+'-output-split.json')
+    coverage=root/'coverage-read.json'
+    if not marker.exists() or not coverage.exists():return False
+    split=json.loads(marker.read_text());read=json.loads(coverage.read_text())
+    if split['receipt_sha256']!=digest(json.loads(path.read_text())) or read['status']!='complete':return False
+    leaves=[b for b in read['batches'] if b['stage']==stage or b['stage'].startswith(stage+'-output-')]
+    if sorted(ref for b in leaves for ref in b['focus_user_refs'])!=sorted(split['focus_user_refs']):return False
+    from request_retry import read_receipt
+    for leaf in leaves:
+        name=leaf['stage'];target=path.parent/(name+'.receipt.json')
+        if target==path or (target.exists() and read_receipt(target).get('response',{}).get('status')=='incomplete'):
+            target=path.parent/(name+'-output-capacity.receipt.json')
+        if not target.exists():return False
+        final=read_receipt(target)
+        if final.get('status')!='received' or final.get('response',{}).get('status')!='completed':return False
+    return bool(leaves)
+
+
 def bundle(packet, day, root, model):
     scope=validate(packet['workday_scope'])
     if scope!=daily_window(day) or model!='deepseek-v4.1-flash-local':
@@ -35,7 +58,8 @@ def bundle(packet, day, root, model):
             continue
         receipt=read_receipt(path)
         if receipt.get('status')!='received' or receipt.get('response',{}).get('status')!='completed':
-            raise ValueError('日评含未完成模型请求，禁止导出人员评分')
+            if not completed_capacity_continuation(path,root,receipt):
+                raise ValueError('日评含未完成模型请求，禁止导出人员评分')
         receipts.append(dict(request_sha256=receipt['request_sha256'],response_sha256=digest(receipt['response'])))
     review=dict(version=DAILY_VERSION,model=model,request_digest=digest(receipts),
         window_start=day+'T08:00:00+08:00',window_end=scope['observed_until'],
@@ -48,7 +72,7 @@ def bundle(packet, day, root, model):
         empty=json.loads((root/'empty.json').read_text())
         if str(empty['user_id'])!=str(packet['user_id']) or empty['day']!=day or empty['status'] not in {'no_activity','observation_only'}:
             raise ValueError('空日终态与来源身份不符')
-        report.update(score_status=empty['status'],score_reason='当日采集窗口内没有可评的本人使用记录。' if empty['status']=='no_activity' else '当日只有简短查询，没有形成可评分的完整任务。')
+        report.update(score_status=empty['status'],score_reason=empty.get('reason') or ('当日采集窗口内没有可评的本人使用记录。' if empty['status']=='no_activity' else '当日只有简短查询，没有形成可评分的完整任务。'))
     else:
         saved=json.loads((root/'report.json').read_text())
         if saved.get('pilot',{}).get('quality_status')=='failed':
