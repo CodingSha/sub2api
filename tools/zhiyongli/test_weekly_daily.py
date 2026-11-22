@@ -83,7 +83,10 @@ class WeeklyDailyTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             state=Path(tmp);sources,job=fixture(state);client=Client()
             first=evaluate(sources,job,state,state/'week',client)['reports'][0]
-            self.assertEqual(first['score'],'80.0')
+            self.assertIsNone(first['score'])
+            self.assertIsNone(first['exact'])
+            self.assertEqual(first['score_status'],'observation_only')
+            self.assertEqual(first['dimensions'][0]['score'],'80.0')
             self.assertEqual(first['items'][0]['evidence'][0]['occurred_at'],'2026-11-18T09:36:00+08:00')
             self.assertEqual(first['items'][0]['evidence'][0]['source_hash'],sha('请比较两份报价并说明差异原因。'))
             self.assertEqual(len(first['weekly_review']['sources']),5)

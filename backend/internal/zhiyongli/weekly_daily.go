@@ -10,7 +10,7 @@ import (
 )
 
 const WeeklyDailyVersion = "weekly-from-daily-20261122.1"
-const WeeklyDailyAggregation = "weekly-observed-weighted-20261122.1"
+const WeeklyDailyAggregation = "weekly-complete-dimensions-20261122.2"
 
 // DailyReportSource 绑定同人每日当前已发布修订；日分不参与周分计算。
 type DailyReportSource struct {

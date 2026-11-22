@@ -82,3 +82,22 @@ func TestWeeklyDailyEvidenceScoresAndScope(t *testing.T) {
 		})
 	}
 }
+
+func TestWeeklyDailyMissingDimensionKeepsAnalysisWithoutTotal(t *testing.T) {
+	r := weeklyDailyFixture(t)
+	for i := range r.Items {
+		if r.Items[i].Code[:1] != "P" {
+			r.Items[i].State = "unobservable"
+			r.Items[i].Exact, r.Items[i].Score = nil, nil
+			r.Items[i].Evidence = nil
+		}
+	}
+	// 即使输入伪造了总分，导入端也按分项重算，不能发布单维度的周总分。
+	r.Score, r.Exact = ptr("90.0"), ptr("90")
+	if err := r.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if r.Score != nil || r.Exact != nil || r.ScoreStatus != "observation_only" || r.Dimensions[0].Score == nil || *r.Dimensions[0].Score != "90.0" || r.Dimensions[1].Score != nil {
+		t.Fatal("缺维度须保留分析且不生成综合分", r)
+	}
+}

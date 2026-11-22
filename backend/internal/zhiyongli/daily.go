@@ -303,6 +303,13 @@ func (r *Result) validateTaskEvidence(d *DailyReview, taskLimit, byteLimit, beha
 	if observed == 0 {
 		return invalid("已选任务却十二项全空，属于评审执行失败")
 	}
+	// 周综合分要求四维均可评；日评的稀疏维度归一不能用于周评。
+	if r.WeeklyReview != nil && observedWeight != 100 {
+		r.Exact, r.Score = nil, nil
+		r.ScoreStatus = "observation_only"
+		r.ScoreReason = "五日已核材料尚未覆盖四个维度的可评分本人行为，保留已有维度分析，不形成周综合分。"
+		return nil
+	}
 	total.Quo(total, big.NewRat(observedWeight, 1))
 	r.Exact, r.Score = exact(total), display(total)
 	r.ScoreStatus = "scored"
