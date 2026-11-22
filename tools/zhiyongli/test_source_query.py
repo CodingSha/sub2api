@@ -16,6 +16,21 @@ import test_scale
 
 
 class SharedSourceCacheTests(unittest.TestCase):
+    def test_canonical_json_stream_bounds_encoding_memory(self):
+        import tracemalloc
+        value={'body':'中文\\\"\n🙂'*1000000,'nested':[None,True,1,1.5,{},[]]}
+        expected=hashlib.sha256(json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+        tracemalloc.start()
+        try:
+            signature=hashlib.sha256();largest=0
+            for chunk in source_snapshot.json_chunks(value):
+                signature.update(chunk);largest=max(largest,len(chunk))
+            _,peak=tracemalloc.get_traced_memory()
+        finally:tracemalloc.stop()
+        self.assertEqual(expected,signature.hexdigest())
+        self.assertLess(largest,1024*1024)
+        self.assertLess(peak,3*1024*1024)
+
     def test_long_cached_body_keeps_original_bytes_and_detects_tail_corruption(self):
         value = {'text': '合成原文\n"引用"\\路径' * 100000, 'role': 'user'}
         raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()

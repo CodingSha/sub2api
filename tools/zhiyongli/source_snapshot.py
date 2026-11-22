@@ -27,28 +27,63 @@ def require_current_query(snapshot):
 
 
 def save(path, value):
-    raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
-    return save_bytes(path, raw)
+    return save_chunks(path, json_chunks(value))
+
+
+def json_chunks(value):
+    """保持原字节合同；长正文连转义过程也分块，不同时持有整条字符串及编码副本。"""
+    if isinstance(value,str):
+        yield b'"'
+        for offset in range(0,len(value),65536):
+            yield json.dumps(value[offset:offset+65536],ensure_ascii=False)[1:-1].encode()
+        yield b'"'
+    elif isinstance(value,dict):
+        yield b'{'
+        for i,key in enumerate(sorted(value)):
+            if i:yield b','
+            yield from json_chunks(key)
+            yield b':'
+            yield from json_chunks(value[key])
+        yield b'}'
+    elif isinstance(value,(list,tuple)):
+        yield b'['
+        for i,item in enumerate(value):
+            if i:yield b','
+            yield from json_chunks(item)
+        yield b']'
+    else:
+        yield json.dumps(value,ensure_ascii=False,separators=(',',':')).encode()
 
 
 def save_bytes(path, raw):
     """原子写入已经序列化的正文，避免长记录重复生成同一份JSON。"""
+    return save_chunks(path,(raw,))
+
+
+def save_chunks(path, chunks):
     from disk_guard import require_space
-    require_space(path.parent, len(raw))
+    require_space(path.parent)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     tmp = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, 'wb') as f:
-        f.write(raw)
-        f.flush()
-        os.fsync(f.fileno())
+    signature=hashlib.sha256()
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            for chunk in chunks:
+                require_space(path.parent,len(chunk))
+                f.write(chunk);signature.update(chunk)
+            f.flush()
+            os.fsync(f.fileno())
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     os.replace(tmp, path)
     directory_fd = os.open(path.parent, os.O_RDONLY)
     try:
         os.fsync(directory_fd)
     finally:
         os.close(directory_fd)
-    return hashlib.sha256(raw).hexdigest()
+    return signature.hexdigest()
 
 
 def file_sha256(path):
@@ -103,11 +138,16 @@ class ObjectCache:
         return sha
 
     def put(self,revision,value):
-        raw=json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()
-        sha=hashlib.sha256(raw).hexdigest();path=self.root/'objects'/(sha+'.json')
-        if path.exists():
+        staging=self.root/'objects'/('.pending-'+uuid.uuid4().hex)
+        sha=save(staging,value);path=staging.with_name(sha+'.json')
+        try:
+            try:os.link(staging,path)
+            except FileExistsError:pass
             if file_sha256(path)!=sha:raise ValueError('共享原文签名损坏')
-        else:save_bytes(path,raw)
+        finally:staging.unlink()
+        directory_fd=os.open(path.parent,os.O_RDONLY)
+        try:os.fsync(directory_fd)
+        finally:os.close(directory_fd)
         self.db.execute('INSERT OR IGNORE INTO revisions VALUES(?,?)',(revision,sha))
         if self.get(revision)!=sha:raise ValueError('同来源修订映射发生冲突')
         return sha
@@ -188,6 +228,8 @@ def _collect(connection, directory, excluded_keys, since, user_ids=None,shared_r
                             if audit_id not in missing or audit_id in seen:raise ValueError('来源正文重复或越界')
                             cached[audit_id]=cache.put(revisions[audit_id],{key:value[key] for key in AUDIT_COLUMNS})
                             seen.add(audit_id);fetched+=1
+                            # 下一条长正文进入驱动前释放上一条，避免两条聚合历史同时驻留。
+                            del value
                     if seen!=set(missing):raise ValueError('同一稳定快照的修订正文缺失')
                 for audit_id, updated, request_truncated, response_truncated, revision_hash in batch:
                     sig=cached[audit_id]
