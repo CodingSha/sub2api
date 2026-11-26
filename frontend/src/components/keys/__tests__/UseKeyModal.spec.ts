@@ -383,7 +383,7 @@ describe('UseKeyModal', () => {
     expect(codeBlocks.join('\n')).toContain('experimental_bearer_token = "sk-grok-codex-test"')
   })
 
-  it('renders legacy OpenAI Codex config after selecting Codex', async () => {
+  it('keeps legacy OpenAI Codex config available when selected', async () => {
     const wrapper = mount(UseKeyModal, {
       props: {
         show: true,
@@ -403,23 +403,20 @@ describe('UseKeyModal', () => {
       }
     })
 
-    const codexTab = wrapper.findAll('button').find((button) =>
-      button.text().includes('keys.useKeyModal.cliTabs.codexCli')
-    )
-
-    expect(codexTab).toBeDefined()
-    await codexTab!.trigger('click')
+    await wrapper.find('nav[aria-label="Client"]').findAll('button').find((button) => button.text().includes('keys.useKeyModal.cliTabs.codexCli'))!.trigger('click')
+    await wrapper.get('[data-testid="codex-auth-mode-legacy"]').trigger('click')
     await nextTick()
 
     const codeBlocks = wrapper.findAll('pre code').map((code) => code.text())
     const configToml = codeBlocks.find((content) => content.includes('model_provider = "OpenAI"'))
 
     expect(configToml).toBeDefined()
-    expect(configToml).toContain('model = "gpt-5.5"')
-    expect(configToml).toContain('review_model = "gpt-5.5"')
+    expect(configToml).toContain('model = "gpt-6.1-sol"')
+    expect(configToml).toContain('review_model = "gpt-6.1-sol"')
     expect(configToml).not.toContain('model = "gpt-5.4"')
     expect(configToml).not.toContain('model_context_window')
     expect(configToml).not.toContain('model_auto_compact_token_limit')
+    expect(configToml?.split('[model_providers.')[0]).toContain('web_search = "live"')
     expect(configToml).toContain('requires_openai_auth = true')
     expect(configToml).not.toContain('experimental_bearer_token')
     expect(configToml).not.toContain('x-openai-actor-authorization')
@@ -427,7 +424,8 @@ describe('UseKeyModal', () => {
     expect(configToml).not.toContain('image_generation')
     expect(configToml).not.toContain('supports_websockets')
     expect(configToml).not.toContain('responses_websockets_v2')
-    expect(configToml).toContain('[features]\ngoals = true')
+    const features = configToml?.split('[features]\n')[1]?.split('\n[')[0]
+    expect(features).toContain('goals = true')
     expect(configToml).not.toContain('model_reasoning_effort = "xhigh"')
     expect(codeBlocks).toContain('{\n  "OPENAI_API_KEY": "sk-test"\n}')
     expect(wrapper.text()).toContain('auth.json')
@@ -479,7 +477,7 @@ describe('UseKeyModal', () => {
     expect(claudeConfig).toContain('ANTHROPIC_BASE_URL="https://example.com"')
   })
 
-  it('renders API Key Mode authorization in OpenAI Codex config', async () => {
+  it('defaults to API Key Mode with native image generation in OpenAI Codex config', async () => {
     const wrapper = mount(UseKeyModal, {
       props: {
         show: true,
@@ -507,7 +505,6 @@ describe('UseKeyModal', () => {
     await nextTick()
 
     const apiKeyMode = wrapper.get('[data-testid="codex-auth-mode-api-key"]')
-    await apiKeyMode.trigger('click')
     await nextTick()
 
     const codeBlocks = wrapper.findAll('pre code').map((code) => code.text())
@@ -516,12 +513,13 @@ describe('UseKeyModal', () => {
     expect(apiKeyMode.attributes('aria-checked')).toBe('true')
     expect(configToml).toBeDefined()
     expect(configToml).toContain('requires_openai_auth = false')
+    expect(configToml?.split('[model_providers.')[0]).toContain('web_search = "live"')
     expect(configToml).toContain('experimental_bearer_token = "sk-test"')
     expect(configToml).toContain('http_headers = { "x-openai-actor-authorization" = "local-image-extension" }')
     expect(configToml).toContain('model_catalog_url = "https://example.com/v1/models"')
     expect(configToml).not.toContain('model_catalog_json')
     expect(configToml).not.toContain('env_key')
-    expect(configToml).not.toContain('image_generation')
+    expect(configToml?.split('[features]\n')[1]).toContain('image_generation = true')
     expect(codeBlocks).not.toContain('{\n  "OPENAI_API_KEY": "sk-test"\n}')
     expect(wrapper.text()).not.toContain('auth.json')
 
@@ -539,7 +537,7 @@ describe('UseKeyModal', () => {
     )
   })
 
-  it('keeps legacy OpenAI Codex WebSocket config as the default', async () => {
+  it('keeps legacy OpenAI Codex WebSocket config available when selected', async () => {
     const wrapper = mount(UseKeyModal, {
       props: {
         show: true,
@@ -559,6 +557,9 @@ describe('UseKeyModal', () => {
       }
     })
 
+    await wrapper.find('nav[aria-label="Client"]').findAll('button').find((button) => button.text().includes('keys.useKeyModal.cliTabs.codexCli'))!.trigger('click')
+    await wrapper.get('[data-testid="codex-auth-mode-legacy"]').trigger('click')
+
     const wsTab = wrapper.findAll('button').find((button) =>
       button.text().includes('keys.useKeyModal.cliTabs.codexCliWs')
     )
@@ -571,18 +572,21 @@ describe('UseKeyModal', () => {
     const configToml = codeBlocks.find((content) => content.includes('supports_websockets = true'))
 
     expect(configToml).toBeDefined()
-    expect(configToml).toContain('model = "gpt-5.5"')
-    expect(configToml).toContain('review_model = "gpt-5.5"')
+    expect(configToml).toContain('model = "gpt-6.1-sol"')
+    expect(configToml).toContain('review_model = "gpt-6.1-sol"')
     expect(configToml).not.toContain('model = "gpt-5.4"')
     expect(configToml).not.toContain('model_context_window')
     expect(configToml).not.toContain('model_auto_compact_token_limit')
+    expect(configToml?.split('[model_providers.')[0]).toContain('web_search = "live"')
     expect(configToml).toContain('requires_openai_auth = true')
     expect(configToml).not.toContain('experimental_bearer_token')
     expect(configToml).not.toContain('x-openai-actor-authorization')
     expect(configToml).not.toContain('env_key')
     expect(configToml).not.toContain('image_generation')
     expect(configToml).toContain('supports_websockets = true')
-    expect(configToml).toContain('[features]\nresponses_websockets_v2 = true\ngoals = true')
+    const features = configToml?.split('[features]\n')[1]?.split('\n[')[0]
+    expect(features).toContain('responses_websockets_v2 = true')
+    expect(features).toContain('goals = true')
     expect(codeBlocks).toContain('{\n  "OPENAI_API_KEY": "sk-test"\n}')
     expect(wrapper.text()).toContain('auth.json')
   })
@@ -632,12 +636,15 @@ describe('UseKeyModal', () => {
     expect(wrapper.get('[data-testid="codex-auth-mode-api-key"]').attributes('aria-checked')).toBe('true')
     expect(configToml).toBeDefined()
     expect(configToml).toContain('requires_openai_auth = false')
+    expect(configToml?.split('[model_providers.')[0]).toContain('web_search = "live"')
     expect(configToml).toContain('experimental_bearer_token = "sk-test"')
     expect(configToml).toContain('http_headers = { "x-openai-actor-authorization" = "local-image-extension" }')
     expect(configToml).not.toContain('env_key')
-    expect(configToml).not.toContain('image_generation')
+    expect(configToml?.split('[features]\n')[1]).toContain('image_generation = true')
     expect(configToml).toContain('supports_websockets = true')
-    expect(configToml).toContain('[features]\nresponses_websockets_v2 = true\ngoals = true')
+    const features = configToml?.split('[features]\n')[1]?.split('\n[')[0]
+    expect(features).toContain('responses_websockets_v2 = true')
+    expect(features).toContain('goals = true')
     expect(codeBlocks).not.toContain('{\n  "OPENAI_API_KEY": "sk-test"\n}')
     expect(wrapper.text()).not.toContain('auth.json')
   })
@@ -662,35 +669,24 @@ describe('UseKeyModal', () => {
       }
     })
 
-    const codexTab = wrapper.findAll('button').find((button) =>
-      button.text().includes('keys.useKeyModal.cliTabs.codexCli')
-    )
-    expect(codexTab).toBeDefined()
-    await codexTab!.trigger('click')
-    await nextTick()
-
-    await wrapper.get('[data-testid="codex-auth-mode-api-key"]').trigger('click')
+    await wrapper.find('nav[aria-label="Client"]').findAll('button').find((button) => button.text().includes('keys.useKeyModal.cliTabs.codexCli'))!.trigger('click')
+    await wrapper.get('[data-testid="codex-auth-mode-legacy"]').trigger('click')
     await wrapper.setProps({ show: false })
     await wrapper.setProps({ show: true })
     await nextTick()
+    await wrapper.find('nav[aria-label="Client"]').findAll('button').find((button) => button.text().includes('keys.useKeyModal.cliTabs.codexCli'))!.trigger('click')
 
-    expect(wrapper.get('[data-testid="codex-auth-mode-legacy"]').attributes('aria-checked')).toBe('true')
-    expect(wrapper.findAll('pre code').map((code) => code.text()).join('\n')).toContain('requires_openai_auth = true')
+    expect(wrapper.get('[data-testid="codex-auth-mode-api-key"]').attributes('aria-checked')).toBe('true')
+    expect(wrapper.findAll('pre code').map((code) => code.text()).join('\n')).toContain('requires_openai_auth = false')
 
-    await wrapper.get('[data-testid="codex-auth-mode-api-key"]').trigger('click')
+    await wrapper.get('[data-testid="codex-auth-mode-legacy"]').trigger('click')
     await wrapper.setProps({ platform: 'gemini' })
     await wrapper.setProps({ platform: 'openai' })
     await nextTick()
+    await wrapper.find('nav[aria-label="Client"]').findAll('button').find((button) => button.text().includes('keys.useKeyModal.cliTabs.codexCli'))!.trigger('click')
 
-    const reopenedCodexTab = wrapper.findAll('button').find((button) =>
-      button.text().includes('keys.useKeyModal.cliTabs.codexCli')
-    )
-    expect(reopenedCodexTab).toBeDefined()
-    await reopenedCodexTab!.trigger('click')
-    await nextTick()
-
-    expect(wrapper.get('[data-testid="codex-auth-mode-legacy"]').attributes('aria-checked')).toBe('true')
-    expect(wrapper.findAll('pre code').map((code) => code.text()).join('\n')).not.toContain('x-openai-actor-authorization')
+    expect(wrapper.get('[data-testid="codex-auth-mode-api-key"]').attributes('aria-checked')).toBe('true')
+    expect(wrapper.findAll('pre code').map((code) => code.text()).join('\n')).toContain('x-openai-actor-authorization')
   })
 
   it('renders GPT-5.4 mini entry in OpenCode config', async () => {
@@ -794,13 +790,24 @@ describe('UseKeyModal', () => {
 
     const parsed = JSON.parse(wrapper.find('pre code').text())
     const models = parsed.provider.openai.models
-    for (const model of ['gpt-5.6', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna']) {
+    for (const model of ['gpt-5.6', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna']) {
       expect(models[model]).toBeDefined()
       expect(models[model].variants).toHaveProperty('max')
       expect(models[model].variants).toHaveProperty('xhigh')
     }
     expect(models['gpt-5.6'].name).toBe('GPT-5.6 (Sol)')
+    for (const model of ['gpt-6.2-sol', 'gpt-6.2-astra']) {
+      expect(models[model].variants).not.toHaveProperty('none')
+      expect(models[model].variants).not.toHaveProperty('minimal')
+      expect(models[model].limit).toEqual({ context: 1050000, output: 128000 })
+    }
     expect(models['gpt-6.1-sol'].variants).not.toHaveProperty('none')
+    expect(models['gpt-6.1-terra']).toEqual({
+      name: 'GPT-6.1 Terra',
+      limit: { context: 1050000, output: 128000 },
+      options: { store: false },
+      variants: { none: {}, low: {}, medium: {}, high: {}, xhigh: {}, max: {} }
+    })
     expect(models['gpt-6-sol'].variants).toHaveProperty('none')
     expect(models['gpt-6-luna'].limit).toEqual({ context: 1050000, output: 128000 })
     expect(models['gpt-6']).toEqual({
@@ -837,6 +844,32 @@ describe('UseKeyModal', () => {
     expect(models['claude-sonnet-5-5'].variants).not.toHaveProperty('none')
   })
 
+  it.each([
+    ['claude-fable-5-2', 'Claude Fable 5.2'],
+    ['claude-mythos-5-2', 'Claude Mythos 5.2']
+  ])('exports %s on Anthropic with adaptive thinking and all supported effort levels', async (model, name) => {
+    const wrapper = mount(UseKeyModal, {
+      props: { show: true, apiKey: 'sk-test', baseUrl: 'https://example.com/v1', platform: 'anthropic' },
+      global: { stubs: { BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' }, Icon: { template: '<span />' } } }
+    })
+    const tab = wrapper.findAll('button').find(button => button.text().includes('keys.useKeyModal.cliTabs.opencode'))
+    expect(tab).toBeDefined()
+    await tab!.trigger('click')
+    await nextTick()
+    const config = JSON.parse(wrapper.find('pre code').text()).provider.anthropic.models[model]
+    expect(config.name).toBe(name)
+    expect(config.limit).toEqual({ context: 1000000, output: 128000 })
+    expect(config.modalities).toEqual({ input: ['text', 'image', 'pdf'], output: ['text'] })
+    expect(config.options).toEqual({ thinking: { type: 'adaptive' }, effort: 'high' })
+    expect(config.variants).toEqual({
+      low: { effort: 'low' },
+      medium: { effort: 'medium' },
+      high: { effort: 'high' },
+      xhigh: { effort: 'xhigh' },
+      max: { effort: 'max' }
+    })
+  })
+
   it('renders Claude Fable 5 OpenCode config with adaptive thinking', async () => {
     const wrapper = mount(UseKeyModal, {
       props: {
@@ -871,6 +904,8 @@ describe('UseKeyModal', () => {
 
     expect(claudeConfig).toBeDefined()
     const parsed = JSON.parse(claudeConfig!)
+    expect(parsed.provider['antigravity-claude'].models).not.toHaveProperty('claude-fable-5-2')
+    expect(parsed.provider['antigravity-claude'].models).not.toHaveProperty('claude-mythos-5-2')
     const fable51 = parsed.provider['antigravity-claude'].models['claude-fable-5-1']
     const fable = parsed.provider['antigravity-claude'].models['claude-fable-5']
 
@@ -1040,7 +1075,7 @@ describe('UseKeyModal', () => {
       text: async () => JSON.stringify({
         models: [
           { slug: 'claude-opus-4-8' },
-          { slug: 'gpt-5.5' }
+          { slug: 'gpt-6.1-sol' }
         ]
       })
     }))
@@ -1075,8 +1110,8 @@ describe('UseKeyModal', () => {
     const config = wrapper.findAll('pre code')
       .map((code) => code.text())
       .find((content) => content.includes('[model_providers.sub2api]'))
-    expect(config).toContain('model = "gpt-5.5"')
-    expect(config).toContain('review_model = "gpt-5.5"')
+    expect(config).toContain('model = "gpt-6.1-sol"')
+    expect(config).toContain('review_model = "gpt-6.1-sol"')
   })
 
   it('offers remote and optional file catalogs for OpenAI in both transport modes and on both platforms', async () => {
@@ -1108,10 +1143,10 @@ describe('UseKeyModal', () => {
         const configToml = wrapper.findAll('pre code')
           .map((code) => code.text())
           .find((content) => content.includes('model_provider = "OpenAI"'))
-        expect(configToml).toContain('model = "gpt-5.5"')
+        expect(configToml).toContain('model = "gpt-6.1-sol"')
         expect(configToml).toContain('[model_providers.OpenAI]\nname = "OpenAI"\nbase_url = "https://example.com/v1"\nmodel_catalog_url = "https://example.com/v1/models"')
         expect(configToml).not.toContain('model_catalog_json')
-        expect(configToml).toContain('requires_openai_auth = true')
+        expect(configToml).toContain('requires_openai_auth = false')
         expect(configToml).not.toContain('client_version')
         expect(wrapper.find('[data-testid="codex-model-catalog"]').exists()).toBe(true)
 

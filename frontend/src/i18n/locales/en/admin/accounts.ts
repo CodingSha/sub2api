@@ -96,6 +96,12 @@ export default {
       schedulableEnabled: 'Scheduling enabled',
       schedulableDisabled: 'Scheduling disabled',
       failedToToggleSchedulable: 'Failed to toggle scheduling status',
+      priorityQuick: {
+        raise: 'Raise priority (value -1)',
+        lower: 'Lower priority (value +1)',
+        editHint: 'Click to type a value; lower is used first',
+        failed: 'Failed to update priority'
+      },
       groupCountTotal: '{count} groups total',
       platforms: {
         anthropic: 'Anthropic',
@@ -109,6 +115,7 @@ export default {
         deepseek: 'DeepSeek',
         minimax: 'MiniMax',
         opencode_go: 'OpenCode',
+        typesafe: 'TypeSafe / Jev',
       },
       cnProviders: {
         accountMode: {
@@ -166,12 +173,15 @@ export default {
         },
         protocolRules: {
           title: 'Model protocol routing',
-          hint: 'In adaptive mode, each model is sent to a native upstream protocol. Use an exact ID or a trailing * glob (e.g. grok-*, qwen*). The first matching rule wins; unmatched models use Chat Completions.',
+          hint: 'In adaptive mode, each model is sent to a native upstream protocol. Use an exact ID or a trailing * glob (e.g. grok-*, qwen*). The first matching rule wins. If the inbound protocol is one the model also supports, the request passes through on that protocol without conversion; otherwise the selected protocol is used.',
           patternPlaceholder: 'grok-* or deepseek-v4-flash',
           add: 'Add rule',
           remove: 'Remove rule',
           restoreDefaults: 'Restore defaults',
+          alsoSupports: 'Also supports',
+          alsoSupportsHint: 'Requests arriving on one of these protocols are passed through unchanged, avoiding protocol conversion',
           fallback: 'Unmatched models → Chat Completions (/v1/chat/completions)',
+          catalogFallback: 'Unmatched models → protocols from the upstream model list (supported_endpoints in /models); Chat Completions when unavailable',
         },
         title: 'OpenCode Go usage',
         panelHint: 'Usage windows reported by the upstream OpenCode Go account. Refreshed on demand or automatically when enabled.',
@@ -196,7 +206,8 @@ export default {
         refreshSuccess: 'OpenCode Go usage refreshed',
         refreshFailed: 'Failed to refresh OpenCode Go usage',
         errors: {
-          OPENCODE_GO_USAGE_REFRESH_RATE_LIMITED: 'Refresh is limited. Try again in {retry_after_seconds} seconds.'
+          OPENCODE_GO_USAGE_REFRESH_RATE_LIMITED: 'Refresh is limited. Try again in {retry_after_seconds} seconds.',
+          forbidden: 'Upstream returned 403: could be a missing/expired OpenCode Go subscription or a WAF/access-policy block; check the network path and HTTP status.'
         }
       },
       types: {
@@ -325,6 +336,14 @@ export default {
         }
       },
       upstreamBilling: {
+        autoSyncGroup: 'Auto-sync upstream group name and notes',
+        autoSyncGroupHint: 'A successful probe replaces the local name and notes with any text the upstream provides. Account rate sync is controlled separately.',
+        syncGroup: 'Sync upstream group name and notes',
+        saveGroup: 'Sync and save upstream group name and notes',
+        groupCredentials: 'Enter the upstream URL and API key. Re-enter the key after changing the URL or proxy.',
+        groupUnavailable: 'The upstream returned no group name or description to sync.',
+        groupFailed: 'Failed to sync upstream group details',
+        groupSynced: 'Account name and notes synced',
         trustWarning: 'This rate is declared by the upstream site for the current API key. Sub2API cannot verify that it matches actual charges. The upstream site or an intermediary may return forged, stale, or modified data. Verify it against bills, balance changes, and actual usage.',
         autoProbe: 'Automatically probe upstream declared rate',
         autoProbeHint: 'Refresh the upstream declared rate on the global interval. This switch alone does not change the account rate.',
@@ -402,7 +421,7 @@ export default {
       tempUnschedulable: {
         title: 'Temp Unschedulable',
         statusTitle: 'Temp Unschedulable Status',
-        hint: 'Disable accounts temporarily when error code and keyword both match.',
+        hint: 'When error code and keyword both match, pause the whole account or cool down only the model for the configured duration, per the rule scope.',
         notice: 'Rules are evaluated in order and require both error code and keyword match.',
         addRule: 'Add Rule',
         ruleOrder: 'Rule Order',
@@ -418,6 +437,12 @@ export default {
         keywords: 'Keywords',
         keywordsPlaceholder: 'e.g. overloaded, too many requests',
         keywordsHint: 'Separate keywords with commas; any keyword match will trigger.',
+        scope: 'Scope',
+        scopeModel: 'Model',
+        scopeModelDesc: 'Cool down only the requested model',
+        scopeAccount: 'Account',
+        scopeAccountDesc: 'Pause scheduling for the whole account',
+        scopeHint: 'Model-scoped rules fall back to account scope when the request model cannot be identified.',
         description: 'Description',
         descriptionPlaceholder: 'Optional note for this rule',
         rulesInvalid: 'Add at least one rule with error code, keywords, and duration.',
@@ -487,6 +512,8 @@ export default {
       testConnection: 'Test Connection',
       reAuthorize: 'Re-Authorize',
       refreshToken: 'Refresh Token',
+      refreshTokenHint: 'Tokens are refreshed automatically in the background. Frequent manual refreshes can race the automatic refresh and invalidate the token, pausing the account.',
+      refreshTokenFrequentWarning: 'Less than a minute since the last manual refresh: frequent refreshes can race the background auto-refresh and invalidate the token. Only retry when necessary.',
       noAccountsYet: 'No accounts yet',
       createFirstAccount: 'Create your first account to start using AI services.',
       tokenRefreshed: 'Token refreshed successfully',
@@ -576,10 +603,18 @@ export default {
       claudeConsole: 'Claude Console',
       bedrockLabel: 'AWS Bedrock',
       bedrockDesc: 'SigV4 / API Key',
-      vertexLabel: 'Vertex',
+      vertexLabel: 'Agent Platform (Vertex)',
       vertexDesc: 'Service Account',
-      vertexAnthropicHint: 'Use a Google Cloud Service Account JSON to call Anthropic Claude via Vertex AI. It is recommended to configure model mapping to map client Claude model names to Vertex model IDs.',
-      vertexGeminiHint: 'Use a Google Cloud Service Account JSON to access Vertex AI Gemini. It is recommended to place Vertex accounts in a separate group to avoid mixing with AI Studio/Gemini OAuth on the same models.',
+      vertexGeminiDesc: 'Service Account / API Key',
+      vertexAnthropicHint: 'Use a Google Cloud Service Account JSON to call Anthropic Claude via Agent Platform (Vertex). It is recommended to configure model mapping to map client Claude model names to Agent Platform (Vertex) model IDs.',
+      vertexGeminiHint: 'Call Gemini via Agent Platform (Vertex) with a Service Account JSON or an API key. It is recommended to place these accounts in a separate group to avoid mixing with AI Studio/Gemini OAuth on the same models.',
+      vertexAuthMode: 'Authentication',
+      vertexAuthModeServiceAccount: 'Service Account JSON',
+      vertexAuthModeApiKey: 'API Key',
+      vertexApiKeyHint: 'Create it on the Agent Platform API Keys page in the Google Cloud console. Google\'s explicit context caching API does not accept API keys, so these accounts do not serve explicit caching or batch image generation; implicit caching still applies.',
+      vertexApiKeyRequired: 'Please enter an API key',
+      vertexApiKeyProjectIdPlaceholder: 'Optional',
+      vertexApiKeyProjectIdHint: 'Leave empty to use the express mode global endpoint (location is ignored). For a standard API key bound to a service account, enter the Project ID to call the project endpoint with Project ID + Location.',
       vertexSaJsonLabel: 'Service Account JSON',
       vertexSaJsonLoaded: 'Service Account JSON loaded',
       vertexSaJsonDrop: 'Drop Service Account JSON here',
@@ -589,8 +624,8 @@ export default {
       vertexSaJsonUploadHint: 'After uploading or dropping a JSON file, the project_id will be auto-extracted. Key content is only used for account creation.',
       vertexSaJsonEditHint: 'Service Account JSON is not shown on the edit page; to change the JSON, delete the account and recreate it.',
       vertexProjectIdPlaceholder: 'Auto-extracted from JSON',
-      vertexLocationHint: 'Available locations vary by Vertex model. Select the default endpoint location for this account.',
-      vertexLocationRequired: 'Please enter a Vertex location',
+      vertexLocationHint: 'Available locations vary by model. Select the default endpoint location for this account.',
+      vertexLocationRequired: 'Please select a location',
       vertexSaJsonMissingFields: 'Service Account JSON is missing project_id, client_email, or private_key',
       vertexSaJsonMissingProjectId: 'Service Account JSON is missing project_id',
       vertexSaJsonMissingClientEmail: 'Service Account JSON is missing client_email',
@@ -619,6 +654,9 @@ export default {
         oauthPassthrough: 'Auto passthrough (auth only)',
         oauthPassthroughDesc:
           'When enabled, this OpenAI account uses automatic passthrough: the gateway forwards request/response as-is and only swaps auth, while keeping billing/concurrency/audit and necessary safety filtering.',
+        passthroughModelFilter: 'Filter passthrough accounts by model',
+        passthroughModelFilterDesc:
+          'Use the account model whitelist and mapping source names to select this account. Mapping targets do not rename passthrough requests. An empty list allows all models. Disabled by default.',
         flattenNamespaces: 'Flatten Codex namespace tools (compatibility)',
         flattenNamespacesDesc:
           'Disabled by default: Codex namespace tool declarations are forwarded as-is on /responses, which is what the ChatGPT Codex backend expects. Enable only when this OAuth account is routed to a relay that rejects namespace tools — flattening renames them to namespace__tool, which breaks models that address collaboration tools as functions.<namespace>.<tool>. Compaction requests always flatten regardless of this switch.',
@@ -662,6 +700,10 @@ export default {
         imagesUrlToB64Json: 'Image result URL to base64',
         imagesUrlToB64JsonDesc:
           'Only applies to non-streaming Images responses of OpenAI API Key accounts. When an upstream image item has a url but no b64_json, the gateway downloads the url and fills b64_json with its base64 content (url is kept) for clients built on the official API; the response is returned unchanged if the download fails.',
+        imageSizeTiers: 'Image size tiers',
+        imageSizeTiersDesc:
+          'Limits the image size tiers this account serves, using the billing tiers: longest edge ≤1024 is 1K, ≤2048 is 2K, larger is 4K (2560x1440 is 4K). Requests with an explicit size are only scheduled to accounts allowing that tier; requests without a size or with auto prefer accounts without a tier limit, then accounts allowing 4K, 2K and 1K in that order. Selecting all tiers means no limit. Applies to the Images API and the Responses image generation tool.',
+        imageSizeTiersAtLeastOne: 'Keep at least one tier',
         endpointCapabilities: 'Endpoint capabilities',
         endpointCapabilitiesDesc:
           'Used by account routing. The text endpoint follows the Responses API support setting above and is shown as Responses, Chat Completions, or auto mode; Embeddings independently controls /v1/embeddings.',
@@ -724,7 +766,7 @@ export default {
         testMode: 'Test mode',
         testModeDefault: 'Default request',
         testModeCompact: 'Compact probe',
-        modelRestrictionDisabledByPassthrough: 'Automatic passthrough is enabled: model whitelist/mapping will not take effect.',
+        modelRestrictionDisabledByPassthrough: 'Automatic passthrough ignores model restrictions by default. Enable "Filter passthrough accounts by model" to use them for account selection only.',
       },
       grok: {
         baseUrlHint: 'Grok OAuth accounts forward to the official xAI API base URL.',
@@ -828,6 +870,7 @@ export default {
       enterCustomModelName: 'Enter custom model name',
       addModel: 'Add',
       modelExists: 'Model already exists',
+      modelWildcardNotSupported: 'Wildcards are not supported in the model whitelist. Enter an exact model name.',
       modelMappingConflict: 'A mapping already exists for {from} → {to}. Modify or remove it under Model Mapping before adding this whitelist model',
       modelCount: '{count} models',
       poolMode: 'Pool Mode',
@@ -840,10 +883,16 @@ export default {
       poolModeRetryStatusCodes: 'Retry Status Codes',
       poolModeRetryStatusCodesHint:
         'Comma-separated HTTP status codes (100-599) that trigger same-account retry in pool mode. Leave blank to use defaults ({default}).',
+      explicitCacheUpstream: 'Upstream Supports Explicit Caching',
+      explicitCacheUpstreamHint: 'Enable only when the upstream is this system with explicit caching support',
+      explicitCacheUpstreamInfo:
+        'When enabled, this account can create Gemini explicit caches (cachedContents). A cache is only used on this account and never fails over. The upstream must route each cache to the account that created it; account-pool gateways or upstreams without explicit caching support will make caches unreliable.',
+      explicitCacheUpstreamMaxTTL: 'Upstream Cache TTL Limit (seconds)',
+      explicitCacheUpstreamMaxTTLHint: 'Maximum TTL allowed by the upstream gateway; requests above it are not sent to this account. Leave blank to use this site\'s limit.',
       customErrorCodes: 'Custom Error Codes',
       customErrorCodesHint: 'Only stop scheduling for selected error codes',
       customErrorCodesWarning:
-        'Only selected error codes will stop scheduling. Other errors will return 500.',
+        'Custom error codes only filter normal account-error handling (such as stopping scheduling or marking rate limits). They do not decide whether a request is retried or switched to another account. Unselected errors may still trigger a retry or an account switch, and the status returned to the client depends on the gateway path and error-passthrough rules; it is not always 500. An empty list applies no filtering.',
       customErrorCodes429Warning:
         '429 already has built-in rate limit handling. Adding it to custom error codes will disable the account instead of temporary rate limiting. Are you sure?',
       customErrorCodes529Warning:
@@ -877,7 +926,83 @@ export default {
         blockedName: 'This header cannot be overridden (auth and connection-control headers are managed by the system)',
         duplicateName: 'Duplicate header name (matching is case-insensitive)',
         invalidValue: 'Invalid header value (control characters are not allowed; max length 8192)',
-        tooManyEntries: 'Too many header override entries (max 64)'
+        tooManyEntries: 'Too many header override entries (max 64)',
+        invalidVariable: 'Invalid variable: pick one from "Identity variables" below; other variable names are not supported',
+        variableNotAllowed: 'OAuth accounts do not support identity variables. Remove this row or use a fixed value',
+        removeRow: 'Remove this header',
+        previewLabel: 'Sent as',
+        variablesTitle: 'Identity variables',
+        variablesHint: 'Report the gateway user behind each request to the upstream, so a request can be traced back layer by layer. Click a variable while editing a value to insert it at the cursor; otherwise a new row is added.',
+        variablesUnavailable: 'OAuth accounts do not support identity variables: subscription upstreams never receive gateway user identity. Only fixed values can be used here.',
+        variables: {
+          user_id: { label: 'User ID', desc: 'The gateway user who sent the request' },
+          api_key_id: { label: 'API Key ID', desc: 'The key used for this request; tells apart multiple keys of one user' },
+          group_id: { label: 'Group ID', desc: 'The group bound to the key; the header is not sent when no group is bound' },
+          request_id: { label: 'Request ID', desc: 'Same as the "Request ID" in error records, for direct cross-checking; characters other than letters, digits and . _ - become underscores' }
+        },
+        variableNotes: {
+          unresolved: 'When a value is unavailable (connection tests, model sync and other background requests without a user), the whole header is not sent, and a same-named header from the client is not passed through either.',
+          apiKeyOnly: 'Only applies to API key accounts. OAuth accounts never report identity.',
+          websocket: 'In OpenAI WebSocket mode handshake headers are per connection: headers containing the request ID are not sent, and requests with different reported identities never share an upstream connection.'
+        }
+      },
+      grokModelDiagnostics: {
+        title: 'Model catalog diagnostics',
+        configuredModels: 'Local configuration',
+        upstreamModels: 'Upstream catalog',
+        lastSuccess: 'Last success',
+        lastAttempt: 'Latest attempt',
+        fresh: 'Current',
+        stale: 'Historical catalog',
+        unknown: 'Unknown',
+        sourceChanged: 'Source changed',
+        notListed: 'Not found in the current catalog for this account and endpoint',
+        unverifiable: 'Cannot be checked item by item',
+        outOfScope: 'Outside this text catalog',
+        compatibilityNotice: 'Requests are not blocked',
+        configuredFallback: 'No live upstream catalog was returned. The saved configuration was kept and fallback model IDs were not added.',
+        savedConfigOnly: 'Diagnostics reflect the saved configuration. Save your edits, then sync again.',
+        refreshFailed: 'Unable to load the latest status',
+        syncSavedConfig: 'Sync the upstream catalog for the saved configuration',
+        catalogTitle: 'Upstream model catalog',
+        syncCatalog: 'Sync catalog',
+        details: 'Catalog details',
+        viewDifferences: 'View differences',
+        hideDifferences: 'Hide differences',
+        missingSummary: 'Mapping targets not found in the current catalog: {count}',
+        summaryNotice: 'Informational only. Requests and mappings remain unchanged.',
+        modelCount: 'Models: {count}',
+        historicalModelCount: 'Historical models: {count}',
+        lastSuccessRelative: 'Last success: {time}',
+        source: 'Catalog source',
+        historicalSource: 'Historical catalog source',
+        historicalModels: 'Historical catalog',
+        savedMappings: 'Saved configuration comparison',
+        currentListed: 'Found in the current catalog',
+        historicalComparison: 'Historical record; sync again to verify',
+        syncFailed: 'Sync failed',
+        attemptSuccess: 'Sync succeeded',
+        attemptFallback: 'Enriched capabilities using configured models',
+        attemptUnknown: 'Status unknown',
+        attemptUnavailable: 'Sync did not succeed. Try again later.',
+        previousCatalogValid: 'The last successful catalog is still valid.',
+        staleNotice: 'The catalog has expired. Sync again to compare mappings.',
+        changedNotice: 'The source has changed. Sync again.',
+        unknownNotice: 'No trusted catalog is available to compare mappings.',
+        fallbackNotice: 'No live catalog was retrieved; configured models were used only for capability enrichment.',
+        savedConfigHint: 'Diagnostics use the saved configuration. Save your changes, then sync again.',
+        requestColumn: 'Requested model',
+        targetColumn: 'Forwarded target',
+        mappingFromAria: 'Requested model {index}',
+        mappingTargetAria: 'Forwarded target {index}',
+        removeMappingAria: 'Remove mapping {index}',
+        errorConfiguration: 'Upstream configuration is unavailable',
+        errorHTTP: 'The upstream request failed',
+        errorTransport: 'Could not connect to the upstream',
+        errorInvalidResponse: 'The returned catalog could not be parsed',
+        errorEmptyCatalog: 'No usable model catalog was returned',
+        errorTooLarge: 'The catalog exceeds the read limit',
+        errorPersistence: 'The catalog could not be saved'
       },
       grokCustomBaseUrl: {
         title: 'Custom Upstream URL',
@@ -1395,7 +1520,7 @@ export default {
         modelPassthroughDesc:
           'All model requests are forwarded directly to the Gemini API without model restrictions or mappings.',
         baseUrlHint: 'Leave default for official Gemini API',
-        apiKeyHint: 'Your Gemini API Key (starts with AIza)',
+        apiKeyHint: 'New AI Studio keys start with AQ. (legacy keys start with AIza); for a third-party upstream, use the key it provides',
         tier: {
           label: 'Account Tier',
           hint: 'Tip: The system will try to auto-detect the tier first; if auto-detection is unavailable or fails, your selected tier is used as a fallback (simulated quota).',
@@ -1418,8 +1543,8 @@ export default {
         accountType: {
           oauthTitle: 'OAuth (Gemini)',
           oauthDesc: 'Authorize with your Google account and choose an OAuth type.',
-          apiKeyTitle: 'API Key (AI Studio)',
-          apiKeyDesc: 'Fastest setup. Use an AIza API key.',
+          apiKeyTitle: 'API Key',
+          apiKeyDesc: 'An official AI Studio key, or a Gemini-compatible third-party upstream.',
           apiKeyNote:
             'Best for light testing. Free tier has strict rate limits and data may be used for training.',
           apiKeyLink: 'Get API Key',
@@ -1480,7 +1605,7 @@ export default {
           docs: {
             codeAssist: 'Code Assist Quotas',
             aiStudio: 'AI Studio Pricing',
-            vertex: 'Vertex AI Quotas'
+            vertex: 'Agent Platform (Vertex) Quotas'
           },
           simulatedNote: 'Simulated quota, for reference only',
           rows: {
@@ -1625,6 +1750,12 @@ export default {
         gemini3Pro: 'G3P',
         gemini3Flash: 'G3F',
         gemini3Image: 'G31FI',
+        antigravityGemini5h: 'G·5h',
+        antigravityGeminiWeekly: 'G·wk',
+        antigravityArgon5h: 'A·5h',
+        antigravityArgonWeekly: 'A·wk',
+        antigravityOther5h: 'C·5h',
+        antigravityOtherWeekly: 'C·wk',
         claude: 'Claude',
         grokRequests: 'Req',
         grokTokens: 'Tok',
@@ -1648,6 +1779,10 @@ export default {
         grokLastHeadersSeen: 'Headers {time}',
         passiveSampled: 'Passive',
         activeQuery: 'Query',
+        quotaRefreshFailedCached: 'Refresh failed. Showing a previous observation; remaining quota is unconfirmed.',
+        quotaRefreshFailedUnknown: 'Refresh failed. Current quota is unknown.',
+        quotaObservedAt: 'Quota observed: ',
+        quotaObservationUnknown: 'Unknown (cached)',
         estimatedTotalCost: 'Est. total ${cost}',
         estimatedTotalCostTooltip: 'Estimated total cost at 100% utilization, based on current window cost and utilization'
       },

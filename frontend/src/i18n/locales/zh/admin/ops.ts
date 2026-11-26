@@ -4,6 +4,8 @@ export default {
       description: '运维监控与排障',
       // Dashboard
       systemHealth: '系统健康',
+      outputTps: '单次输出 TPS',
+      outputTpsSamples: '有效样本：{count}',
       overview: '概览',
       noSystemMetrics: '尚未收集系统指标。',
       collectedAt: '采集时间：',
@@ -360,6 +362,12 @@ export default {
           upstream_detail: '上游详情',
           upstream_events: '上游事件'
         },
+        reportedHeaders: {
+          title: '身份上报请求头',
+          hint: '本次请求转发时实际发给上游的身份请求头（由账号「请求头覆写」中的变量生成），可拿去与上游逐层对账。覆写值里混有固定文本时，固定文本以 … 代替、变量以「名称=值」显示，避免密钥进入日志。',
+          copy: '复制',
+          copied: '已复制'
+        },
         basicInfo: '基本信息',
         platform: '平台',
         model: '模型',
@@ -426,6 +434,7 @@ export default {
           kind: '类型',
           platform: '平台',
           model: '模型',
+          account: '账号',
           duration: '耗时',
           status: '状态码',
           requestId: '请求ID',
@@ -804,6 +813,7 @@ export default {
         accountError: '异常'
       },
       tooltips: {
+        outputTps: '每条有效用量记录的输出 Token ÷ 总耗时（含首字等待），再按当前时间、平台和分组计算分位数。输出可含推理 Token，不重复相加。P50 为中位数，P5/P10 反映较慢请求；数值越高越快。排除图片、Live、无有效输出或耗时的记录。样本来自仍保留的使用明细；无样本或统计暂不可用时显示 —。',
         totalRequests: '当前时间窗口内的总请求数和Token消耗量。',
         throughputTrend: '当前窗口内的请求/QPS 与 token/TPS 趋势。',
         switchRateTrend: '近5小时内账号切换次数 / 请求总数的趋势（平均切换次数）。',

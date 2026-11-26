@@ -17,6 +17,7 @@ func TestUpstreamBillingProbeIdentityCoversAllAPIKeyPlatforms(t *testing.T) {
 	for _, platform := range []string{
 		PlatformOpenAI, PlatformGrok, PlatformAnthropic, PlatformGemini, PlatformAntigravity,
 		PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo,
+		PlatformTypeSafe,
 	} {
 		require.True(t, IsUpstreamBillingProbeIdentity(platform, AccountTypeAPIKey), platform)
 		require.True(t, isUpstreamBillingProbeAccount(&Account{Platform: platform, Type: AccountTypeAPIKey}), platform)
@@ -117,6 +118,42 @@ func TestUpstreamBillingProbeGrokAccountPersistsSnapshot(t *testing.T) {
 	require.Equal(t, UpstreamBillingProbeStatusOK, persisted.Status)
 }
 
+func TestUpstreamBillingGroupPreview(t *testing.T) {
+	for _, tt := range []struct {
+		name, platform, accountType string
+		fields                      string
+		want                        BillingGroupInfo
+	}{
+		{
+			name: "group details", platform: PlatformGemini, accountType: AccountTypeAPIKey,
+			fields: `,"group_name":"标准组","group_description":"支持推理模型"`,
+			want:   BillingGroupInfo{Name: "标准组", Description: "支持推理模型"},
+		},
+		{
+			name: "existing relay account", platform: PlatformAntigravity, accountType: AccountTypeUpstream,
+			fields: `,"group_name":"Relay"`, want: BillingGroupInfo{Name: "Relay"},
+		},
+		{name: "older upstream", platform: PlatformOpenAI, accountType: AccountTypeAPIKey},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"object":"sub2api.key_billing","schema_version":1,"billing_scope":"token"` + tt.fields + `}`)),
+			}}
+			// The create form has no persisted account or probe settings.
+			svc := newUpstreamBillingProbeTestService(nil, upstream, nil)
+			account := &Account{Platform: tt.platform, Type: tt.accountType, Credentials: map[string]any{
+				"api_key": "preview-key", "base_url": "https://relay.example/v1",
+			}}
+			got, err := svc.PreviewGroup(context.Background(), account)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, *got)
+			require.Equal(t, "https://relay.example/v1/sub2api/billing?include=group", upstream.lastReq.URL.String())
+			require.Equal(t, "Bearer preview-key", upstream.lastReq.Header.Get("Authorization"))
+		})
+	}
+}
+
 // 非 OpenAI 平台没有自定义 base_url 时，上游是各自官方 API，必无
 // /v1/sub2api/billing：不发请求，直接落 unsupported。
 func TestUpstreamBillingProbeNonOpenAIWithoutBaseURLIsUnsupportedWithoutRequest(t *testing.T) {
@@ -174,6 +211,8 @@ func TestUpstreamBillingProbeOfficialAPIBaseURLIsUnsupportedWithoutRequest(t *te
 		{PlatformDeepseek, "https://api.deepseek.com/anthropic"},
 		{PlatformOpenCodeGo, "https://opencode.ai/zen/go/v1"},
 		{PlatformOpenCodeGo, "https://opencode.ai/zen/go"},
+		{PlatformTypeSafe, "https://api.typesafe.ai"},
+		{PlatformTypeSafe, "https://api.typesafe.ai/v1"},
 	}
 	for i, tc := range cases {
 		account := &Account{
@@ -217,6 +256,7 @@ func TestUpstreamBillingProbeOfficialAPIHostMatchingIsNormalized(t *testing.T) {
 	require.True(t, upstreamBillingProbeTargetIsOfficialAPI("https://api.deepseek.com/anthropic"))
 	require.True(t, upstreamBillingProbeTargetIsOfficialAPI("https://opencode.ai/zen/go/v1"))
 	require.True(t, upstreamBillingProbeTargetIsOfficialAPI("https://opencode.ai/zen/go"))
+	require.True(t, upstreamBillingProbeTargetIsOfficialAPI("https://api.typesafe.ai"))
 	// 相似但不同的注册域不拦：中转完全可能叫 *-x.ai 之外的任何名字。
 	require.False(t, upstreamBillingProbeTargetIsOfficialAPI("https://relay.example/v1"))
 	require.False(t, upstreamBillingProbeTargetIsOfficialAPI("https://notx.ai"))
@@ -228,6 +268,7 @@ func TestUpstreamBillingProbeOfficialAPIHostMatchingIsNormalized(t *testing.T) {
 	require.False(t, upstreamBillingProbeTargetIsOfficialAPI("https://notmoonshot.cn/v1"))
 	require.False(t, upstreamBillingProbeTargetIsOfficialAPI("https://moonshot.cn.evil.example/v1"))
 	require.False(t, upstreamBillingProbeTargetIsOfficialAPI("https://kimi.example/v1"))
+	require.False(t, upstreamBillingProbeTargetIsOfficialAPI("https://nottypesafe.ai"))
 	require.False(t, upstreamBillingProbeTargetIsOfficialAPI("https://notbigmodel.cn"))
 	require.False(t, upstreamBillingProbeTargetIsOfficialAPI("https://deepseek.example.com"))
 }
@@ -275,4 +316,17 @@ func TestUpstreamBillingProbeSetAccountEnabledAcceptsGrokAPIKey(t *testing.T) {
 
 	err := svc.SetAccountEnabled(context.Background(), grokOAuth.ID, true)
 	require.ErrorIs(t, err, ErrUpstreamBillingProbeAccountInvalid)
+}
+
+func TestBuildAccountForCreateAcceptsTypeSafeAPIKeyWithProbeEnabled(t *testing.T) {
+	enabled := true
+	account, err := buildAccountForCreate(&CreateAccountInput{
+		Name:         "typesafe",
+		Platform:     PlatformTypeSafe,
+		Type:         AccountTypeAPIKey,
+		Credentials:  map[string]any{"api_key": "ts-key", "base_url": "https://api.typesafe.ai"},
+		ProbeEnabled: &enabled,
+	}, map[string]any{})
+	require.NoError(t, err)
+	require.Equal(t, true, account.Extra[UpstreamBillingProbeEnabledExtraKey])
 }

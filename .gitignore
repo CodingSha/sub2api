@@ -141,10 +141,15 @@ vite.config.js
 docs/*
 !docs/ZHIYONGLI_PRODUCTION_BASELINE_20261126.md
 !docs/ZHIYONGLI_CONTAINER_LIFECYCLE_20261126.md
+!docs/agent-resource-safety.md
+!docs/moego-json-batching.md
+!docs/admin-api-keys.md
+!docs/mcp.md
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
 !docs/ASYNC_IMAGE_TASKS.md
+!docs/OPENAI_IMAGES_CODEX.md
 !docs/BATCH_IMAGE_MVP.md
 !docs/ZHIYONGLI_V1.md
 !docs/ZHIYONGLI_SCORING_RULES_V1.md
@@ -183,3 +188,5 @@ issues/
 .vite/
 # 本地闭源插件开发目录及构建产物不进入 Sub2API 仓库
 /plugins/
+
+!docs/SUB2API_UPGRADE_20261126.md

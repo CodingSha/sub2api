@@ -11,6 +11,9 @@ import {
   applyOpenCodeGoProtocolRules,
   applyPlanType,
   buildHeaderOverridesObject,
+  getHeaderOverrideRowErrors,
+  headerOverrideVariableToken,
+  parseHeaderOverrideTemplate,
   buildPlanTypeOptions,
   cloneOpenCodeGoProtocolRules,
   cnQuotaCellVisible,
@@ -23,6 +26,7 @@ import {
   parseHeaderOverridesJson,
   parseOpenCodeGoProtocolRules,
   planTypeDisplayLabel,
+  protocolRuleSet,
   readPlanType,
   serializeHeaderOverrideRows,
   splitHeaderOverridesObject,
@@ -122,9 +126,10 @@ describe('openCodeGo protocol rules', () => {
     expect(defaultCNBaseUrl('opencode_go', 'go', 'anthropic')).toBe('https://opencode.ai/zen/go')
     expect(defaultOpenCodeProtocolRules('zen').some(rule => rule.pattern === 'claude-*')).toBe(true)
     expect(defaultOpenCodeProtocolRules('go').some(rule => rule.pattern === 'minimax-*')).toBe(true)
-    expect(cnQuotaCellVisible('opencode_go', 'zen')).toBe(false)
-    expect(cnQuotaCellVisible('opencode_go', 'go')).toBe(true)
-    expect(cnQuotaCellVisible('opencode_go', '')).toBe(true)
+    const openCodeAccount = (account_mode?: string) => ({ platform: 'opencode_go', type: 'apikey', credentials: { account_mode } })
+    expect(cnQuotaCellVisible(openCodeAccount('zen'))).toBe(false)
+    expect(cnQuotaCellVisible(openCodeAccount('go'))).toBe(true)
+    expect(cnQuotaCellVisible(openCodeAccount())).toBe(true)
   })
 
   it('parses stored rules and skips invalid entries', () => {
@@ -140,6 +145,31 @@ describe('openCodeGo protocol rules', () => {
     ).toEqual([
       { pattern: 'grok-*', protocol: 'responses' },
       { pattern: 'minimax-*', protocol: 'anthropic' }
+    ])
+  })
+
+  it('round-trips protocol sets with the preferred protocol first', () => {
+    const parsed = parseOpenCodeGoProtocolRules([
+      { pattern: 'gpt-*', protocol: 'responses', protocols: ['responses', 'chat_completions', 'adaptive', 'chat_completions'] },
+      { pattern: 'glm-*', protocols: ['anthropic', 'chat_completions'] },
+      { pattern: 'kimi-*', protocol: 'chat_completions', protocols: ['chat_completions'] }
+    ])
+    expect(parsed).toEqual([
+      { pattern: 'gpt-*', protocol: 'responses', extraProtocols: ['chat_completions'] },
+      { pattern: 'glm-*', protocol: 'anthropic', extraProtocols: ['chat_completions'] },
+      { pattern: 'kimi-*', protocol: 'chat_completions' }
+    ])
+    expect(protocolRuleSet(parsed![0])).toEqual(['responses', 'chat_completions'])
+
+    const cloned = cloneOpenCodeGoProtocolRules(parsed!)
+    expect(cloned).toEqual(parsed)
+    expect(cloned[0].extraProtocols).not.toBe(parsed![0].extraProtocols)
+
+    const credentials: Record<string, unknown> = {}
+    applyOpenCodeGoProtocolRules(credentials, [{ pattern: ' GPT-* ', protocol: 'responses', extraProtocols: ['chat_completions', 'responses'] }, ...parsed!.slice(2)], 'create')
+    expect(credentials[OPENCODE_GO_PROTOCOL_RULES_KEY]).toEqual([
+      { pattern: 'gpt-*', protocol: 'responses', protocols: ['responses', 'chat_completions'] },
+      { pattern: 'kimi-*', protocol: 'chat_completions' }
     ])
   })
 
@@ -548,5 +578,61 @@ describe('Codex subscription analytics labels', () => {
     ['unknown', 'Account'], ['promax', 'Pro 500']
   ])('groups %s without changing its status label', (sku, label) => {
     expect(openAIPlanTypeLabel(sku, 'analytics')).toBe(label)
+  })
+})
+
+describe('header override variables', () => {
+  it('builds the placeholder token in code', () => {
+    expect(headerOverrideVariableToken('user_id')).toBe('{{user_id}}')
+  })
+
+  it('parses known variables mixed with literals', () => {
+    expect(parseHeaderOverrideTemplate('u={{ user_id }};k={{api_key_id}}')).toEqual([
+      { kind: 'literal', text: 'u=' },
+      { kind: 'variable', name: 'user_id' },
+      { kind: 'literal', text: ';k=' },
+      { kind: 'variable', name: 'api_key_id' }
+    ])
+    expect(parseHeaderOverrideTemplate('{"team":"a"}')).toEqual([
+      { kind: 'literal', text: '{"team":"a"}' }
+    ])
+  })
+
+  it('rejects unknown, mistyped and malformed placeholders like the backend', () => {
+    for (const value of [
+      '{{user_email}}',
+      '{{userid}}',
+      '{{}}',
+      'id-{{user_id',
+      '{{USER_ID}}',
+      '{{ {{user_id}} }}',
+      '{{{user_id}}}'
+    ]) {
+      expect(parseHeaderOverrideTemplate(value), value).toBeNull()
+    }
+  })
+
+  it('reports per-row errors', () => {
+    expect(
+      getHeaderOverrideRowErrors([
+        { name: 'x-user', value: '{{user_id}}' },
+        { name: 'x-bad', value: '{{nope}}' },
+        { name: 'X-USER', value: 'dup' },
+        { name: 'authorization', value: 'x' },
+        { name: '', value: '' },
+        { name: '', value: 'orphan' }
+      ])
+    ).toEqual([null, 'invalidVariable', 'duplicateName', 'blockedName', null, 'invalidName'])
+  })
+
+  it('rejects variables on accounts that cannot report identity', () => {
+    const rows = [
+      { name: 'x-relay', value: 'fixed' },
+      { name: 'x-user', value: '{{user_id}}' }
+    ]
+    expect(validateHeaderOverrideRows(rows)).toBeNull()
+    expect(validateHeaderOverrideRows(rows, { allowVariables: true })).toBeNull()
+    expect(validateHeaderOverrideRows(rows, { allowVariables: false })).toBe('variableNotAllowed')
+    expect(validateHeaderOverrideRows([{ name: 'x-user', value: '{{nope}}' }])).toBe('invalidVariable')
   })
 })
