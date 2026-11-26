@@ -48,15 +48,36 @@ def size(value):
     return len(json.dumps(value, ensure_ascii=False, separators=(',', ':')).encode())
 
 
+_FILE_READ = re.compile(r'^(?:cat|ls|head|tail|sed|rg|find|pwd|cd|echo|wc|stat|file|less|more|bat)\b')
+_CLI_SERVICE = re.compile(r'^(?:git|npm|pnpm|yarn|npx|pytest|vitest|docker|kubectl|psql)\b')
+
+
+def _cli_services(text):
+    """只保留服务型命令。读文件、列目录和“参考某文件”不构成工作流调用。"""
+    commands=re.findall(r'(?m)^(?:cmd\s*:\s*|\$\s+)(\S.*?)\s*$', text)
+    body=text.split('\n\n',1)[-1].strip()
+    first=body.splitlines()[0].strip() if body else ''
+    if first and _CLI_SERVICE.match(first):
+        commands.append(first)
+    names=[]
+    for command in commands:
+        token=command.strip().strip('"').split()
+        if not token or _FILE_READ.match(token[0]) or not _CLI_SERVICE.match(token[0]):
+            continue
+        names.append(token[0])
+    return names
+
+
 def workflow_rows(rows):
     result=[]
     for row in rows:
         if row['role']!='tool' or re.search(r'^Type:\s*(?:custom_tool_call_output|function_call_output)\s*$',row['text'],re.M):
             continue
-        # 工具返回的文件目录/技能目录不是调用；仅从调用本身识别加载与MCP使用。
+        # 工具返回的文件目录/技能目录不是调用；从调用本身识别技能、MCP和CLI服务。
         names=re.findall(r'[/\\]([A-Za-z0-9_.-]+)[/\\]SKILL\.md',row['text'])
         names+=re.findall(r'tools\.(mcp__[\w]+)\s*\(',row['text'])
-        result.extend(dict(name=name,record_id=row['id'],chars=len(row['text'])) for name in names)
+        names+=_cli_services(row['text'])
+        result.extend(dict(name=name,record_id=row['id'],chars=len(row['text'])) for name in dict.fromkeys(names))
     return result
 
 

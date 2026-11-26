@@ -10,12 +10,14 @@ const Select = defineComponent({ props: ['modelValue', 'options'], emits: ['upda
 const global = { stubs: { AppLayout: { template: '<div><slot /></div>' }, RouterLink: true, EmptyState: { props: ['title'], template: '<div>{{ title }}</div>' }, LoadingSpinner: true, ReportBody: { props: ['report'], template: '<article>{{ report.period_start }}：{{ report.score }}</article>' }, Select } }
 beforeEach(() => vi.resetAllMocks())
 describe('每日评分日期切换', () => {
-  it('默认加载日评分，切日期后更换整份报告', async () => {
+  it('默认请求周评分，切到每日分析后可更换整份报告', async () => {
     const reports = [brief(18, '2026-11-18'), brief(17, '2026-11-17')]
     vi.mocked(listReports).mockResolvedValue({ items: reports, total: 2, page: 1, pages: 1, page_size: 20 })
     vi.mocked(getReport).mockImplementation(async (_admin, id) => reports.find(r => r.id === id)!)
     const wrapper = mount(PersonalView, { global }); await flushPromises()
-    expect(listReports).toHaveBeenCalledWith(false, { period_type: 'day', page: 1 })
+    await wrapper.findAll('button').find(b => b.text() === '每日分析')!.trigger('click'); await flushPromises()
+    expect(listReports).toHaveBeenNthCalledWith(1, false, { period_type: 'week', page: 1 })
+    expect(listReports).toHaveBeenLastCalledWith(false, { period_type: 'day', page: 1 })
     const dates = wrapper.get('select[aria-label="选择评分日期"]')
     expect(dates.findAll('option').map(o => o.text())).toEqual(['2026-11-18', '2026-11-17'])
     expect(wrapper.get('article').text()).toBe('2026-11-18：18.0')
@@ -28,6 +30,7 @@ describe('每日评分日期切换', () => {
     let resolveOld!: (r: Report) => void
     vi.mocked(getReport).mockImplementation((_admin, id) => id === 18 ? new Promise(resolve => { resolveOld = resolve }) : Promise.resolve(reports[1]))
     const wrapper = mount(PersonalView, { global }); await flushPromises()
+    await wrapper.findAll('button').find(b => b.text() === '每日分析')!.trigger('click'); await flushPromises()
     await wrapper.get('select[aria-label="选择评分日期"]').setValue('17'); await flushPromises()
     expect(wrapper.get('article').text()).toContain('2026-11-17')
     resolveOld(reports[0]); await flushPromises()

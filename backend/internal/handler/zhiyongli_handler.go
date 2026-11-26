@@ -269,7 +269,7 @@ func (h *ZhiyongliHandler) Jobs(c *gin.Context) {
 	if !ok {
 		return
 	}
-	filter := zhiyongli.JobFilter{State: c.Query("state"), Search: c.Query("search"), Sort: c.Query("sort")}
+	filter := zhiyongli.JobFilter{State: c.Query("state"), Search: c.Query("search"), Sort: c.Query("sort"), View: c.Query("view")}
 	if e := filter.Validate(); e != nil {
 		zhiyongliError(c, e)
 		return

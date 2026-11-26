@@ -1,9 +1,8 @@
 """024月汇总：显式引文的023期间判断形成月分，不再次语义定月档。"""
 import copy
 import json
-from datetime import timedelta
+from datetime import timedelta, timezone
 from fractions import Fraction
-from zoneinfo import ZoneInfo
 
 from ..common import moment, require
 from .review022 import VERSION as SCALE_VERSION, ITEMS, PERFORMANCE, STATES, check
@@ -11,7 +10,7 @@ from .scores022 import NECESSARY, POLICY, WEIGHTS, level_for, mean, packed
 from .scope022 import check_window
 
 VERSION = 'pmje-month-rollup-20261105.024'
-TZ = ZoneInfo('Asia/Shanghai')
+TZ = timezone(timedelta(hours=8))
 
 
 def month_windows(start, end):

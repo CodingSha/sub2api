@@ -2,7 +2,19 @@
 """分段完整阅读的持久底座；逐字覆盖不等于目标归并或评分语义已通过。"""
 import argparse
 import copy
-from contextlib import nullcontext
+try:
+    from contextlib import nullcontext
+except ImportError:
+    class nullcontext:
+        """兼容生产 Python 3.6 的最小上下文管理器。"""
+        def __init__(self, value=None):
+            self.value = value
+
+        def __enter__(self):
+            return self.value
+
+        def __exit__(self, *exc_info):
+            return False
 from datetime import timedelta,timezone
 import fcntl
 import hashlib

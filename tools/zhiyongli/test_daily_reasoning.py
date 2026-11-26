@@ -26,6 +26,31 @@ def fact(record_id, action):
 
 
 class DailyReasoningTests(unittest.TestCase):
+    def test_precision_repair_selects_disjoint_quotes_inside_reviewed_action(self):
+        from daily_behaviors import catalog
+        text='核验表单提交。继续推进。附带其他背景。'
+        actions={'check':dict(fact('u','安排核验'),quote='核验表单提交。'),
+            'advance':dict(fact('u','推进工作'),quote='核验表单提交。继续推进。')}
+        tasks=[dict(records=[dict(id='u',role='user',text=text)])]
+        def send(client,root,name,data,schema,instructions):
+            self.assertEqual(name,'behaviors-precise-v3')
+            routes={}
+            for key,quote,code in [('check','核验表单提交。','J2'),('advance','继续推进。','M2')]:
+                fragment=next(k for k,(ref,start,chars) in data['fragments'].items()
+                    if text[start:start+chars]==quote)
+                routes[key]=dict(fragment_id=fragment,primary_item=code,origin='personal',asset_query='')
+            result=dict(routes=routes)
+            jsonschema.validate(result,schema)
+            bad=next(k for k,(ref,start,chars) in data['fragments'].items()
+                if text[start:start+chars]=='附带其他背景。')
+            with self.assertRaises(jsonschema.ValidationError):
+                jsonschema.validate(dict(routes=dict(routes,advance=dict(routes['advance'],fragment_id=bad))),schema)
+            return result
+        with tempfile.TemporaryDirectory() as path:
+            allocation=allocate(SimpleNamespace(),Path(path),dict(tasks=tasks,actions=actions,
+                allocation_errors='同段原话跨项重叠：J2/M2'),tasks,send,'behaviors-precise-v3')
+            self.assertEqual(len(catalog(allocation['behaviors'],{'u':tasks[0]['records'][0]})),2)
+
     def test_workflow_repair_changes_only_call_attribution_and_has_one_attempt(self):
         tasks=[dict(id='task',records=[dict(id='u',role='user',text='请整理材料。')],
             workflow_index=[dict(name='some-skill',record_id='tool')])]
@@ -506,6 +531,33 @@ class DailyReasoningTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError,'事实及归属检查未通过'):run()
                 self.assertEqual(stages,['quality-0','quality-1','quality-actor-dispute'])
 
+    def test_factual_dispute_requires_scored_users_positive_evidence_and_preserves_real_errors(self):
+        task=dict(records=[dict(id='u',role='user',text='用电设备平均功耗150瓦，用户要求连续工作5小时，如何配电？'),
+            dict(id='context',role='user',text='功耗按150瓦、续航按5小时计算。'),dict(id='a',role='assistant',text='已按条件计算。')])
+        other_task=dict(records=[dict(id='other',role='user',text='结果已经验收。')])
+        behaviors={'b':dict(primary_item='P1',source_ref='u',claim='给出功耗与工作时间条件')}
+        cell=dict(band='reasonable',refs=['b'],basis='你给出了150瓦、5小时的计算条件。',next_band='尚未明确验收标准。')
+        issue=dict(item='P1',kind='unsupported_action',problem='用户尚未验收结果。',claim_quote=cell['basis'],
+            source_ref='u',source_quote=task['records'][0]['text'],behavior_ids=['b'])
+        for enabled,upheld,ref,quote,accepted in [
+            (True,False,'u',task['records'][0]['text'],True),(True,False,'context',task['records'][1]['text'],True),(True,True,'','',False),
+            (True,False,'u','原文不存在',False),(True,False,'other','结果已经验收。',False),
+            (True,False,'a','已按条件计算。',False),(False,False,'u',task['records'][0]['text'],False)]:
+            with self.subTest(enabled=enabled,upheld=upheld,ref=ref,quote=quote),tempfile.TemporaryDirectory() as path:
+                stages=[]
+                def send(client,root,stage,data,schema,instructions):
+                    stages.append(stage)
+                    value=dict(decisions={'0':dict(upheld=upheld,user_ref=ref,user_quote=quote,reason='区分输入条件和结果验收。')}) if stage=='quality-factual-dispute-v2' else dict(issues=[issue])
+                    jsonschema.validate(value,schema);return value
+                def run():return check_quality(SimpleNamespace(review_factual_disputes=enabled),Path(path),[task,other_task],behaviors,{'P1':cell},
+                    dict(items={'P1':dict(basis=cell['basis'],next_band=cell['next_band'])}),[],send,lambda _: {'P1':cell})
+                if accepted:
+                    result,_=run();self.assertEqual(result['P1']['band'],cell['band'])
+                    self.assertEqual(json.loads((Path(path)/'quality.json').read_text())['audit_stage'],'quality-factual-dispute-v2')
+                else:
+                    with self.assertRaisesRegex(ValueError,'事实及归属检查未通过'):run()
+                self.assertEqual(stages,['quality-0','quality-1']+(['quality-factual-dispute-v2'] if enabled else []))
+
     def test_fact_coverage_distinguishes_no_action_from_an_omitted_record(self):
         delivered={'u1':dict(role='user'),'u2':dict(role='user'),'a':dict(role='assistant')}
         actions=[fact('u1','提供本次报价来源')]
@@ -738,7 +790,11 @@ class DailyReasoningTests(unittest.TestCase):
                     else:
                         result=checked_judgment(client,root,'judge-P-0',data,schema,call)
                         self.assertEqual(result['items']['P2']['band'],'reasonable' if band==70 else None)
-                self.assertEqual(sent,['judge-P-0.receipt.json','judge-P-0-contract-repair-v2.receipt.json'])
+                expected=['judge-P-0.receipt.json','judge-P-0-contract-repair-v2.receipt.json']
+                if band==60:
+                    expected.extend(['judge-P-0-contract-repair-v3.receipt.json',
+                        'judge-P-0-contract-repair-v4.receipt.json'])
+                self.assertEqual(sent,expected)
                 self.assertNotEqual(payloads[0],payloads[1])
                 receipt=json.loads((root/'judge-P-0.receipt.json').read_text())
                 self.assertEqual(json.loads(receipt['response']['output'][0]['content'][0]['text']),original)

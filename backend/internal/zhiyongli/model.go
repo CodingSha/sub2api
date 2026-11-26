@@ -133,6 +133,7 @@ type Bundle struct {
 }
 type Report struct {
 	Result
+	CompanyRank       *CompanyRank      `json:"company_rank,omitempty"`
 	ScoreExplanation  *ScoreExplanation `json:"score_explanation,omitempty"`
 	ID                int64             `json:"id"`
 	UserID            int64             `json:"user_id"`
@@ -140,6 +141,13 @@ type Report struct {
 	PublicationStatus string            `json:"publication_status"`
 	PublishedAt       *time.Time        `json:"published_at"`
 	CreatedAt         time.Time         `json:"created_at"`
+}
+
+// CompanyRank 只公开本人的同周名次，不返回其他员工的身份、分数或证据。
+type CompanyRank struct {
+	Position int64 `json:"position"`
+	Total    int64 `json:"total"`
+	Tied     bool  `json:"tied"`
 }
 type Run struct {
 	ID          int64     `json:"id"`

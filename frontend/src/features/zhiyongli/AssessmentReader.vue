@@ -3,7 +3,7 @@
     <section class="score-overview" aria-label="评分总览">
       <div class="score-summary">
         <p class="review-date">{{ periodLabel }}</p>
-        <div v-if="report.period_type !== 'day'" class="total-score"><strong>{{ report.score ?? '—' }}</strong><span class="inline-flex items-center gap-1">综合评分
+        <div v-if="report.period_type !== 'day'" class="total-score"><ScoreReveal v-if="report.score !== null" class="weekly-score" :score="report.score" :exact="report.exact" :identity="`${report.user_id}:${report.id}:${report.revision}`" :animate="revealScore === true" /><strong v-else>—</strong><span class="inline-flex items-center gap-1">综合评分
           <HelpTooltip v-if="partialWeeklyScore" width-class="w-72">
             <template #trigger="{ open, tooltipId }">
               <button type="button" class="inline-flex h-7 w-7 items-center justify-center hover:bg-gray-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500" aria-label="查看周总分计算方式" :aria-describedby="open ? tooltipId : undefined"><Icon name="infoCircle" size="sm" aria-hidden="true" /></button>
@@ -11,7 +11,7 @@
             <template v-if="report.policy_versions.aggregation === 'weekly-fixed-coverage-20261122.3'">{{ report.score_reason }}</template>
             <template v-else>周总分按已观察维度的原权重归一计算，未观察维度不补分。</template>
           </HelpTooltip>
-        </span></div>
+        </span><span v-if="report.company_rank" class="company-rank">公司排名 <b>{{ report.company_rank.tied ? '并列 ' : '' }}{{ report.company_rank.position }}</b><span>/ {{ report.company_rank.total }}</span></span></div>
         <div class="dimension-scores">
           <div v-for="dimension in report.dimensions" :key="dimension.code" class="dimension-score">
             <span>{{ dimension.name }}</span><strong>{{ dimension.score ?? '—' }}</strong>
@@ -116,12 +116,13 @@ import type { Item, Report } from './api'
 import ReportProse from './ReportProse.vue'
 import AssessmentContext from './AssessmentContext.vue'
 import CapabilityRadar from './CapabilityRadar.vue'
+import ScoreReveal from './ScoreReveal.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { evidenceForDisplay, explanation, reportText } from './reportPresentation'
 
-const props = withDefaults(defineProps<{ report: Report; periodLabel: string; sourceLabels?: Record<string, string>; sourceSessions?: Record<string, string>; conversations?: Record<string, AssessmentTask> }>(), { sourceLabels: () => ({}), sourceSessions: () => ({}), conversations: () => ({}) })
+const props = withDefaults(defineProps<{ report: Report; periodLabel: string; revealScore?: boolean; sourceLabels?: Record<string, string>; sourceSessions?: Record<string, string>; conversations?: Record<string, AssessmentTask> }>(), { sourceLabels: () => ({}), sourceSessions: () => ({}), conversations: () => ({}) })
 const active = ref('P')
 const selectedCase = ref<CaseGroup | null>(null)
 watch(() => props.report, (report) => {
@@ -171,7 +172,7 @@ const hasExtraInput = (message: QuotedMessage) => plain(message.context) !== pla
 .assessment-reader{color:#24272c;font-size:15px;line-height:1.75}
 .score-overview{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);align-items:center;gap:24px;padding:12px 0 28px;border-bottom:1px solid #dce1e5}
 .review-date{margin:0 0 12px;color:#59616b;font-size:14px}.score-summary{min-width:0}.dimension-scores{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:24px}
-.total-score{display:flex;align-items:baseline;gap:12px;margin-bottom:20px;font-size:13px;color:#59616b}.total-score strong{font-size:56px;line-height:1.2;font-weight:600;color:#1e3037;font-variant-numeric:tabular-nums}
+.total-score{display:flex;flex-wrap:wrap;align-items:baseline;gap:12px;margin-bottom:20px;font-size:13px;color:#59616b}.total-score strong,.weekly-score{font-size:56px;line-height:1.2;font-weight:600;color:#1e3037;font-variant-numeric:tabular-nums}.company-rank{display:inline-flex;align-items:baseline;gap:6px;margin-left:16px}.company-rank b{font-size:24px;color:#0f766e;font-variant-numeric:tabular-nums}
 .dimension-score{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 0;border-top:1px solid #dce1e5;font-size:13px;color:#59616b}.dimension-score strong{font-size:28px;line-height:1.3;font-weight:500;color:#283c43;font-variant-numeric:tabular-nums}
 
 .assessment-content{padding-top:28px}.assessment-content>h2{font-size:21px;font-weight:600;line-height:1.5;margin:0 0 16px}

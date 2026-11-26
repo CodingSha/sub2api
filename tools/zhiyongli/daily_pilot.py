@@ -64,6 +64,7 @@ def clarification_reply(text):
 
 def annotation_reply(text):
     """响应批注的选中文本是背景，My request 才是本人新增要求。"""
+    text=text.lstrip()
     if text.startswith('# Browser comments:') and '## My request:' in text:
         background, request = text.split('## My request:', 1)
         # 浏览器包装里的 Comment 属于本人，URL、选区和网页正文不属于本人。
@@ -134,6 +135,10 @@ def normalized(event):
             re.fullmatch(r'\s*\{"description"\s*:\s*"(?:[^"\\]|\\.)*"\}\s*',text)):
         role='context'
     if role=='user' and text.strip() in {'</image>','<image>'}:role='context'
+    # 客户端独立附带的浏览器状态不是本人输入；带有额外本人文字时不按此包装排除。
+    if role=='user' and re.fullmatch(
+            r'\s*<external_browser_tabs>\s*<in-app-browser-context source="ambient-ui-state">[\s\S]*</in-app-browser-context>\s*</external_browser_tabs>\s*',text):
+        role='context'
     reply=clarification_reply(text) if role=='user' else None
     if reply:text='\n'.join(row['answer'] for row in reply)
     annotation=annotation_reply(text) if role=='user' else None

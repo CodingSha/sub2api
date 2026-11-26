@@ -54,7 +54,13 @@ def moment(value):
         value = value.replace("Z", "+00:00")
         value = re.sub(r"(\d{2}:\d{2}:\d{2})\.(\d{1,9})(?=[+-]\d{2}:\d{2}$)",
                        lambda m: m[1] + "." + m[2][:6].ljust(6, "0"), value)
-        result = datetime.fromisoformat(value)
+        try:
+            parser = datetime.fromisoformat
+        except AttributeError:
+            fmt = '%Y-%m-%dT%H:%M:%S.%f%z' if '.' in value else '%Y-%m-%dT%H:%M:%S%z'
+            result = datetime.strptime(value, fmt)
+        else:
+            result = parser(value)
     except (TypeError, ValueError, AttributeError) as exc:
         raise ContractError("时间必须是带时区ISO8601：" + str(value)) from exc
     require(result.tzinfo is not None, "时间缺少时区")

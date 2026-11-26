@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from runtime import atomic, digest
-from weekly_daily import evaluate, prepared, sha, checked_call
+from weekly_daily import evaluate, prepared, sha, checked_call, read_large_context, source_scoped_schema
 from workday_scope import window
 
 
@@ -69,6 +69,69 @@ class Client:
 
 
 class WeeklyDailyTests(unittest.TestCase):
+    def test_legacy_unknown_context_reference_uses_separate_scoped_repair(self):
+        from weekly_daily import checked_judgment as original
+        with TemporaryDirectory() as tmp:
+            state=Path(tmp);sources,job=fixture(state);client=Client();stages=[]
+            root=state/'week';(root/'P1').mkdir(parents=True)
+            # 已有原阶段保留旧schema；用替身模拟该旧合同允许了不存在的context_ref。
+            atomic(root/'P1/judgment.receipt.json',dict(status='received'))
+            def judge(client,part,stage,data,schema,send):
+                stages.append((stage,copy.deepcopy(schema),copy.deepcopy(data)))
+                value=original(client,part,stage,data,schema,send)
+                if stage=='judgment':value['items']['P1']['context_refs']=['不存在的原文编号']
+                return value
+            with patch('weekly_daily.checked_judgment',side_effect=judge):
+                result=evaluate(sources,job,state,root,client)['reports'][0]
+            self.assertEqual(result['score'],'16.0')
+            self.assertEqual([row[0] for row in stages],['judgment','judgment-source-scope-repair-v1'])
+            self.assertNotEqual(stages[0][1],stages[1][1])
+            self.assertIn('d20261118-u18',json.dumps(stages[1][1]))
+            self.assertEqual(stages[1][2]['previous_invalid_judgment']['items']['P1']['context_refs'],['不存在的原文编号'])
+
+    def test_batched_audit_schema_restricts_refs_and_drops_unavailable_actor_variant(self):
+        import jsonschema
+        from review_schema import obj, array, compact
+        issue=dict(anyOf=[obj(dict(kind=dict(type='string',enum=['wording']),source_ref=dict(type='string',enum=['u1','u2']))),
+            obj(dict(kind=dict(type='string',enum=['wrong_actor']),source_ref=dict(type='string',enum=['a2'])))])
+        schema=compact(obj(dict(issues=array(issue))))
+        narrowed=source_scoped_schema(schema,{'u1'})
+        jsonschema.Draft202012Validator.check_schema(narrowed)
+        jsonschema.validate(dict(issues=[dict(kind='wording',source_ref='u1')]),narrowed)
+        for kind,ref in [('wording','u2'),('wrong_actor','a2')]:
+            with self.assertRaises(jsonschema.ValidationError):
+                jsonschema.validate(dict(issues=[dict(kind=kind,source_ref=ref)]),narrowed)
+
+    def test_published_evidence_selects_actual_quote_among_same_catalog_candidates(self):
+        with TemporaryDirectory() as tmp:
+            state=Path(tmp);sources,job=fixture(state);root=state/'3/review'
+            first=prepared(sources,job,state);key=next(iter(sources[2]['review']['behaviors']))
+            text=next(iter(first['quotes'].values()))
+            atomic(root/'report.json',dict(items=[dict(evidence=[dict(id=key,quote=text)])]))
+            fragments=json.loads((root/'source-fragments.json').read_text())
+            fragments['f2']=dict(record_id='u18',quote='比较两份报价')
+            atomic(root/'source-fragments.json',fragments)
+            atomic(root/'behaviors-repair.input.json',json.loads((root/'behaviors.input.json').read_text()))
+            receipt(root,'behaviors-repair',dict(routes={'action-1':dict(fragment_id='f2',primary_item='P1',origin='personal')}))
+            self.assertEqual(first,prepared(sources,job,state))
+
+    def test_signed_stage_coordinates_survive_rebuilt_final_fragment_index(self):
+        with TemporaryDirectory() as tmp:
+            state=Path(tmp);sources,job=fixture(state);root=state/'3/review'
+            payload=json.loads((root/'behaviors.input.json').read_text())
+            data=json.loads(payload['input']);text=sources[2]['review']['conversations']['task-1']['records'][0]['text']
+            data['fragments']={'old-fragment':['u18',0,len(text)]}
+            payload['input']=json.dumps(data)
+            atomic(root/'behaviors.input.json',payload)
+            receipt(root,'behaviors',dict(routes={'action-1':dict(fragment_id='old-fragment',primary_item='P1',origin='personal')}))
+            atomic(root/'source-fragments.json',{'new-fragment':dict(record_id='u18',quote='比较')})
+            first=prepared(sources,job,state)
+            self.assertEqual(list(first['quotes'].values()),[text])
+            invalid=dict(payload,input=json.dumps(dict(data,actions={'action-1':dict(record_id='u18',action='旧的未发布主张')})))
+            atomic(root/'behaviors-repair.input.json',invalid)
+            receipt(root,'behaviors-repair',dict(routes={'action-1':dict(fragment_id='不存在的历史定位',primary_item='P1',origin='personal')}))
+            self.assertEqual(first,prepared(sources,job,state))
+
     def test_large_quality_review_splits_whole_tasks_without_cutting_text(self):
         tasks=[dict(id='t'+str(i),records=[dict(id='u'+str(i),role='user',text='x'*100000)]) for i in range(2)]
         client=SimpleNamespace(config=SimpleNamespace(model='test'),output_token_limit=4500)
@@ -78,10 +141,83 @@ class WeeklyDailyTests(unittest.TestCase):
             self.assertEqual(len(send.call_args_list),2)
             self.assertEqual([t for args in send.call_args_list for t in args.args[3]['tasks']],tasks)
             self.assertTrue((Path(tmp)/'quality-0-batch-coverage.json').exists())
-        with TemporaryDirectory() as tmp, patch('weekly_daily.call') as send:
-            with self.assertRaisesRegex(ValueError,'超过既有全局预算'):
-                checked_call(client,Path(tmp),'judgment',data,dict(type='object'),'判断')
-            send.assert_not_called()
+
+    def test_received_cross_batch_finding_uses_independent_scoped_repair(self):
+        from review_schema import obj, array
+        tasks=[dict(id=str(i),records=[dict(id='u'+str(i),role='user',text='x'*100000)]) for i in range(2)]
+        client=SimpleNamespace(config=SimpleNamespace(model='test'),output_token_limit=4500)
+        schema=obj(dict(issues=array(obj(dict(source_ref=dict(type='string',enum=['u0','u1']))))))
+        before=copy.deepcopy(schema)
+        def respond(client,root,name,data,used_schema,instructions):
+            if name.endswith('-source-scope-repair-v2'):
+                self.assertIn('previous_invalid_audit',data)
+                return dict(issues=[])
+            return dict(issues=[dict(source_ref='u1' if data['tasks'][0]['id']=='0' else 'u0')])
+        with TemporaryDirectory() as tmp,patch('weekly_daily.has_receipt',return_value=True),patch('weekly_daily.call',side_effect=respond) as send:
+            result=checked_call(client,Path(tmp),'quality-0',dict(tasks=tasks,read_records=[]),schema,'原始复查要求')
+            self.assertEqual(result,dict(issues=[]));self.assertEqual(len(send.call_args_list),4)
+            self.assertEqual(send.call_args_list[0].args[4],before)
+            self.assertEqual(schema,before)
+
+    def test_large_judgment_reads_every_task_and_synthesizes_without_daily_scores(self):
+        tasks=[dict(id='t'+str(i),records=[dict(id='u'+str(i),role='user',text='比较报价'),
+            dict(id='a'+str(i),role='assistant',text='x'*100000)]) for i in range(2)]
+        own={str(i):dict(source_ref='u'+str(i),claim='要求比较报价',primary_item='P1') for i in range(2)}
+        client=SimpleNamespace(config=SimpleNamespace(model='test'),output_token_limit=4500)
+        def respond(client,root,name,data,schema,instructions):
+            if '-context-' in name:
+                return dict(behaviors={key:dict(support='已说明比较目标',limitations='未展示执行结果',
+                    context_refs=[b['source_ref']]) for key,b in data['behaviors'].items()})
+            return dict(final=True)
+        with TemporaryDirectory() as tmp,patch('weekly_daily.call',side_effect=respond) as send:
+            result=checked_call(client,Path(tmp),'judgment',dict(tasks=tasks,behaviors=own),{},'综合判断')
+            self.assertEqual(result,dict(final=True))
+            self.assertEqual(len(send.call_args_list),3)
+            reads=send.call_args_list[:-1]
+            self.assertEqual([t for args in reads for t in args.args[3]['tasks']],tasks)
+            final=send.call_args_list[-1].args[3]
+            self.assertEqual([r for t in final['tasks'] for r in t['records']],
+                [r for t in tasks for r in t['records'] if r['role']=='user'])
+            self.assertEqual(len(final['context_readings']),2)
+            self.assertNotIn('band',json.dumps(final))
+        with TemporaryDirectory() as tmp,patch('weekly_daily.call',return_value=dict(behaviors={'0':dict(
+                context_refs=['虚构编号'])})):
+            with self.assertRaisesRegex(ValueError,'不属于本批完整原文'):
+                read_large_context(client,Path(tmp),'judgment',dict(tasks=tasks,behaviors=own))
+
+    def test_failed_factual_repair_requires_new_original_text_verification(self):
+        with TemporaryDirectory() as tmp:
+            state=Path(tmp);sources,job=fixture(state);client=Client();calls=[]
+            def verify(client,root,tasks,behaviors,judgments,prose,*rest):
+                calls.append(root)
+                if len(calls)==1:
+                    atomic(root/'quality.json',dict(issues=[dict(kind='wording',problem='疑问误写成要求')]))
+                    raise ValueError('日评事实及归属检查未通过')
+                return judgments,prose
+            with patch('weekly_daily.check_quality',side_effect=verify):
+                result=evaluate(sources,job,state,state/'week',client)['reports'][0]
+            self.assertEqual(result['score'],'16.0')
+            self.assertEqual(len(calls),2)
+            self.assertEqual(calls[1].name,'factual-verification-v2')
+            self.assertTrue((calls[0]/'quality.json').exists())
+            self.assertIn('factual_requirement',client.sent[-1])
+
+    def test_context_quote_repair_keeps_original_read_and_checks_replacement(self):
+        client=SimpleNamespace(config=SimpleNamespace(model='test'),output_token_limit=4500,daily_natural_json=True)
+        data=dict(tasks=[dict(id='t',records=[dict(id='u',role='user',text='请比较两份报价')])],
+            behaviors={'b':dict(source_ref='u',claim='比较报价')})
+        invalid=dict(behaviors={'b':dict(support='比较目标',limitations='',quotes=[dict(record_id='u',quote='比较…报价')])})
+        valid=dict(behaviors={'b':dict(support='比较目标',limitations='',quotes=[dict(record_id='u',quote='比较两份报价')])})
+        with TemporaryDirectory() as tmp,patch('weekly_daily.call',side_effect=[invalid,valid]) as send:
+            root=Path(tmp)
+            atomic(root/'judgment.receipt.json',dict(status='received'))
+            atomic(root/'judgment-context-v1-coverage.json',dict(task_ids=['t']))
+            result=read_large_context(client,root,'judgment',data)
+            self.assertEqual(result['context_readings'],[valid])
+            self.assertEqual(send.call_args_list[0].args[2],'judgment-context-v1-0')
+            self.assertEqual(send.call_args_list[1].args[2],'judgment-context-v1-0-quote-repair-v2')
+            self.assertEqual(send.call_args_list[1].args[3]['previous_invalid_reading'],invalid)
+            self.assertTrue(client.daily_natural_json)
 
     def test_repair_input_and_later_received_repair_do_not_replace_published_allocation(self):
         with TemporaryDirectory() as tmp:

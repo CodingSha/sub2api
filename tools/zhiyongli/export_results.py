@@ -2,12 +2,12 @@
 # -*- coding: utf-8 -*-
 """把原生、已复核的023周评/024月汇总导出为AI Hub结果包；不调用模型。"""
 import argparse
+from datetime import timedelta, timezone
 import hashlib
 import json
 import re
 import sys
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'research/ai-usage-assessment'))
@@ -17,7 +17,7 @@ from scoring_pipeline.weekly_performance.month_rollup import bound_period, summa
 from eligibility import attach
 from scoring_pipeline.weekly_performance.review_policy import attach_review_policy
 
-TZ = ZoneInfo('Asia/Shanghai')
+TZ = timezone(timedelta(hours=8))
 NAMES = dict(P='提示词质量', M='任务驾驭度', J='判断核验', E='使用效率')
 
 

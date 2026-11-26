@@ -1,6 +1,6 @@
 <template>
   <AssessmentReader v-if="report.period_type === 'day' && report.daily_review && report.items?.length" :report="report" :period-label="report.period_start" :source-labels="report.daily_review.source_labels" :source-sessions="report.daily_review.source_sessions" :conversations="report.daily_review.conversations" />
-  <AssessmentReader v-else-if="report.weekly_review && report.items?.length" :report="report" :period-label="`${report.weekly_review.sources[0].period_start} — ${report.weekly_review.sources.at(-1)?.period_start}`" :source-labels="report.weekly_review.source_labels" :source-sessions="report.weekly_review.source_sessions" :conversations="report.weekly_review.conversations" />
+  <AssessmentReader v-else-if="report.weekly_review && report.items?.length" :report="report" :reveal-score="revealScore" :period-label="`${report.weekly_review.sources[0].period_start} — ${report.weekly_review.sources.at(-1)?.period_start}`" :source-labels="report.weekly_review.source_labels" :source-sessions="report.weekly_review.source_sessions" :conversations="report.weekly_review.conversations" />
   <section v-else-if="reviewPending(report)" aria-label="评审状态">
     <h2 class="score-title text-gray-900 dark:text-gray-100">智用力评分</h2>
     <p class="mt-3 text-sm text-gray-600 dark:text-gray-300">评审待完成</p>
@@ -17,6 +17,7 @@
           <ScoreReveal v-if="displayedScore !== null" :key="`${report.id}:${report.revision}`" class="score-number text-gray-900 dark:text-gray-100" :score="displayedScore" :exact="displayedExact" :animate="revealScore === true" :identity="`${report.user_id}:${report.id}:${report.revision}`" />
           <span v-else class="text-sm text-gray-600 dark:text-gray-300">{{ report.period_type === 'day' && report.score_status === 'observation_only' ? '仅作维度观察' : scoreStatusLabel(report) }}</span>
           <span v-if="displayedScore !== null" class="text-sm text-gray-400">/ 100</span>
+          <span v-if="report.company_rank" class="ml-4 text-sm text-gray-500 dark:text-gray-400">公司排名 <strong class="text-lg text-primary-700 dark:text-primary-400">{{ report.company_rank.tied ? '并列 ' : '' }}{{ report.company_rank.position }}</strong> / {{ report.company_rank.total }}</span>
           <span v-if="report.rating" class="badge badge-success">{{ report.rating }}</span>
           <span v-else-if="report.period_type === 'month' && displayedScore !== null" class="text-sm text-amber-700 dark:text-amber-400">评级待定</span>
           <HelpTooltip v-if="report.period_type !== 'day' && (report.score_explanation || report.score_reason || hasDimensionObservations)" class="self-center" width-class="w-80">

@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """管理员任务的后台Worker；专用数据库与导入权限，逐阶段续跑，无自动发布。"""
 import argparse
-from contextlib import contextmanager,nullcontext
+from contextlib import contextmanager
+try:
+    from contextlib import nullcontext
+except ImportError:
+    class nullcontext:
+        def __init__(self, value=None): self.value=value
+        def __enter__(self): return self.value
+        def __exit__(self, *args): return False
 from concurrent.futures import ThreadPoolExecutor,wait,FIRST_EXCEPTION
 from datetime import datetime,timedelta,timezone
 import fcntl
@@ -191,7 +198,7 @@ def process(db,job,state,source,client,send,excluded_keys,max_requests=100,new_r
     root=Path(state)/str(job['id']);root.mkdir(parents=True,exist_ok=True,mode=0o700)
     evidence_first=getattr(client,'evidence_first',False) is True
     daily_review=job['period_type']=='day'
-    weekly_daily=job['period_type']=='week' and job.get('scope_key','').startswith(('weekly-from-daily-20261122.1:','weekly-from-daily-20261122.2:'))
+    weekly_daily=job['period_type']=='week' and job.get('scope_key','').startswith(('weekly-from-daily-20261122.1:','weekly-from-daily-20261122.2:','weekly-from-daily-20261123.1:'))
     pilot=daily_review and job['id'] in (getattr(client,'pilot_day_job_ids',None) or ())
     session_review=getattr(client,'session_review',False) is True or daily_review or weekly_daily
     last=['collecting',0,1]
@@ -245,7 +252,7 @@ def process(db,job,state,source,client,send,excluded_keys,max_requests=100,new_r
             raise Paused('queued','尚未到本期来源封口时刻，不提前采集和评分')
         if weekly_daily:
             from weekly_daily import evaluate as evaluate_daily_week
-            source_root='daily-week-sources-v2' if job.get('scope_key','').startswith('weekly-from-daily-20261122.2:') else 'daily-week-sources'
+            source_root='daily-week-sources-v2' if job.get('scope_key','').startswith(('weekly-from-daily-20261122.2:','weekly-from-daily-20261123.1:')) else 'daily-week-sources'
             manifest=Path(state)/source_root/str(job['period_start'])/(str(job['user_id'])+'.json')
             sources=json.loads(manifest.read_text())
             frozen=root/'import-bundle.json'
@@ -255,7 +262,11 @@ def process(db,job,state,source,client,send,excluded_keys,max_requests=100,new_r
                     raise ValueError('周评冻结导入包与事前意图不符')
             else:
                 progress('evaluating',0,1,'复用五日已核任务与原文综合评审，不平均日分')
-                bundle=evaluate_daily_week(sources,job,state,root/'review',client)
+                if str(job.get('scope_key','')).startswith('weekly-from-daily-20261123.1:'):
+                    from efficiency_rereview import run as run_efficiency
+                    bundle=run_efficiency(db,sources,job,state,root,client)
+                else:
+                    bundle=evaluate_daily_week(sources,job,state,root/'review',client)
             progress('importing',0,1,'保存并发布五日日评来源的新版周评分')
             import_candidate(root,job,bundle,send)
             update(db,job['id'],'completed','done',1,1,'新版周评分已保存并发布')

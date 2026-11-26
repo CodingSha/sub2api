@@ -26,6 +26,7 @@
         <Pagination v-if="total > 0" :total="total" :page="page" :page-size="20" :show-page-size-selector="false" show-jump @update:page="goToPage" />
       </div>
       <DataTable v-if="activeTab === 'reports'" :columns="columns" :data="reports" :loading="loading">
+        <template #header-score><button v-if="periodType !== 'day'" type="button" class="inline-flex min-h-8 items-center gap-1 focus-visible:outline-primary-500" :aria-label="sort === 'score_desc' ? '总分从高到低，点击升序' : '总分排序，点击降序'" :disabled="loading" @click="toggleScoreSort">总分 <span aria-hidden="true">{{ sort === 'score_desc' ? '↓' : sort === 'score_asc' ? '↑' : '↕' }}</span></button><span v-else>评审状态</span></template>
         <template #cell-user_email="{row}"><button class="max-w-48 whitespace-normal break-all text-left font-medium text-primary-700 hover:underline focus-visible:outline-primary-500 dark:text-primary-400" @click="openReport(row.id)">{{ row.user_email }}</button></template>
         <template #cell-period_start="{row}"><div class="text-xs leading-5 tabular-nums"><div>{{ row.period_start }}</div><div v-if="row.period_type !== 'day'" class="text-gray-500 dark:text-gray-400">至 {{ periodLabel(row).split(' — ')[1] }}</div></div></template>
         <template #cell-score="{row}">
@@ -53,7 +54,6 @@
         <template #empty><p class="text-sm">暂无接入记录</p></template>
       </DataTable>
       <ReviewJobs v-if="activeTab === 'jobs'" :start-open="startOpen" :initial-search="jobSearch" @close="startOpen=false" @reports="showJobReports" />
-      <Pagination v-if="activeTab !== 'jobs' && total > 20" :total="total" :page="page" :page-size="20" :show-page-size-selector="false" show-jump :class="{ 'pointer-events-none opacity-60': loading }" @update:page="goToPage" />
       <BaseDialog :show="detailOpen" :title="detail ? detail.user_email : '评分报告'" :width="confirmRecheck ? 'normal' : 'extra-wide'" :close-on-escape="!rechecking" :show-close-button="!rechecking" @close="closeDetail">
         <LoadingSpinner v-if="detailLoading" class="mx-auto my-12" />
         <p v-else-if="detailError" class="text-red-600">{{ detailError }}</p>
@@ -144,6 +144,7 @@ async function recheck(){
   }catch(e){recheckError.value=(e as Error).message}finally{rechecking.value=false}
 }
 function resetList(){page.value=1;if(periodType.value==='day'&&sort.value.startsWith('score_'))sort.value='period_desc';void load()}
+function toggleScoreSort(){sort.value=sort.value==='score_desc'?'score_asc':'score_desc';resetList()}
 function switchTab(tab:string){activeTab.value=tab;total.value=0;resetList()}
 function goToPage(value:number){if(loading.value)return;page.value=value;void load()}
 async function openReport(id:number){const current=++detailRequest;detailOpen.value=true;detailLoading.value=true;detailError.value='';detail.value=null;try{const data=await getReport(true,id);if(current===detailRequest)detail.value=data}catch(e){if(current===detailRequest)detailError.value=(e as {message:string}).message}finally{if(current===detailRequest)detailLoading.value=false}}

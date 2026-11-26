@@ -115,6 +115,17 @@ backup)
   gzip -t "$out"; ls -lh "$out" "$globals" | awk '{print $5, $NF}'
   ;;
 build)
+  # 生产镜像必须能由远端确定提交重建，拒绝直接发布未提交源码。
+  (
+    cd ..
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "须从Git检出构建，不能直接覆盖生产源码目录"; exit 1; }
+    [ -z "$(git status --porcelain)" ] || { echo "源码有未提交或未跟踪改动，先提交推送再构建"; exit 1; }
+    branch=$(git symbolic-ref --short HEAD) || { echo "须使用已推送分支构建"; exit 1; }
+    remote_commit=$(git ls-remote --exit-code origin "refs/heads/$branch" | awk '{print $1}')
+    [ "$(git rev-parse HEAD)" = "$remote_commit" ] || { echo "本地提交与远端分支不一致，停止构建"; exit 1; }
+  )
+  # 发布前先确保一次性评审容器有独立收尾，防止失败批次持续堆积。
+  bash install-zhiyongli-cleanup.sh
   [ -f "$PRIV/compose.env" ] || { echo "先执行 prepare"; exit 1; }
   check_db_budget
   docker image inspect "$ROLLBACK_TAG" >/dev/null 2>&1 || docker tag "$(docker inspect -f '{{.Image}}' "$(container sub2api)")" "$ROLLBACK_TAG"

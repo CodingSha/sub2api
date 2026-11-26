@@ -11,5 +11,8 @@ COPY tools/zhiyongli/execution-upgrade-20261113.json /app/tools/zhiyongli/
 COPY research/ai-usage-assessment/scoring_pipeline /app/research/ai-usage-assessment/scoring_pipeline
 COPY research/ai-usage-assessment/score-levels-g2.json /app/research/ai-usage-assessment/score-levels-g2.json
 COPY backend/internal/zhiyongli/workday-registry.json /app/backend/internal/zhiyongli/workday-registry.json
+# 镜像标识写入镜像本身，不改运行环境变量，避免切换 Worker 时改动编排指纹。
+ARG ZHIYONGLI_IMAGE_ID=unspecified
+RUN printf '%s\n' "$ZHIYONGLI_IMAGE_ID" > /etc/zhiyongli-image-id && chmod 444 /etc/zhiyongli-image-id
 USER 1000:1000
 ENTRYPOINT ["python", "/app/tools/zhiyongli/worker.py"]

@@ -46,7 +46,7 @@ class ModelConfig:
     model: str = MODEL
 
     @classmethod
-    def load(cls, path=None):
+    def load(cls, path=None, *, conversation=False):
         path = path or os.environ.get('ZHIYONGLI_MODEL_CONFIG')
         if not path:
             raise ValueError('未指定智用力专用模型配置文件')
@@ -60,7 +60,7 @@ class ModelConfig:
         if base not in {'https://ai.apsatcom.com', 'https://ai.apsatcom.com/v1',
                         'http://sub2api:8080', 'http://sub2api:8080/v1'}:
             raise ValueError('模型端点须为公司HTTPS接口或同网络http://sub2api:8080')
-        if value.get('model') != MODEL:
+        if value.get('model') not in ({MODEL,'gpt-6.1-sol','gpt-6.2-sol'} if conversation else {MODEL}):
             raise ValueError('本轮模型必须为deepseek-v4.1-flash-local')
         timeout = value.get('timeout_seconds', 180)
         if type(timeout) is not int or not 1 <= timeout <= 1800:
@@ -68,7 +68,7 @@ class ModelConfig:
         key_file = Path(value['api_key_file'])
         if not key_file.is_absolute():
             raise ValueError('专用密钥文件须使用绝对路径')
-        return cls(base, key_file, timeout)
+        return cls(base, key_file, timeout,value['model'])
 
     @property
     def responses_url(self):

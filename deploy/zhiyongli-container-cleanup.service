@@ -1,0 +1,12 @@
+[Unit]
+Description=Archive and remove exited Zhiyongli assessment containers
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+UMask=0077
+Nice=10
+IOSchedulingClass=idle
+ExecStart=/usr/bin/python3 /data/zhiyongli/ops/zhiyongli_containers.py --apply --min-age-seconds 600
+TimeoutStartSec=15min

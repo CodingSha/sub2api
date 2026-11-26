@@ -52,7 +52,7 @@ class ModelFlow:
 
     @contextmanager
     def connect(self):
-        db=sqlite3.connect(self.path.resolve().as_uri()+'?mode=ro',uri=True,timeout=10) if self.read_only else sqlite3.connect(self.path,timeout=10)
+        db=sqlite3.connect(self.path.resolve().as_uri()+'?mode=ro',uri=True,timeout=10) if self.read_only else sqlite3.connect(str(self.path),timeout=10)
         db.row_factory=sqlite3.Row
         db.execute('PRAGMA synchronous=FULL')
         try:

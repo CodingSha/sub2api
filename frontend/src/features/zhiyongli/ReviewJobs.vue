@@ -1,6 +1,7 @@
 <template>
   <div class="space-y-4">
     <div class="flex flex-wrap items-center gap-3 text-sm">
+      <Select v-model="view" :options="viewOptions" class="w-40" aria-label="评审记录范围" @change="resetList" />
       <Select v-model="state" :options="stateOptions" class="w-40" aria-label="筛选评审状态" @change="resetList" />
       <form class="flex gap-2" @submit.prevent="applySearch">
         <input v-model="searchInput" class="input w-64" placeholder="账户邮箱" aria-label="搜索评审账户" />
@@ -22,20 +23,20 @@
         <WorkdayRange v-if="row.workday_scope" :scope="row.workday_scope" class="mt-1" />
         <span v-else class="block text-xs text-gray-500">{{ row.period_type === 'week' ? '历史自然周范围' : '历史自然月范围' }}</span>
       </template>
-      <template #cell-state="{row}"><span class="badge relative overflow-hidden" :class="[stateClass(row), {'review-active': row.active}]" :aria-busy="row.active"><span class="relative z-10">{{ row.state === 'running' && !row.active ? '等待续评' : states[row.state as ReviewJob['state']] }}</span></span></template>
+      <template #cell-state="{row}"><span class="badge relative overflow-hidden" :class="[isHistorical(row) ? 'badge-gray' : stateClass(row), {'review-active': row.active}]" :aria-busy="row.active"><span class="relative z-10">{{ isHistorical(row) ? `历史${row.state === 'failed' ? '失败' : '记录'}` : row.result_publication_status === 'published' ? '已发布' : row.state === 'running' && !row.active ? '等待续评' : states[row.state as ReviewJob['state']] }}</span></span></template>
       <template #cell-phase="{row}">
+        <div v-if="isHistorical(row)" class="mb-1 text-xs text-gray-500">已由评审 #{{ row.latest_job_id }} 替代</div>
         <div class="text-sm">{{ phases[row.phase] || row.phase }}<span v-if="row.total_units > 0" class="ml-2 tabular-nums text-gray-500">{{ row.completed_units }}/{{ row.total_units }}</span></div>
         <div v-if="row.message" class="max-w-xs whitespace-normal text-xs leading-5 text-gray-500 dark:text-gray-400">{{ row.message }}</div>
       </template>
       <template #cell-updated_at="{value}"><span class="tabular-nums text-xs">{{ formatTime(value) }}</span></template>
       <template #cell-actions="{row}">
-        <button v-if="row.state === 'failed' || row.state === 'needs_review'" class="text-sm text-primary-700 dark:text-primary-400" :disabled="resuming === row.id" @click="resume(row)">{{ resuming === row.id ? '恢复中…' : '恢复校验' }}</button>
+        <button v-if="!isHistorical(row) && (row.state === 'failed' || row.state === 'needs_review')" class="text-sm text-primary-700 dark:text-primary-400" :disabled="resuming === row.id" @click="resume(row)">{{ resuming === row.id ? '恢复中…' : '恢复校验' }}</button>
         <button v-else-if="row.state === 'completed'" class="text-sm text-primary-700 dark:text-primary-400" @click="$emit('reports', row)">{{ row.recheck_report_id ? '查看复评结果' : '查看结果' }}</button>
         <span v-else class="text-gray-400">—</span>
       </template>
       <template #empty><p class="text-sm">暂无评审任务</p></template>
     </DataTable>
-    <Pagination v-if="total > 20" :total="total" :page="page" :page-size="20" :show-page-size-selector="false" show-jump :class="{ 'pointer-events-none opacity-60': loading }" @update:page="goToPage" />
 
     <BaseDialog :show="startOpen" title="开始评审" width="normal" :close-on-escape="!starting" :show-close-button="!starting" @close="$emit('close')">
       <form id="start-review" class="space-y-4" @submit.prevent="start">
@@ -78,6 +79,9 @@ const emit = defineEmits<{close:[];reports:[job:ReviewJob]}>()
 const app=useAppStore()
 const jobs=ref<ReviewJob[]>([]),page=ref(1),total=ref(0),loading=ref(false),error=ref(''),resuming=ref<number|null>(null)
 const sort=ref('')
+const view=ref('current')
+const viewOptions=[{value:'current',label:'当前评审'},{value:'history',label:'历史评审'},{value:'all',label:'全部记录'}]
+const isHistorical=(job:ReviewJob)=>job.latest_job_id!==undefined && job.latest_job_id!==job.id
 const sortOptions=[{value:'',label:'执行及问题优先'},{value:'updated_desc',label:'最近更新优先'},{value:'updated_asc',label:'最早更新优先'},{value:'period_desc',label:'日期从新到旧'},{value:'period_asc',label:'日期从旧到新'},{value:'email_asc',label:'成员 A–Z'},{value:'email_desc',label:'成员 Z–A'}]
 const state=ref(''),searchInput=ref(props.initialSearch??''),search=ref(searchInput.value)
 const kind=ref<'week'|'month'>('week'),startDate=ref(''),starting=ref(false),startError=ref('')
@@ -88,10 +92,10 @@ const states:Record<ReviewJob['state'],string>={queued:'等待执行',running:'�
 const stateOptions=[{value:'',label:'全部状态'},...Object.entries(states).map(([value,label])=>({value,label:value==='running'?'执行及待续评':label}))]
 const stateClasses:Record<ReviewJob['state'],string>={queued:'bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200',running:'bg-teal-100 text-teal-800 dark:bg-teal-900/50 dark:text-teal-200',needs_review:'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200',unknown:'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-200',failed:'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200',completed:'badge-success',no_activity:'badge-gray'}
 const stateClass=(job:ReviewJob)=>job.state==='running'&&!job.active?'badge-gray':stateClasses[job.state]
-const phases:Record<string,string>={collecting:'采集来源',reading:'阅读来源',identifying:'识别目标',evaluating:'当日评审',reviewing:'分项评审',checking:'核对依据',importing:'接入候选',done:'已完成',paused:'已暂停'}
+const phases:Record<string,string>={collecting:'采集来源',reading:'阅读来源',identifying:'识别目标',evaluating:'综合评审',reviewing:'分项评审',checking:'核对依据',importing:'接入候选',done:'已完成',paused:'已暂停',execution_contract_failed:'来源或执行合同校验失败'}
 const columns=[{key:'user_email',label:'成员',class:'w-48'},{key:'period_start',label:'周期 / 规则',class:'w-[34%]'},{key:'state',label:'状态',class:'w-32 whitespace-nowrap'},{key:'phase',label:'进度与问题'},{key:'updated_at',label:'最近更新',class:'w-40'},{key:'actions',label:'操作',class:'w-24 whitespace-nowrap'}]
 let request=0,findRequest=0,alive=true,timer:ReturnType<typeof setTimeout>|undefined
-async function load(silent=false){const current=++request;if(!silent)loading.value=true;try{const value=await listJobs(page.value,{state:state.value,search:search.value,sort:sort.value});if(alive&&current===request){jobs.value=value.items;total.value=value.total;error.value=''}}catch(e){if(alive&&current===request)error.value=(e as Error).message}finally{if(current===request)loading.value=false}}
+async function load(silent=false){const current=++request;if(!silent)loading.value=true;try{const value=await listJobs(page.value,{state:state.value,search:search.value,sort:sort.value,view:view.value});if(alive&&current===request){jobs.value=value.items;total.value=value.total;error.value=''}}catch(e){if(alive&&current===request)error.value=(e as Error).message}finally{if(current===request)loading.value=false}}
 function resetList(){page.value=1;void load()}
 function applySearch(){search.value=searchInput.value.trim();resetList()}
 async function poll(){await load(true);if(alive)timer=setTimeout(poll,5000)}

@@ -12,25 +12,27 @@ import (
 
 // Job 不返回缓存路径、凭证、原始请求或模型响应。
 type Job struct {
-	ID              int64         `json:"id"`
-	UserID          int64         `json:"user_id"`
-	UserEmail       string        `json:"user_email"`
-	PeriodType      string        `json:"period_type"`
-	PeriodStart     string        `json:"period_start"`
-	PeriodEnd       string        `json:"period_end"`
-	RulesVersion    string        `json:"rules_version"`
-	ScopeKey        string        `json:"scope_key"`
-	RecheckReportID *int64        `json:"recheck_report_id"`
-	ResultReportID  *int64        `json:"result_report_id"`
-	WorkdayScope    *WorkdayScope `json:"workday_scope,omitempty"`
-	State           string        `json:"state"`
-	Active          bool          `json:"active"`
-	Phase           string        `json:"phase"`
-	CompletedUnits  int           `json:"completed_units"`
-	TotalUnits      int           `json:"total_units"`
-	Message         string        `json:"message"`
-	CreatedAt       time.Time     `json:"created_at"`
-	UpdatedAt       time.Time     `json:"updated_at"`
+	ID                      int64         `json:"id"`
+	UserID                  int64         `json:"user_id"`
+	UserEmail               string        `json:"user_email"`
+	PeriodType              string        `json:"period_type"`
+	PeriodStart             string        `json:"period_start"`
+	PeriodEnd               string        `json:"period_end"`
+	RulesVersion            string        `json:"rules_version"`
+	ScopeKey                string        `json:"scope_key"`
+	RecheckReportID         *int64        `json:"recheck_report_id"`
+	ResultReportID          *int64        `json:"result_report_id"`
+	WorkdayScope            *WorkdayScope `json:"workday_scope,omitempty"`
+	State                   string        `json:"state"`
+	Active                  bool          `json:"active"`
+	LatestJobID             int64         `json:"latest_job_id"`
+	ResultPublicationStatus string        `json:"result_publication_status"`
+	Phase                   string        `json:"phase"`
+	CompletedUnits          int           `json:"completed_units"`
+	TotalUnits              int           `json:"total_units"`
+	Message                 string        `json:"message"`
+	CreatedAt               time.Time     `json:"created_at"`
+	UpdatedAt               time.Time     `json:"updated_at"`
 }
 
 type StartJobs struct {
@@ -93,13 +95,21 @@ func readyWorkdayWindow(kind, start string, now time.Time) (*WorkdayScope, error
 
 // Worker在执行任务期间持有(245,任务ID)会话锁；历史running标记不能代表实际活动。
 const jobActive = `(j.state='running' AND EXISTS(SELECT 1 FROM pg_locks l WHERE l.locktype='advisory' AND l.database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND l.classid=245 AND l.objid=j.id::oid AND l.objsubid=2 AND l.mode='ExclusiveLock' AND l.granted))`
+const jobLatest = `(SELECT max(n.id) FROM zhiyongli_jobs n WHERE n.user_id=j.user_id AND n.period_type=j.period_type AND n.period_start=j.period_start)`
+
+// 复评有独立Run绑定；普通任务仅关联最新已完成任务执行期间生成的同周期同规则报告。
+// 排除任务开始前的旧报告，避免把旧发布结果误当成本次执行成功。
+const jobResultMatch = `r.user_id=j.user_id AND r.period_type=j.period_type AND r.period_start=j.period_start AND r.period_end=j.period_end AND (
+ r.run_id=j.recheck_run_id OR (j.recheck_report_id IS NULL AND j.state='completed' AND j.id=` + jobLatest + `
+ AND r.created_at BETWEEN j.created_at AND j.updated_at AND r.body->'policy_versions'->>'rules'=j.rules_version))`
+const jobResultOrder = ` ORDER BY r.revision DESC LIMIT 1`
 const jobFields = `j.id,j.user_id,u.email,j.period_type,j.period_start::text,j.period_end::text,j.rules_version,j.state,j.phase,j.completed_units,j.total_units,j.message,j.created_at,j.updated_at,j.scope_key,j.workday_scope,j.recheck_report_id,` +
-	`(SELECT r.id FROM zhiyongli_reports r WHERE r.user_id=j.user_id AND r.period_type=j.period_type AND r.period_start=j.period_start AND r.run_id=j.recheck_run_id),` + jobActive
+	`(SELECT r.id FROM zhiyongli_reports r WHERE ` + jobResultMatch + jobResultOrder + `),` + jobActive + `,` + jobLatest + `,COALESCE((SELECT r.publication_status FROM zhiyongli_reports r WHERE ` + jobResultMatch + jobResultOrder + `),'')`
 
 func scanJob(row interface{ Scan(...any) error }) (Job, error) {
 	var j Job
 	var raw []byte
-	err := row.Scan(&j.ID, &j.UserID, &j.UserEmail, &j.PeriodType, &j.PeriodStart, &j.PeriodEnd, &j.RulesVersion, &j.State, &j.Phase, &j.CompletedUnits, &j.TotalUnits, &j.Message, &j.CreatedAt, &j.UpdatedAt, &j.ScopeKey, &raw, &j.RecheckReportID, &j.ResultReportID, &j.Active)
+	err := row.Scan(&j.ID, &j.UserID, &j.UserEmail, &j.PeriodType, &j.PeriodStart, &j.PeriodEnd, &j.RulesVersion, &j.State, &j.Phase, &j.CompletedUnits, &j.TotalUnits, &j.Message, &j.CreatedAt, &j.UpdatedAt, &j.ScopeKey, &raw, &j.RecheckReportID, &j.ResultReportID, &j.Active, &j.LatestJobID, &j.ResultPublicationStatus)
 	if err == nil && len(raw) > 0 {
 		err = json.Unmarshal(raw, &j.WorkdayScope)
 	}
@@ -241,9 +251,13 @@ type JobFilter struct {
 	State  string
 	Search string
 	Sort   string
+	View   string
 }
 
 func (f JobFilter) Validate() error {
+	if f.View != "" && f.View != "current" && f.View != "history" && f.View != "all" {
+		return invalid("评审记录范围无效")
+	}
 	if _, err := jobOrder(f.Sort); err != nil {
 		return err
 	}
@@ -267,6 +281,11 @@ func (s *Store) Jobs(ctx context.Context, page, size int, filters ...JobFilter) 
 		return nil, 0, err
 	}
 	where, args := " WHERE true", []any{}
+	if f.View == "current" {
+		where += " AND j.id=" + jobLatest
+	} else if f.View == "history" {
+		where += " AND j.id<>" + jobLatest
+	}
 	if f.State != "" {
 		args = append(args, f.State)
 		where += fmt.Sprintf(" AND j.state=$%d", len(args))

@@ -18,9 +18,9 @@ it('管理员确认后才复评，同一报告错误如实展示，并从进度�
   vi.mocked(startDayRecheck).mockRejectedValueOnce(new Error('该账户不在当前日评范围内'))
   vi.mocked(startDayRecheck).mockResolvedValueOnce({ id: 37, user_email: report.user_email, result_report_id: null } as Awaited<ReturnType<typeof startDayRecheck>>)
   const wrapper = mount(AdminView, { global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh: {} } })], stubs: {
-    AppLayout: { template: '<div><slot /></div>' }, RouterLink: true, Select: true, ReportBody: true,
+    AppLayout: { template: '<div><slot /></div>' }, RouterLink: true, Select: {props:['modelValue','options'],template:'<select :value="modelValue" @change="$emit(\'update:modelValue\',$event.target.value);$emit(\'change\')"><option v-for="option in options" :value="option.value">{{ option.label }}</option></select>'}, ReportBody: true,
     BaseDialog: { props: ['show'], template: '<div v-if="show"><slot/><slot name="footer"/></div>' },
-    DataTable: { props: ['data', 'columns'], template: '<div><span v-for="column in columns">{{ column.label }}</span><div v-for="row in data" :key="row.id"><span class="table-score"><slot name="cell-score" :row="row"/></span><slot name="cell-actions" :row="row"/></div></div>' },
+    DataTable: { props: ['data', 'columns'], template: '<div><slot name="header-score"/><span v-for="column in columns">{{ column.label }}</span><div v-for="row in data" :key="row.id"><span class="table-score"><slot name="cell-score" :row="row"/></span><slot name="cell-actions" :row="row"/></div></div>' },
     ReviewJobs: { props: ['initialSearch'], template: '<div>{{ initialSearch }}</div>' }
   } } })
   const click = (label: string) => wrapper.findAll('button').find(button => button.text() === label)!.trigger('click')
@@ -42,5 +42,11 @@ it('管理员确认后才复评，同一报告错误如实展示，并从进度�
   await flushPromises()
   expect(getReport).toHaveBeenLastCalledWith(true, draft.id)
   expect(wrapper.text()).toContain('待发布')
+  await click('评分结果'); await flushPromises()
+  await wrapper.get('select[aria-label="周期类型"]').setValue('week'); await flushPromises()
+  await wrapper.get('button[aria-label="总分排序，点击降序"]').trigger('click'); await flushPromises()
+  expect(listReports).toHaveBeenLastCalledWith(true, expect.objectContaining({sort:'score_desc',page:1,period_type:'week'}))
+  await wrapper.get('button[aria-label="总分从高到低，点击升序"]').trigger('click'); await flushPromises()
+  expect(listReports).toHaveBeenLastCalledWith(true, expect.objectContaining({sort:'score_asc',page:1}))
   wrapper.unmount()
 })

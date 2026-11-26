@@ -59,8 +59,11 @@ def select_candidates(plan, options, all_turns, *, allow_input_only=False):
 
 
 def workflow_selected(name, text):
-    """保留真实工具名；明确点名MCP服务也能证明选择该服务内的调用。"""
-    if name in text:return True
+    """保留真实工具名；按完整词匹配，避免短命令名命中无关单词。明确点名MCP服务也能证明选择该服务内的调用。"""
+    if re.search(r'(?<![A-Za-z0-9_-])'+re.escape(name)+r'(?![A-Za-z0-9_-])', text or ''):return True
+    # 原生接口名与用户使用的Git术语对应，不要求用户复述接口函数名。
+    if name in {'create_worktree','mcp__codex_app__create_worktree'}:
+        return re.search(r'(?i)(?<![A-Za-z0-9_-])worktree(?![A-Za-z0-9_-])',text or '') is not None
     parts=name.split('__')
     if len(parts)==3 and parts[0]=='mcp' and parts[1] and parts[2]:
         service=parts[1].replace('_','-')
@@ -68,12 +71,25 @@ def workflow_selected(name, text):
     return False
 
 
+def file_reference_only(text):
+    """只提到参考文件、脚本或已有数据，后面没有固定操作序列时不是工作流。"""
+    stripped=re.sub(r'[\s。！!，,]+$','',(text or '').strip())
+    if re.fullmatch(r'(?:请|帮我)?(?:参考|参见|看一下|看看|沿用|复用)\s*[\w./\\-]+', stripped):
+        return True
+    compact=re.sub(r'[\s，。！!,.]+','',stripped)
+    return re.fullmatch(r'(?:请|帮我)?(?:参考|参见|看一下|看看|沿用|复用).{0,80}(?:文件|脚本|文档|代码|权重|数据|原文)', compact) is not None
+
+
 def workflow_selected_in_task(name, refs, records):
-    """明确点名或采纳紧邻的具体使用方案；普通继续、默认配置和AI自主执行不作选择。"""
+    """命令或任务描述触发同轮技能、MCP、CLI服务即算选择。只说参考文件、普通继续和AI自行调用不算。"""
     approvals={'执行','执行吧','按这个方案执行','按上述方案执行','就按这个方案','采用这个方案','按你说的执行','执行这个方案','按方案执行'}
+    inert={'继续','知道了','你看着办','好','好的','嗯','可以','行'}
     previous=None
-    for row in records:
+    for index,row in enumerate(records):
         if row['id'] in refs and row['role']=='user':
+            if file_reference_only(row['text']):
+                previous=None
+                continue
             if workflow_selected(name,row['text']):return True
             approval=re.sub(r'[\s，。！!,.]','',row['text'])
             if approval in approvals and previous:
@@ -81,12 +97,19 @@ def workflow_selected_in_task(name, refs, records):
                     if (not re.search(r'不要|不使用|禁止|无需',line) and workflow_selected(name,line)
                             and re.search(r'(?:我将|将会|接下来|准备|建议|方案|可以|我会).{0,80}(?:使用|采用|调用|通过|加载|运行)',line)):
                         return True
+            compact=re.sub(r'[\s，。！!,.]+','',row['text'])
+            if compact not in inert and not approval in approvals:
+                for later in records[index+1:]:
+                    if later['role']=='user':
+                        break
+                    if later['role']=='tool' and workflow_selected(name,later['text']):
+                        return True
         if row['role']=='assistant':previous=row['text']
         elif row['role']=='user':previous=None
     return False
 
 
-def check_assessment(value, delivered, tasks=()):
+def check_assessment(value, delivered, tasks=(), *, allow_unknown_next=False):
     """检查可确定的引文、身份、重复与档位合同，不冒充语义验收。"""
     if value['needs_records'] or value['items'] is None:
         raise ValueError('日评分没有完整终态')
@@ -100,7 +123,10 @@ def check_assessment(value, delivered, tasks=()):
     issues=[]
     for code, cell in value['items'].items():
         try:
-            resolve(code, dict(cell, refs=[e['record_id'] for e in cell['evidence']]))
+            next_band=cell['next_band']
+            if allow_unknown_next and not next_band and cell['band'] in {'reasonable','good','outstanding'}:
+                next_band='尚无足够材料说明下一档的具体差距。'
+            resolve(code, dict(cell, next_band=next_band,refs=[e['record_id'] for e in cell['evidence']]))
         except ValueError as error:
             issues.append(str(error))
         for evidence in cell['evidence']:
@@ -137,9 +163,9 @@ def check_assessment(value, delivered, tasks=()):
                     if not usage['user_refs'] or any(ref not in people for ref in usage['user_refs']):
                         issues.append('用户选择缺少同任务原话：'+task['id'])
                     elif not workflow_selected_in_task(usage['name'],usage['user_refs'],task['records']):
-                        issues.append('用户原话没有选择所述工作流：'+task['id'])
+                        issues.append('用户原话没有选择所述工作流：'+task['id']+'/'+usage['name'])
                 elif usage['user_refs']:
-                    issues.append('AI自主调用不能挂本人选择依据：'+task['id'])
+                    issues.append('AI自主调用不能挂本人选择依据：'+task['id']+'/'+usage['name'])
     if issues:
         # 一次交付全部可确定的问题，避免每修一处才暴露下一处而反复调用模型。
         raise ValueError('\n'.join(dict.fromkeys(issues)))
@@ -148,7 +174,8 @@ def check_assessment(value, delivered, tasks=()):
 def checked_call(client, root, name, data, schema, instructions):
     # 预算按实际发送格式核对，不能靠隐藏schema或截断正文让请求过关。
     wire = request_payload(client,data,schema,instructions)
-    maximum=190000-wire['max_output_tokens'] if getattr(client,'dimension_coverage',False) else 96000
+    # 五日综合修正实测176,609字节；保留完整原文和16K输出余量，容量仍有界。
+    maximum=196000-wire['max_output_tokens'] if getattr(client,'dimension_coverage',False) else 96000
     if len(json.dumps(wire,ensure_ascii=False).encode()) > maximum:
         raise ValueError('完整日评请求超过'+str(maximum)+'字节，未截断或发送')
     return call(client,root,name,data,schema,instructions)

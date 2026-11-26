@@ -18,8 +18,11 @@ import urllib.error
 import urllib.request
 import uuid
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT/'research/ai-usage-assessment'))
+PACKAGE_ROOT = Path(__file__).resolve().parent
+# 生产回放闭包会把 Worker 文件展平到同一目录；源码运行时仍使用仓库根目录。
+ROOT = PACKAGE_ROOT if (PACKAGE_ROOT/'scoring_pipeline').is_dir() else Path(__file__).resolve().parents[2]
+ASSESSMENT_ROOT = ROOT if (ROOT/'scoring_pipeline').is_dir() else ROOT/'research/ai-usage-assessment'
+sys.path.insert(0, str(ASSESSMENT_ROOT))
 from model_config import ModelConfig, ModelError, response_text
 from review_schema import schema as review_schema
 from semantic_audit import OPPORTUNITY_CHECK
@@ -111,7 +114,7 @@ def load_ref(ref):
 
 def policy_files():
     # 包含实际校验器和执行器，防止同版本号代码漂移仍复用结果。
-    base=ROOT/'research/ai-usage-assessment/scoring_pipeline'
+    base=ASSESSMENT_ROOT/'scoring_pipeline'
     paths=[Path(__file__),base.parent/'score-levels-g2.json',base/'weekly_performance/review022.py',base/'weekly_performance/task_context.py',
            base/'weekly_performance/contract-rubric.json',base/'weekly_performance/contract-instructions.txt',
            base/'weekly_performance/month_rollup.py',base/'weekly_performance/scores022.py',

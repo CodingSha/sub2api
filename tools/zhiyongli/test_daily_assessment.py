@@ -91,6 +91,23 @@ class DailyAssessmentTests(unittest.TestCase):
             row('mcp','tool','Tool: exec\nType: custom_tool_call\n\ntext(await tools.mcp__yunxiao__get_testcase({id: 1}))')]
         self.assertEqual([(r['name'],r['record_id']) for r in workflow_rows(rows)],[('push','load'),('mcp__yunxiao__get_testcase','mcp')])
 
+    def test_command_then_skill_is_workflow_but_file_reference_is_not(self):
+        from daily_assessment import workflow_selected_in_task
+        rows=[row('u','user','把本周评分发到生产。'),row('t','tool','Tool: exec\nType: custom_tool_call\n\ncat /skills/push/SKILL.md'),row('a','assistant','正在发布。')]
+        self.assertTrue(workflow_selected_in_task('push',['u'],rows))
+        self.assertEqual(workflow_rows(rows)[0]['name'],'push')
+        referenced=[row('u2','user','参考 old_script.py。'),row('read','tool','Tool: exec\nType: custom_tool_call\n\ncat old_script.py')]
+        self.assertFalse(workflow_selected_in_task('old_script.py',['u2'],referenced))
+        self.assertEqual(workflow_rows(referenced),[])
+        service=[row('u3','user','把改动推上去。'),row('git','tool','Tool: exec\nType: custom_tool_call\n\ngit push origin HEAD')]
+        self.assertEqual([item['name'] for item in workflow_rows(service)],['git'])
+        self.assertTrue(workflow_selected_in_task('git',['u3'],service))
+
+    def test_native_worktree_call_accepts_git_term_and_rejects_similar_names(self):
+        self.assertTrue(workflow_selected('create_worktree','在 worktree 单独处理这次改动。'))
+        self.assertTrue(workflow_selected('mcp__codex_app__create_worktree','使用 WORKTREE。'))
+        self.assertFalse(workflow_selected('create_worktree','查看 worktree_helper 的文档。'))
+
     def test_window_directory_keeps_richer_ranges_and_other_sessions_when_capped(self):
         groups=[dict(session='long',records=[r for i in range(5) for r in (
             row('u'+str(i),'user','安排任务并反馈。'*40),row('a'+str(i),'assistant','实际执行结果。'*40))]),

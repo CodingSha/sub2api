@@ -162,5 +162,6 @@ class CoverageTests(unittest.TestCase):
         self.assertFalse(workflow_selected_in_task('push',['u'],[dict(rows[0],text='无需使用 push，先检查。'),rows[1]]))
         self.assertFalse(workflow_selected_in_task('another-skill',['u'],rows))
         self.assertFalse(workflow_selected_in_task('push',['u'],[rows[0],dict(id='u0',role='user',text='先别提交'),rows[1]]))
+        self.assertFalse(workflow_selected_in_task('push',['u'],[dict(id='u',role='user',text='参考 push 脚本。')]))
 
 if __name__=='__main__':unittest.main()

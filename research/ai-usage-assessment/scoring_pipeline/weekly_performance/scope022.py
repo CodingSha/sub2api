@@ -1,16 +1,16 @@
 """现有共享材料的单元分组；只组织输入，不推断事实、不写重复原文缓存。"""
 from ..common import require
 from ..common import moment
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
 
 
 def check_window(scope, period):
     """日历窗口左闭右开；只核边界，不推断月度表现。"""
     start, end = moment(period['start']), moment(period['end'])
     require(start.tzinfo is not None and end.tzinfo is not None, '窗口须含时区')
-    start = start.astimezone(ZoneInfo('Asia/Shanghai'))
-    end = end.astimezone(ZoneInfo('Asia/Shanghai'))
+    shanghai = timezone(timedelta(hours=8))
+    start = start.astimezone(shanghai)
+    end = end.astimezone(shanghai)
     require(start < end and start.hour == start.minute == start.second == start.microsecond == 0,
             '窗口须从北京时间零点开始')
     if scope == 'person_week':

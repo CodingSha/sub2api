@@ -31,7 +31,9 @@ describe('按维度阅读真实评分和案例', () => {
     expect(wrapper.text()).toContain('2026-11-18')
     expect(wrapper.findAll('.dimension-score strong').map(s => s.text())).toEqual(['80.0', '—'])
     await wrapper.setProps({ report })
-    expect(wrapper.get('.total-score strong').text()).toBe(report.score)
+    expect(wrapper.get('.total-score .score-reveal').text()).toBe(report.score)
+    await wrapper.setProps({ report: {...report, company_rank:{position:2,total:97,tied:true}} })
+    expect(wrapper.get('.company-rank').text()).toContain('公司排名 并列 2/ 97')
     wrapper.unmount()
   })
 

@@ -11,6 +11,9 @@ services:
       - ${ZHIYONGLI_PRIVATE_DIR:?必须配置私有目录}/schedule.json:/run/zhiyongli/schedule.json:ro
   zhiyongli-worker:
     profiles: [zhiyongli]
+    labels:
+      com.apsat.zhiyongli.owner: zhiyongli
+      com.apsat.zhiyongli.role: persistent
     build:
       context: ..
       dockerfile: deploy/Dockerfile.zhiyongli

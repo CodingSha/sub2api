@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "baseline": "zhiyongli-production-20261126",
+  "product_source_parent": "38bcf6aefbd4ab4941f1d0f426ae8fe7094df60b",
+  "application_image": {
+    "reference": "sub2api-local:conversation-20261126-product",
+    "id": "sha256:f8ddb7d0ea4c8a6faeed7968e9a1f18ba87fa42f89f55e93346a8230f5b821fa"
+  },
+  "assessment_image": {
+    "reference": "zhiyongli-worker-local:conversation-20261126-repair-envelope",
+    "id": "sha256:ec2519f78cad130345e7f474e2cd3f7ac1037deee9299b3d59bf33cf2a27e9d1"
+  },
+  "implementation_sha256": "f04ecfbd8e0f52a2417732acd829332edfdc0b65b4580e067fccd036d195838e",
+  "source_fingerprints": {
+    "backend": {
+      "count": 1717,
+      "sha256": "98c34237d72fc326888526c6b9f693bd1bac89aa7df185caa7b7fdd55b8111fb"
+    },
+    "frontend": {
+      "count": 579,
+      "sha256": "722eb4b91fb92692b83c2aae39238e922735e4fceec9ec38149352946072504a"
+    },
+    "tools/zhiyongli": {
+      "count": 114,
+      "sha256": "d76656d69b65c1e45640c8a04bcbdfb703f511dfa5f2ad181adf5b32f503e32e"
+    },
+    "research/ai-usage-assessment/scoring_pipeline": {
+      "count": 64,
+      "sha256": "5387776c9d397f9c32008120562d8fed451ac79d189cb0bbffd81d81fc2cab7f"
+    }
+  },
+  "operations_files": {
+    "deploy/zhiyongli-release-20261126/candidates.py": "2b846c5c2318a619d1dfe2fac7460f68ec020f361d73ee5ec0178e71d92632a7",
+    "deploy/zhiyongli-release-20261126/cutover.py": "af4b56a305958737b51dad05e49f19e554fa31d4cf5a0652c448628e3516acf8",
+    "deploy/zhiyongli-release-20261126/imports.py": "64cdbf27aa2e46c3a0fa62eccc7f4d787834a51b85f201537cc7d6f38aa879af",
+    "deploy/zhiyongli-release-20261126/release_product.py": "9090b39bceacb0d0dbb92c372fccf3dc648e88550f8b84ffce4f11af2d8d1823"
+  },
+  "cleanup": {
+    "removed_historical_containers": 493,
+    "unrelated_containers_preserved": 83,
+    "unexpected_removals": 0,
+    "timer": "zhiyongli-container-cleanup.timer",
+    "interval_minutes": 10,
+    "log_archive_required": true,
+    "volumes_and_images_deleted": false,
+    "idle_dedicated_builder_stopped": true
+  },
+  "scoring": {
+    "week_start": "2026-11-16",
+    "working_dates": [
+      "2026-11-16",
+      "2026-11-17",
+      "2026-11-18",
+      "2026-11-19",
+      "2026-11-20"
+    ],
+    "users": 99,
+    "published_days": 495,
+    "published_weeks": 99,
+    "quality_independently_certified": false
+  },
+  "operations_formatting_note": "release_product.py仅去除生产副本末尾多余空行，执行内容一致"
+}

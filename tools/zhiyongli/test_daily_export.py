@@ -109,7 +109,7 @@ class DailyExportTests(unittest.TestCase):
                 self.assertIsNone(result['score'])
                 client._call.assert_not_called()
         with TemporaryDirectory() as tmp,self.assertRaisesRegex(ValueError,'来源不完整'):
-            evaluate(dict(user_id=2,events=[event]),'2026-11-18',Path(tmp),Mock())
+            evaluate(dict(user_id=2,events=[event]),'2026-11-18',Path(tmp),Mock(dimension_coverage=False))
 
 
 if __name__=='__main__':unittest.main()

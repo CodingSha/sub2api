@@ -45,6 +45,79 @@ func weeklyDailyFixture(t *testing.T) Result {
 	return r
 }
 
+func TestEfficiencyWeeklyVersionKeepsPreviousContract(t *testing.T) {
+	r := weeklyDailyFixture(t)
+	r.WeeklyReview.Version = efficiencyWeeklyVersion
+	r.PolicyVersions.Review = efficiencyWeeklyVersion
+	if err := r.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	r.WeeklyReview.Version = "weekly-from-daily-20261123.2"
+	r.PolicyVersions.Review = "weekly-from-daily-20261123.2"
+	if r.Validate() == nil {
+		t.Fatal("未登记的周评版本必须拒绝")
+	}
+}
+
+func TestEfficiencyWeeklyAllowsMasteryToEfficiencyRemap(t *testing.T) {
+	published := weeklyDailyFixture(t).WeeklyReview.Behaviors
+	reported := map[string]DailyBehavior{}
+	for id, row := range published {
+		reported[id] = row
+	}
+	moved := false
+	for id, row := range reported {
+		if row.PrimaryItem[:1] != "M" {
+			continue
+		}
+		row.PrimaryItem = "E3"
+		reported[id] = row
+		moved = true
+		break
+	}
+	if !moved {
+		t.Fatal("夹具缺少可重归的驾驭行为")
+	}
+	if err := efficiencyBehaviorsOK(published, reported); err != nil {
+		t.Fatal(err)
+	}
+	// 丢掉原 E 行为允许；丢掉 M 不允许。
+	trimmed := map[string]DailyBehavior{}
+	for id, row := range reported {
+		if row.PrimaryItem[:1] == "E" && row.PrimaryItem != "E3" {
+			continue
+		}
+		trimmed[id] = row
+	}
+	if err := efficiencyBehaviorsOK(published, trimmed); err != nil {
+		t.Fatal(err)
+	}
+	dropM := map[string]DailyBehavior{}
+	for id, row := range published {
+		if row.PrimaryItem[:1] == "M" {
+			continue
+		}
+		dropM[id] = row
+	}
+	if efficiencyBehaviorsOK(published, dropM) == nil {
+		t.Fatal("效率补评不能静默丢掉驾驭行为")
+	}
+	bad := map[string]DailyBehavior{}
+	for id, row := range published {
+		bad[id] = row
+	}
+	for id, row := range bad {
+		if row.PrimaryItem[:1] == "P" {
+			row.PrimaryItem = "E3"
+			bad[id] = row
+			break
+		}
+	}
+	if efficiencyBehaviorsOK(published, bad) == nil {
+		t.Fatal("效率补评不能改提示词归属")
+	}
+}
+
 func TestWeeklyDailyEvidenceScoresAndScope(t *testing.T) {
 	r := weeklyDailyFixture(t)
 	fake := "99.9"

@@ -40,6 +40,12 @@ class ModelConfigTests(unittest.TestCase):
                     self.assertEqual(origin+'/v1/responses', config.responses_url)
                     self.assertEqual('synthetic-key', config.read_key())
 
+    def test_conversation_models_do_not_change_legacy_model_contract(self):
+        for model in ('gpt-6.1-sol','gpt-6.2-sol'):
+            self.path.write_text(json.dumps(dict(base_url='https://ai.apsatcom.com',model=model,api_key_file=str(self.key))))
+            self.assertEqual(ModelConfig.load(self.path,conversation=True).model,model)
+            with self.assertRaises(ValueError):ModelConfig.load(self.path)
+
     def test_other_origins_credentials_paths_and_url_options_rejected(self):
         for base in (
             'http://ai.apsatcom.com', 'https://other.example', 'http://sub2api',

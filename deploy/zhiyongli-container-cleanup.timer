@@ -1,0 +1,11 @@
+[Unit]
+Description=Clean up exited Zhiyongli assessment containers
+
+[Timer]
+OnBootSec=10min
+OnUnitInactiveSec=10min
+Persistent=true
+Unit=zhiyongli-container-cleanup.service
+
+[Install]
+WantedBy=timers.target

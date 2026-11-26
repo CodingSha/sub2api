@@ -84,6 +84,7 @@ export interface DailyReview {
   conversations: Record<string, import('./AssessmentReader.vue').AssessmentTask>
 }
 export interface Report {
+  company_rank?: {position: number; total: number; tied: boolean}
   daily_review?: DailyReview
   weekly_review?: DailyReview & { sources: { report_id: number; period_start: string; source_digest: string; request_digest: string }[] }
   id: number
@@ -164,6 +165,8 @@ export interface ReviewJob {
   period_type: 'day' | 'week' | 'month'; period_start: string; period_end: string; rules_version: string
   state: 'queued' | 'running' | 'needs_review' | 'unknown' | 'failed' | 'completed' | 'no_activity'
   active: boolean
+  latest_job_id?: number
+  result_publication_status?: 'draft' | 'published' | 'superseded' | ''
   phase: string; completed_units: number; total_units: number; message: string
   created_at: string; updated_at: string
   scope_key: string; workday_scope?: WorkdayScope
@@ -179,7 +182,7 @@ export async function startJobs(input: {user_ids: number[]; period_type: 'day' |
 export async function startLastWeekJobs() {
   return (await apiClient.post<ReviewJob[]>('/admin/zhiyongli/jobs/last-week')).data
 }
-export async function listJobs(page: number, filters: {state?: string; search?: string; sort?: string} = {}) {
+export async function listJobs(page: number, filters: {state?: string; search?: string; sort?: string; view?: string} = {}) {
   return (await apiClient.get<Page<ReviewJob>>('/admin/zhiyongli/jobs', {params:{page,page_size:20,...filters}})).data
 }
 export async function resumeJob(id: number) {

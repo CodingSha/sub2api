@@ -273,6 +273,12 @@ func (s *Store) Get(ctx context.Context, id, owner int64) (Report, error) {
 	}
 	// 周快照只用于后台重算月资格，不通过报告详情重复公开证据。
 	r.WeeklyReports = nil
+	if owner > 0 && r.PeriodType == "week" && r.Score != nil {
+		r.CompanyRank, e = s.companyRank(ctx, r.ID, owner)
+		if e != nil {
+			return Report{}, e
+		}
+	}
 	return r, nil
 }
 func (s *Store) Publish(ctx context.Context, id int64, revision int, actor int64) (Report, error) {

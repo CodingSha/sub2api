@@ -4,7 +4,13 @@
 数据库连接仅从环境 ZHIYONGLI_SOURCE_DSN 读取。此入口不识别任务、不评分。
 """
 import argparse
-from contextlib import nullcontext
+try:
+    from contextlib import nullcontext
+except ImportError:
+    class nullcontext:
+        def __init__(self, value=None): self.value=value
+        def __enter__(self): return self.value
+        def __exit__(self, *args): return False
 from datetime import datetime, timezone
 import hashlib
 import fcntl

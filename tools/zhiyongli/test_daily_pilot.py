@@ -184,12 +184,22 @@ class DailyPilotTests(unittest.TestCase):
     def test_response_annotation_splits_user_request_and_selected_background(self):
         event=dict(text='# Response annotations:\n<response-annotations>[{"text":"AI 原建议"}]</response-annotations>\n\n## My request:\n只做5.1，页面我验证。',actor_class='candidate_user',protocol_role='user')
         self.assertEqual(normalized(event),('user','只做5.1，页面我验证。'))
+        # 原生转录可能在包装前带换行，不能因此把AI选中文字认领为本人。
+        event['text']='\n  '+event['text']
+        self.assertEqual(normalized(event),('user','只做5.1，页面我验证。'))
 
     def test_proxy_compression_protocol_is_not_personal_but_discussion_is(self):
         prefix='This is an efficiency nudge to compress early and keep context lean'
         event=dict(text=prefix+'\nCompression Philosophy:\n规则\n[ACP marker integrity: 代理协议]',actor_class='candidate_user',protocol_role='user')
         self.assertEqual(normalized(event)[0],'context')
         event['text']='请解释下面的压缩提示：'+event['text']
+        self.assertEqual(normalized(event)[0],'user')
+
+    def test_native_browser_state_wrapper_is_background_without_dropping_user_comment(self):
+        text='<external_browser_tabs>\n<in-app-browser-context source="ambient-ui-state">\nCurrent URL: http://localhost:3000/zhiyongli\n</in-app-browser-context>\n</external_browser_tabs>'
+        event=dict(text=text,actor_class='candidate_user',protocol_role='user')
+        self.assertEqual(normalized(event)[0],'context')
+        event['text']=text+'\n请解释当前页面。'
         self.assertEqual(normalized(event)[0],'user')
 
     def test_browser_comments_keep_personal_comment_without_webpage_evidence(self):

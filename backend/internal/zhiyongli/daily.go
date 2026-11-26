@@ -10,11 +10,24 @@ import (
 
 const DailyReviewVersion = "daily-task-review-20261120.2"
 const DailyAggregationVersion = "daily-observed-weighted-20261119.2"
+const ConversationDailyVersion = "daily-conversation-review-20261125.1"
+
+func acceptedConversationModel(model string) bool {
+	return model == "deepseek-v4.1-flash-local" || model == "gpt-6.1-sol" || model == "gpt-6.2-sol"
+}
+
+func acceptedDailyReview(version, model string) bool {
+	return version == DailyReviewVersion && model == "deepseek-v4.1-flash-local" || version == ConversationDailyVersion && acceptedConversationModel(model)
+}
 
 // explicitlySelectedWorkflow 保留真实工具名，并识别用户明确点名的所属 MCP 服务。
 func explicitlySelectedWorkflow(text, name string) bool {
 	if strings.Contains(text, name) {
 		return true
+	}
+	// 用户可使用Git术语，不必复述原生接口函数名。
+	if name == "create_worktree" || name == "mcp__codex_app__create_worktree" {
+		return regexp.MustCompile(`(?i)(^|[^A-Za-z0-9_-])worktree($|[^A-Za-z0-9_-])`).MatchString(text)
 	}
 	parts := strings.Split(name, "__")
 	if len(parts) != 3 || parts[0] != "mcp" || parts[1] == "" || parts[2] == "" {
@@ -108,10 +121,10 @@ type DailyRecord struct {
 
 func (r *Result) validateDaily() error {
 	d := r.DailyReview
-	if !strings.Contains(r.UserEmail, "@") || !hashValid(r.SourceDigest) || d == nil || d.Version != DailyReviewVersion || d.Model != "deepseek-v4.1-flash-local" || !hashValid(d.RequestDigest) {
+	if !strings.Contains(r.UserEmail, "@") || !hashValid(r.SourceDigest) || d == nil || !acceptedDailyReview(d.Version, d.Model) || !hashValid(d.RequestDigest) {
 		return invalid("日评缺少账户、冻结来源、模型或请求记录")
 	}
-	if r.PolicyVersions.Scale != ScaleVersion || r.PolicyVersions.Rules != RulesVersion || r.PolicyVersions.Aggregation != DailyAggregationVersion || r.PolicyVersions.Review != DailyReviewVersion || r.PolicyVersions.Rating != "G2-proposal28" {
+	if r.PolicyVersions.Scale != ScaleVersion || r.PolicyVersions.Rules != RulesVersion || r.PolicyVersions.Aggregation != DailyAggregationVersion || r.PolicyVersions.Review != d.Version || r.PolicyVersions.Rating != "G2-proposal28" {
 		return invalid("日评分版本未登记")
 	}
 	a, err := date(r.PeriodStart)
@@ -227,7 +240,7 @@ func (r *Result) validateTaskEvidence(d *DailyReview, taskLimit, byteLimit int, 
 		return invalid("日评须为完整十二项终态，执行失败不能作为人员报告")
 	}
 	seen := map[string]bool{}
-	if len(d.Behaviors) == 0 {
+	if len(d.Behaviors) == 0 && d.Version != ConversationDailyVersion && d.Version != conversationWeeklyVersion {
 		return invalid("日评缺少独立行为归属")
 	}
 	claims := map[string]bool{}
@@ -336,6 +349,17 @@ func (r *Result) validateTaskEvidence(d *DailyReview, taskLimit, byteLimit int, 
 		}
 	}
 	if observed == 0 {
+		if (d.Version == ConversationDailyVersion || d.Version == conversationWeeklyVersion) && len(d.Behaviors) == 0 {
+			// 技术失败不能导出；模型已核但没有本人行为时保留观察与原文。
+			if r.WeeklyReview != nil && r.PolicyVersions.Aggregation == WeeklyDailyAggregation {
+				r.Exact, r.Score = exact(big.NewRat(0, 1)), display(big.NewRat(0, 1))
+				r.ScoreStatus = "scored"
+				r.ScoreReason = "五个工作日的抽样原文已核，未观察到可独立评分的本人使用行为，本周使用评分为0分；各维度保留未观察到。"
+			} else {
+				r.ScoreStatus = "observation_only"
+			}
+			return nil
+		}
 		return invalid("已选任务却十二项全空，属于评审执行失败")
 	}
 	// 历史周分保留原资格；新版周分固定分母100，不放大已观察维度权重。
