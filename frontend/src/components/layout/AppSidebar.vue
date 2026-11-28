@@ -251,8 +251,11 @@ const mobileOpen = computed(() => appStore.mobileOpen)
 const isAdmin = computed(() => authStore.isAdmin)
 const zhiyongliManagementUsers = new Set(['shasp', 'liyu'])
 const canAccessZhiyongliManagement = computed(() => {
-  const username = authStore.user?.username?.trim().toLowerCase()
-  return isAdmin.value && username ? zhiyongliManagementUsers.has(username) : false
+  if (!isAdmin.value || !authStore.user) return false
+  const identities = [authStore.user.username, authStore.user.email.split('@', 1)[0]]
+    .map(value => value.trim().toLowerCase())
+    .filter(Boolean)
+  return identities.some(identity => zhiyongliManagementUsers.has(identity))
 })
 const sidebarNavRef = ref<HTMLElement | null>(null)
 const isDark = ref(document.documentElement.classList.contains('dark'))
