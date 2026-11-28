@@ -249,6 +249,11 @@ const { canUseBatchImage, refreshBatchImageAccess } = useBatchImageAccess()
 const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const mobileOpen = computed(() => appStore.mobileOpen)
 const isAdmin = computed(() => authStore.isAdmin)
+const zhiyongliManagementUsers = new Set(['shasp', 'liyu'])
+const canAccessZhiyongliManagement = computed(() => {
+  const username = authStore.user?.username?.trim().toLowerCase()
+  return isAdmin.value && username ? zhiyongliManagementUsers.has(username) : false
+})
 const sidebarNavRef = ref<HTMLElement | null>(null)
 const isDark = ref(document.documentElement.classList.contains('dark'))
 
@@ -266,8 +271,7 @@ const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '', { allowRela
 const siteVersion = computed(() => appStore.siteVersion)
 const settingsLoaded = computed(() => appStore.publicSettingsLoaded)
 
-// 智用力个人入口突出洞察，管理入口使用评审记录图标。
-const ZhiyongliPersonalIcon = { render: () => h(Icon, { name: 'lightbulb', size: 'md' }) }
+// 管理入口使用评审记录图标。
 const ZhiyongliAdminIcon = { render: () => h(Icon, { name: 'clipboard', size: 'md' }) }
 
 // SVG Icon Components
@@ -741,8 +745,7 @@ const flagBatchImageAccess = () => canUseBatchImage.value
 //
 // 条目顺序：密钥 → 用量 → 可用渠道 → 渠道状态 → 订阅/支付 → 兑换/资料。
 // 可用渠道紧挨渠道状态之上，让用户"先看自己能用什么、再看对应状态"。
-// includeZhiyongli 仅控制个人用户入口，管理员的个人区仍保留该入口。
-function buildSelfNavItems(withDashboard: boolean, includeZhiyongli: boolean): NavItem[] {
+function buildSelfNavItems(withDashboard: boolean): NavItem[] {
   const items: NavItem[] = []
   if (withDashboard) {
     items.push({ path: '/dashboard', label: t('nav.dashboard'), icon: DashboardIcon })
@@ -751,7 +754,6 @@ function buildSelfNavItems(withDashboard: boolean, includeZhiyongli: boolean): N
     { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon },
     { path: '/batch-image', label: t('nav.batchImage'), icon: BatchImageIcon, hideInSimpleMode: true, featureFlag: flagBatchImageAccess },
     { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: true },
-    ...(includeZhiyongli ? [{ path: '/zhiyongli', label: '智用力', icon: ZhiyongliPersonalIcon }] : []),
     { path: '/available-channels', label: t('nav.availableChannels'), icon: ChannelIcon, hideInSimpleMode: true, featureFlag: flagAvailableChannels },
     { path: '/monitor', label: t('nav.channelStatus'), icon: SignalIcon, featureFlag: flagChannelMonitor },
     { path: '/subscriptions', label: t('nav.mySubscriptions'), icon: CreditCardIcon, hideInSimpleMode: true, featureFlag: flagSubscription },
@@ -778,12 +780,12 @@ function finalizeNav(items: NavItem[]): NavItem[] {
 }
 
 // User navigation items (for regular users)
-const userNavItems = computed((): NavItem[] => finalizeNav(buildSelfNavItems(true, false)))
+const userNavItems = computed((): NavItem[] => finalizeNav(buildSelfNavItems(true)))
 
 // Personal navigation items (for admin's "My Account" section, without Dashboard).
 // Admins access 可用渠道 from this section just like regular users — there is no
 // separate admin entry, since the page is purely a user-facing view.
-const personalNavItems = computed((): NavItem[] => finalizeNav(buildSelfNavItems(false, true)))
+const personalNavItems = computed((): NavItem[] => finalizeNav(buildSelfNavItems(false)))
 
 // Custom menu items filtered by visibility
 const customMenuItemsForUser = computed(() => {
@@ -868,7 +870,8 @@ const adminNavItems = computed((): NavItem[] => {
     { path: '/admin/audit-logs', label: t('nav.auditLogs'), icon: ShieldIcon, hideInSimpleMode: true }
   ]
 
-  const visible = applyFeatureFlags(baseItems)
+  // 智用力管理仅向指定管理员显示，其他管理员不显示入口；路由权限保持原有行为。
+  const visible = applyFeatureFlags(baseItems).filter(item => item.path !== '/admin/zhiyongli' || canAccessZhiyongliManagement.value)
 
   // 简单模式下，在系统设置前插入 API密钥
   if (authStore.isSimpleMode) {
